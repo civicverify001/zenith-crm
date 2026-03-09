@@ -40,24 +40,6 @@ async function logJobActivity(entry: {
 // ═══════════════════════════════════════════════════════════════
 // CREATE INSTALL JOB FROM LEAD
 // ═══════════════════════════════════════════════════════════════
-// STRATEGY NOTE:
-// This is a multi-step client-side operation. In production,
-// this should move to a Supabase Edge Function or RPC for
-// transaction safety. For Phase 3, we use strict error checking
-// on each step with rollback on critical failures.
-//
-// REQUIRED steps (fail = abort):
-//   1. Duplicate check
-//   2. Create job row
-//   3. Generate checklist items
-//   4. Generate required forms
-//
-// BEST-EFFORT steps (fail = log, continue):
-//   5. Update lead.job_created bridge field
-//   6. Log activity on lead
-//   7. Log activity on job
-// ═══════════════════════════════════════════════════════════════
-
 export async function createInstallJobFromLead(
   lead: Lead,
   systemType: SystemType,
@@ -74,7 +56,6 @@ export async function createInstallJobFromLead(
   if (!address) throw new Error('Lead must have a service address')
 
   // ── Step 1: Duplicate prevention ──
-  // Query guard: check if a job already exists for this lead
   const { data: existingJob } = await supabase
     .from('jobs')
     .select('id')
@@ -109,7 +90,6 @@ export async function createInstallJobFromLead(
     .single()
 
   if (jobError) {
-    // Unique constraint will catch race condition duplicates
     if (jobError.code === '23505') {
       throw new Error('A job already exists for this lead (concurrent creation detected).')
     }
@@ -137,7 +117,6 @@ export async function createInstallJobFromLead(
 
     if (tiError) {
       console.error('[CRITICAL] Failed to fetch template items:', tiError)
-      // Job exists but has no checklist — not ideal but not fatal
     } else if (templateItems && templateItems.length > 0) {
       const checklistRows = templateItems.map((item: any) => ({
         job_id: createdJob.id,
@@ -157,7 +136,6 @@ export async function createInstallJobFromLead(
 
       if (clError) {
         console.error('[CRITICAL] Failed to insert checklist items:', clError)
-        // Continue — job exists, checklist can be manually created
       }
     }
   } else {
@@ -171,7 +149,7 @@ export async function createInstallJobFromLead(
       job_id: createdJob.id,
       form_type: formType,
       required: true,
-      requires_signature: true, // All customer-facing forms require signature
+      requires_signature: true,
       status: 'pending',
     }))
 
@@ -185,8 +163,6 @@ export async function createInstallJobFromLead(
   }
 
   // ── Step 5: Update lead bridge field (BEST-EFFORT) ──
-  // This is a temporary bridge field. Source of truth is:
-  // EXISTS(SELECT 1 FROM jobs WHERE lead_id = leads.id)
   const { error: leadError } = await supabase
     .from('leads')
     .update({ job_created: true })
@@ -326,18 +302,26 @@ export async function updateJobStatus(
   // Auto-convert to customer on completion (BEST-EFFORT)
   if (newStatus === 'complete') {
     try {
-      // Check lead's payment method to determine ownership type
       let ownershipType: 'purchased' | 'rented' = 'purchased'
+      let leadData: any = null
       if (currentJob.lead_id) {
-        const { data: lead } = await supabase.from('leads').select('payment_method, rental_monthly_amount, rental_term_months').eq('id', currentJob.lead_id).single()
-        if (lead?.payment_method === 'rental') {
+        const { data: ld } = await supabase
+          .from('leads')
+          .select('payment_method, rental_monthly_amount, rental_term_months')
+          .eq('id', currentJob.lead_id)
+          .single()
+        leadData = ld
+        if (leadData?.payment_method === 'rental') {
           ownershipType = 'rented'
         }
       }
-      if (ownershipType === 'rented' && lead?.rental_monthly_amount) {         await convertJobToCustomer(data as Job, 'rented', actor, lead.rental_monthly_amount)       } else {         await convertJobToCustomer(data as Job, ownershipType, actor)       }
+      if (ownershipType === 'rented' && leadData?.rental_monthly_amount) {
+        await convertJobToCustomer(data as Job, 'rented', actor, leadData.rental_monthly_amount)
+      } else {
+        await convertJobToCustomer(data as Job, ownershipType, actor)
+      }
     } catch (convErr: any) {
       console.error('[BEST-EFFORT] Customer conversion failed:', convErr.message)
-      // Don't block job completion if conversion fails
     }
   }
 
@@ -411,8 +395,6 @@ export async function getCompletionStatus(jobId: string): Promise<CompletionStat
       status.issues.push(`${status.formsRequired - status.formsCompleted} required forms incomplete`)
     }
 
-    // Check signatures on forms that require them
-    // Truth source: signature_verified on job_required_forms
     const sigRequired = forms.filter((f: any) => f.requires_signature)
     const sigMissing = sigRequired.filter((f: any) => !f.signature_verified)
     if (sigMissing.length > 0) {
@@ -619,7 +601,6 @@ export async function submitFormResponse(
   signatureUrl: string | null,
   actor: ActorInfo
 ) {
-  // Step 1: Upsert response (REQUIRED)
   const { error: respError } = await supabase
     .from('job_form_responses')
     .upsert({
@@ -633,7 +614,6 @@ export async function submitFormResponse(
 
   if (respError) throw new Error(`Failed to save form response: ${respError.message}`)
 
-  // Step 2: Update required form status + signature_verified (REQUIRED)
   const hasRealSignature = !!signatureUrl && !signatureUrl.startsWith('local_')
   const { error: formError } = await supabase
     .from('job_required_forms')
@@ -641,14 +621,13 @@ export async function submitFormResponse(
       status: 'completed',
       completed_at: new Date().toISOString(),
       completed_by: actor.actor_id,
-      signature_verified: hasRealSignature || !!signatureUrl, // true if any signature captured
+      signature_verified: hasRealSignature || !!signatureUrl,
     })
     .eq('job_id', jobId)
     .eq('form_type', formType)
 
   if (formError) throw new Error(`Failed to update form status: ${formError.message}`)
 
-  // Step 3: Log activity (BEST-EFFORT)
   const eventType = formType.includes('consent') ? 'consent_submitted' : 'handover_submitted'
   await logJobActivity({
     job_id: jobId,
