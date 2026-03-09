@@ -334,7 +334,7 @@ export async function updateJobStatus(
           ownershipType = 'rented'
         }
       }
-      await convertJobToCustomer(data as Job, ownershipType, actor)
+      if (ownershipType === 'rented' && lead?.rental_monthly_amount) {         await convertJobToCustomer(data as Job, 'rented', actor, lead.rental_monthly_amount)       } else {         await convertJobToCustomer(data as Job, ownershipType, actor)       }
     } catch (convErr: any) {
       console.error('[BEST-EFFORT] Customer conversion failed:', convErr.message)
       // Don't block job completion if conversion fails
