@@ -123,6 +123,36 @@ export function QuoteBuilder({
   )
   const [quoteNumber] = useState(existingQuote?.quote_number || '(auto-assigned)')
   const [savedQuoteId, setSavedQuoteId] = useState<string | null>(existingQuote?.id || null)
+  const [serviceAddress, setServiceAddress] = useState(customerAddress || existingQuote?.customer_address || '')
+
+  // Fetch address from lead if not provided
+  useEffect(() => {
+    if (!serviceAddress && customerId) {
+      import('../../lib/supabase').then(({ supabase }) => {
+        supabase
+          .from('customers')
+          .select('lead_id')
+          .eq('id', customerId)
+          .single()
+          .then(({ data: cust }) => {
+            if (cust?.lead_id) {
+              supabase
+                .from('leads')
+                .select('address, service_address, street_address, city, state, zip')
+                .eq('id', cust.lead_id)
+                .single()
+                .then(({ data: lead }) => {
+                  if (lead) {
+                    const addr = lead.address || lead.service_address || lead.street_address ||
+                      [lead.city, lead.state, lead.zip].filter(Boolean).join(', ')
+                    if (addr) setServiceAddress(addr)
+                  }
+                })
+            }
+          })
+      })
+    }
+  }, [customerId])
 
   // Load products
   useEffect(() => {
@@ -379,7 +409,7 @@ export function QuoteBuilder({
             quoteDate={todayStr()}
             validUntil={validUntil}
             customerName={customerName}
-            customerAddress={customerAddress}
+            customerAddress={serviceAddress}
             customerPhone={customerPhone}
             salesConsultant={profile?.full_name || 'Zenith Pure Solutions'}
             estimation={estimation}
@@ -449,6 +479,18 @@ function FormView({
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Service Address */}
+      <div style={S.section}>
+        <div style={S.label}>Service / Installation Address</div>
+        <input
+          type="text"
+          value={serviceAddress}
+          onChange={e => setServiceAddress(e.target.value)}
+          placeholder="e.g. 123 Main St, Indianapolis, IN 46201"
+          style={{ ...S.input }}
+        />
       </div>
 
       {/* Estimation Details */}
@@ -660,7 +702,7 @@ function FormView({
 // ─── Preview View — matches Odoo PDF exactly ──────────────────
 
 function PreviewView({
-  quoteNumber, quoteDate, validUntil, customerName, customerAddress, customerPhone,
+  quoteNumber, quoteDate, validUntil, customerName, customerAddress = '', customerPhone,
   salesConsultant, estimation, lineItems, subtotal, taxAmount, total, commercialType,
 }: any) {
   const isRental = commercialType === 'rental'
