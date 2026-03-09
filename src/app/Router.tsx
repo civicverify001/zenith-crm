@@ -3,6 +3,7 @@ import { useAuth } from '../hooks/useAuth'
 import { AppLayout } from './Layout'
 import { LoginPage } from '../modules/auth/LoginPage'
 import { LoadingScreen } from '../shared/ui/LoadingScreen'
+import ProductCatalog from '../modules/products/ProductCatalog'
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
@@ -58,6 +59,7 @@ export function AppRouter() {
         <Route path="/invoices" element={<ComingSoon name="Accounting" />} />
         <Route path="/inventory" element={<ComingSoon name="Inventory" />} />
         <Route path="/services" element={<ComingSoon name="Plans & Rentals" />} />
+        <Route path="/products" element={<ProductCatalog />} />
         <Route path="/marketing" element={<ComingSoon name="Marketing ROI" />} />
         <Route path="/reports" element={<ComingSoon name="Reports" />} />
 
