@@ -1,5 +1,11 @@
+import { useState } from 'react'
 import { LIFECYCLE_LABELS } from '../customers.types'
-import { useInstalledSystems, useRentalContracts, useMaintenancePlans, useCustomerAddresses } from '../useCustomers'
+import {
+  useInstalledSystems, useRentalContracts,
+  useMaintenancePlans, useCustomerAddresses,
+} from '../useCustomers'
+import { supabase } from '../../../lib/supabase'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 
 interface Props { customer: any }
 
@@ -8,11 +14,82 @@ function formatDate(d: string | null) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// ─── Fetch lead origin data ──────────────────────────────────
+async function fetchLeadOrigin(leadId: string) {
+  if (!leadId) return null
+  const { data } = await supabase
+    .from('opportunities')
+    .select('source, source_detail, utm_source, utm_medium, utm_campaign, created_at, assigned_to')
+    .eq('id', leadId)
+    .maybeSingle()
+  return data
+}
+
+// ─── Fetch entity notes ──────────────────────────────────────
+async function fetchEntityNotes(customerId: string) {
+  const { data } = await supabase
+    .from('entity_notes')
+    .select('*')
+    .eq('entity_type', 'customer')
+    .eq('entity_id', customerId)
+    .order('created_at', { ascending: false })
+  return data || []
+}
+
+async function addEntityNote(customerId: string, content: string, noteType: string) {
+  const { data: { user } } = await supabase.auth.getUser()
+  const { error } = await supabase.from('entity_notes').insert({
+    entity_type: 'customer',
+    entity_id: customerId,
+    note_type: noteType,
+    content,
+    created_by: user?.id,
+  })
+  if (error) throw error
+}
+
+// ─── Source label map ────────────────────────────────────────
+const SOURCE_LABELS: Record<string, string> = {
+  website_form: 'Website Form',
+  landing_page: 'Landing Page',
+  google_ads: 'Google Ads',
+  facebook_ads: 'Facebook Ads',
+  referral: 'Referral',
+  door_knock: 'Door Knock',
+  home_show: 'Home Show',
+  phone_call: 'Phone Call',
+  other: 'Other',
+}
+
+const CONTACT_METHOD_LABELS: Record<string, string> = {
+  phone: '📞 Phone',
+  email: '✉️ Email',
+  sms: '💬 SMS',
+  mail: '📬 Mail',
+}
+
 export function CustomerOverviewTab({ customer }: Props) {
   const { data: systems } = useInstalledSystems(customer.id)
   const { data: contracts } = useRentalContracts(customer.id)
   const { data: plans } = useMaintenancePlans(customer.id)
   const { data: addresses } = useCustomerAddresses(customer.id)
+  const queryClient = useQueryClient()
+
+  const { data: leadOrigin } = useQuery({
+    queryKey: ['lead-origin', customer.lead_id],
+    queryFn: () => fetchLeadOrigin(customer.lead_id),
+    enabled: !!customer.lead_id,
+  })
+
+  const { data: notes = [] } = useQuery({
+    queryKey: ['entity-notes', 'customer', customer.id],
+    queryFn: () => fetchEntityNotes(customer.id),
+  })
+
+  const [newNote, setNewNote] = useState('')
+  const [noteType, setNoteType] = useState<'internal' | 'customer-facing'>('internal')
+  const [addingNote, setAddingNote] = useState(false)
+  const [savingNote, setSavingNote] = useState(false)
 
   const activeSystems = (systems || []).filter((s: any) => s.is_active !== false)
   const purchasedCount = activeSystems.filter((s: any) => s.ownership_type === 'purchased').length
@@ -21,9 +98,23 @@ export function CustomerOverviewTab({ customer }: Props) {
   const activeContract = (contracts || []).find((c: any) => c.status === 'active')
   const currentAddress = (addresses || []).find((a: any) => a.is_current) || (addresses || [])[0]
 
+  async function handleAddNote() {
+    if (!newNote.trim()) return
+    setSavingNote(true)
+    try {
+      await addEntityNote(customer.id, newNote.trim(), noteType)
+      setNewNote('')
+      setAddingNote(false)
+      queryClient.invalidateQueries({ queryKey: ['entity-notes', 'customer', customer.id] })
+    } finally {
+      setSavingNote(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
-      {/* Systems summary */}
+
+      {/* ── Systems summary ──────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-card border border-border rounded-xl p-3 text-center">
           <div className="text-2xl font-bold text-white">{activeSystems.length}</div>
@@ -45,7 +136,7 @@ export function CustomerOverviewTab({ customer }: Props) {
         </div>
       </div>
 
-      {/* Active rental */}
+      {/* ── Active rental ─────────────────────────────────── */}
       {activeContract && (
         <div className="rounded-xl p-3" style={{ backgroundColor: 'rgba(245, 158, 11, 0.06)', border: '1px solid rgba(245, 158, 11, 0.2)' }}>
           <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: '#fbbf24' }}>Active Rental Contract</div>
@@ -66,7 +157,7 @@ export function CustomerOverviewTab({ customer }: Props) {
         </div>
       )}
 
-      {/* Maintenance plan */}
+      {/* ── Maintenance plan ──────────────────────────────── */}
       {activePlan ? (
         <div className="rounded-xl p-3" style={{ backgroundColor: 'rgba(34, 197, 94, 0.06)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
           <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: '#4ade80' }}>Maintenance Plan</div>
@@ -84,7 +175,7 @@ export function CustomerOverviewTab({ customer }: Props) {
         </div>
       )}
 
-      {/* Contact info */}
+      {/* ── Contact Information ───────────────────────────── */}
       <div className="bg-card border border-border rounded-xl p-4 space-y-3">
         <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">Contact Information</div>
         <InfoRow label="Phone" value={customer.phone} />
@@ -95,25 +186,211 @@ export function CustomerOverviewTab({ customer }: Props) {
             : customer.service_address || '—'
         } />
         <InfoRow label="Customer Since" value={formatDate(customer.created_at)} />
-        {customer.lead_id && <InfoRow label="Source" value="Converted from lead" />}
+        {customer.preferred_contact_method && (
+          <InfoRow
+            label="Preferred Contact"
+            value={CONTACT_METHOD_LABELS[customer.preferred_contact_method] || customer.preferred_contact_method}
+          />
+        )}
       </div>
 
-      {/* Notes */}
+      {/* ── Communication Consent ─────────────────────────── */}
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+        <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">Communication Consent</div>
+        <div className="grid grid-cols-2 gap-3">
+          <ConsentBadge
+            label="Email Marketing"
+            enabled={customer.email_opt_in !== false}
+          />
+          <ConsentBadge
+            label="SMS / Text"
+            enabled={customer.sms_opt_in === true}
+          />
+        </div>
+        {customer.consent_source && (
+          <InfoRow label="Consent Source" value={customer.consent_source} />
+        )}
+        {customer.consent_updated_at && (
+          <InfoRow label="Last Updated" value={formatDate(customer.consent_updated_at)} />
+        )}
+        {!customer.consent_source && !customer.consent_updated_at && (
+          <div className="text-xs text-muted italic">No consent record on file — update before any marketing communications</div>
+        )}
+      </div>
+
+      {/* ── Lead History ──────────────────────────────────── */}
+      {customer.lead_id && (
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">Lead History</div>
+          <InfoRow
+            label="Converted"
+            value={formatDate(customer.created_at)}
+          />
+          {leadOrigin ? (
+            <>
+              {leadOrigin.source && (
+                <InfoRow
+                  label="Lead Source"
+                  value={SOURCE_LABELS[leadOrigin.source] || leadOrigin.source}
+                />
+              )}
+              {leadOrigin.source_detail && (
+                <InfoRow label="Source Detail" value={leadOrigin.source_detail} />
+              )}
+              {leadOrigin.utm_source && (
+                <InfoRow label="UTM Source" value={leadOrigin.utm_source} />
+              )}
+              {leadOrigin.utm_medium && (
+                <InfoRow label="UTM Medium" value={leadOrigin.utm_medium} />
+              )}
+              {leadOrigin.utm_campaign && (
+                <InfoRow label="Campaign" value={leadOrigin.utm_campaign} />
+              )}
+            </>
+          ) : (
+            <div className="text-xs text-muted italic">No source tracking data on original lead</div>
+          )}
+        </div>
+      )}
+
+      {/* ── Internal Notes ────────────────────────────────── */}
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">
+            Internal Notes {notes.length > 0 && <span className="text-muted font-normal normal-case">({notes.length})</span>}
+          </div>
+          {!addingNote && (
+            <button
+              onClick={() => setAddingNote(true)}
+              className="text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors"
+              style={{ backgroundColor: 'rgba(96,165,250,0.12)', color: '#60a5fa' }}
+            >
+              + Add Note
+            </button>
+          )}
+        </div>
+
+        {/* Add note form */}
+        {addingNote && (
+          <div className="mb-3 space-y-2">
+            <textarea
+              value={newNote}
+              onChange={e => setNewNote(e.target.value)}
+              placeholder="Write a note..."
+              rows={3}
+              className="w-full text-sm rounded-lg px-3 py-2 resize-none outline-none"
+              style={{
+                backgroundColor: '#0f172a',
+                border: '1px solid rgba(148,163,184,0.2)',
+                color: '#e2e8f0',
+              }}
+              autoFocus
+            />
+            <div className="flex items-center gap-2">
+              <select
+                value={noteType}
+                onChange={e => setNoteType(e.target.value as any)}
+                className="text-xs rounded-lg px-2 py-1 outline-none"
+                style={{ backgroundColor: '#1e293b', border: '1px solid rgba(148,163,184,0.2)', color: '#94a3b8' }}
+              >
+                <option value="internal">Internal</option>
+                <option value="customer-facing">Customer-Facing</option>
+              </select>
+              <div className="flex gap-2 ml-auto">
+                <button
+                  onClick={() => { setAddingNote(false); setNewNote('') }}
+                  className="text-xs px-3 py-1 rounded-lg text-muted hover:text-slate-300 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddNote}
+                  disabled={savingNote || !newNote.trim()}
+                  className="text-xs px-3 py-1 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                  style={{ backgroundColor: 'rgba(96,165,250,0.15)', color: '#60a5fa' }}
+                >
+                  {savingNote ? 'Saving...' : 'Save Note'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Notes list */}
+        {notes.length === 0 && !addingNote ? (
+          <div className="text-xs text-muted italic">No notes yet</div>
+        ) : (
+          <div className="space-y-2">
+            {(notes as any[]).map((note: any) => (
+              <div
+                key={note.id}
+                className="rounded-lg px-3 py-2.5"
+                style={{
+                  backgroundColor: note.note_type === 'customer-facing'
+                    ? 'rgba(34,211,238,0.05)'
+                    : 'rgba(148,163,184,0.06)',
+                  border: note.note_type === 'customer-facing'
+                    ? '1px solid rgba(34,211,238,0.15)'
+                    : '1px solid rgba(148,163,184,0.12)',
+                }}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span
+                    className="text-xs font-semibold"
+                    style={{ color: note.note_type === 'customer-facing' ? '#22d3ee' : '#64748b' }}
+                  >
+                    {note.note_type === 'customer-facing' ? 'Customer-Facing' : 'Internal'}
+                  </span>
+                  <span className="text-xs text-muted">{formatDate(note.created_at)}</span>
+                </div>
+                <div className="text-sm text-slate-300 whitespace-pre-wrap">{note.content}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Legacy notes field ────────────────────────────── */}
       {customer.notes && (
         <div className="bg-card border border-border rounded-xl p-4">
-          <div className="text-xs font-bold text-slate-300 uppercase tracking-wide mb-2">Notes</div>
+          <div className="text-xs font-bold text-slate-300 uppercase tracking-wide mb-2">Legacy Notes</div>
           <div className="text-sm text-slate-300 whitespace-pre-wrap">{customer.notes}</div>
         </div>
       )}
+
     </div>
   )
 }
 
+// ─── Sub-components ──────────────────────────────────────────
+
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-start justify-between">
-      <span className="text-xs text-muted uppercase tracking-wide">{label}</span>
+    <div className="flex items-start justify-between gap-4">
+      <span className="text-xs text-muted uppercase tracking-wide flex-shrink-0">{label}</span>
       <span className="text-sm text-slate-300 text-right">{value}</span>
+    </div>
+  )
+}
+
+function ConsentBadge({ label, enabled }: { label: string; enabled: boolean }) {
+  return (
+    <div
+      className="flex items-center gap-2 rounded-lg px-3 py-2"
+      style={{
+        backgroundColor: enabled ? 'rgba(74,222,128,0.08)' : 'rgba(148,163,184,0.06)',
+        border: `1px solid ${enabled ? 'rgba(74,222,128,0.2)' : 'rgba(148,163,184,0.15)'}`,
+      }}
+    >
+      <span style={{ color: enabled ? '#4ade80' : '#64748b', fontSize: 14 }}>
+        {enabled ? '✓' : '✗'}
+      </span>
+      <div>
+        <div className="text-xs font-semibold" style={{ color: enabled ? '#4ade80' : '#64748b' }}>
+          {label}
+        </div>
+        <div className="text-xs text-muted">{enabled ? 'Opted in' : 'Not opted in'}</div>
+      </div>
     </div>
   )
 }
