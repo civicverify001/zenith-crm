@@ -10,8 +10,7 @@ import {
   Product,
   ProductInsert,
   ProductUpdate,
-} from '../../services/productService';
-
+} from './productService';
 // ============================================================
 // PRODUCT CATALOG PAGE — Admin UI
 // Place in: src/pages/products/ProductCatalog.tsx
