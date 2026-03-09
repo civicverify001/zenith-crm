@@ -3,7 +3,7 @@ import { useAuth } from '../hooks/useAuth'
 import { AppLayout } from './Layout'
 import { LoginPage } from '../modules/auth/LoginPage'
 import { LoadingScreen } from '../shared/ui/LoadingScreen'
-import ProductCatalog from '../modules/products/ProductCatalog'
+import ProductCatalog from '../services/ProductCatalog'
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
