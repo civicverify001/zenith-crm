@@ -12,6 +12,7 @@ import {
 import { StageActionBar } from './StageActionBar'
 import { ActivityFeed } from './ActivityFeed'
 import { AgreementSignedPanel } from './AgreementSignedPanel'
+import SiteSurveyCapture from './SiteSurveyCapture'
 import { useQueryClient } from '@tanstack/react-query'
 import { LEAD_KEYS } from './useLeads'
 
@@ -152,6 +153,16 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
               {lead.stage === 'agreement_signed' && (
                 <AgreementSignedPanel lead={lead} />
               )}
+
+              {/* Site Survey */}
+              <SiteSurveyCapture
+                context="lead"
+                opportunityId={lead.id}
+                systemTypeContext={{
+                  opportunityProductType: lead.water_concern || null,
+                }}
+                defaultCollapsed={true}
+              />
 
               {/* Lost reason display */}
               {lead.stage === 'lost' && lead.lost_reason && (
