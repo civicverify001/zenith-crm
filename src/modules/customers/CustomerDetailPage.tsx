@@ -12,6 +12,7 @@ import { RentalBuyoutTab } from './tabs/RentalBuyoutTab'
 import { MaintenanceComplianceTab } from './tabs/MaintenanceComplianceTab'
 import { CustomerActivityTab } from './tabs/CustomerActivityTab'
 import { CustomerDocumentsTab } from './tabs/CustomerDocumentsTab'
+import SiteSurveyCapture from '../leads/SiteSurveyCapture'
 
 type CustTab = 'overview' | 'systems' | 'rental' | 'maintenance' | 'activity' | 'documents'
 
@@ -161,6 +162,15 @@ export function CustomerDetailPage() {
           value={overdueSchedules.length > 0 ? `${overdueSchedules.length} overdue` : dueSoonSchedules.length > 0 ? `${dueSoonSchedules.length} due soon` : '✓ Current'}
           sub={`${(schedules || []).length} total items`}
           color={overdueSchedules.length > 0 ? '#f87171' : dueSoonSchedules.length > 0 ? '#fbbf24' : '#4ade80'}
+        />
+      </div>
+
+      {/* ─── Pre-Install Survey (read-only) ──────────────── */}
+      <div className="mb-4 flex-shrink-0">
+        <SiteSurveyCapture
+          context="customer"
+          customerId={customer.id}
+          defaultCollapsed={true}
         />
       </div>
 
