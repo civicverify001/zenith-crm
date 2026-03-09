@@ -16,6 +16,7 @@ import { PhotosTab } from './tabs/PhotosTab'
 import { CustomerHandoverTab } from './tabs/CustomerHandoverTab'
 import { ConsentsTab } from './tabs/ConsentsTab'
 import { JobActivityTab } from '../dispatch/tabs/JobActivityTab'
+import SiteSurveyCapture from '../leads/SiteSurveyCapture'
 
 type InstallTab = 'checklist' | 'photos' | 'handover' | 'consents' | 'activity'
 
@@ -201,6 +202,19 @@ export function InstallationDetailPage() {
       {/* Completion Readiness */}
       <div className="mb-4 flex-shrink-0">
         <CompletionReadinessPanel jobId={currentJob.id} jobStatus={currentJob.status} />
+      </div>
+
+      {/* Site Survey — installer sees lead survey + can add supplemental photos */}
+      <div className="mb-4 flex-shrink-0">
+        <SiteSurveyCapture
+          context="job"
+          jobId={currentJob.id}
+          opportunityId={currentJob.lead_id || null}
+          systemTypeContext={{
+            jobSystemType: currentJob.system_type || null,
+          }}
+          defaultCollapsed={true}
+        />
       </div>
 
       {/* Tabs */}
