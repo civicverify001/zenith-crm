@@ -8,6 +8,7 @@ import { getCompletionStatus } from '../../services/jobService'
 import type { CompletionStatus } from '../../services/jobService'
 import type { Job, JobStatus } from '../dispatch/dispatch.types'
 import { JOB_STATUS_LABELS, JOB_STATUS_COLORS, SYSTEM_TYPE_LABELS } from '../dispatch/dispatch.types'
+import { supabase } from '../../lib/supabase'
 
 import { CompletionReadinessPanel } from './CompletionReadinessPanel'
 import { InstallerChecklistTab } from './tabs/InstallerChecklistTab'
@@ -46,16 +47,25 @@ export function InstallationDetailPage() {
   const [activeTab, setActiveTab] = useState<InstallTab>('checklist')
   const [statusError, setStatusError] = useState('')
 
-  // Sync fetched job into local state
   const currentJob = job || fetchedJob
 
-  // Completion readiness — controls Mark Complete button
   const { data: completionStatus } = useQuery<CompletionStatus>({
     queryKey: ['job_completion', currentJob?.id],
     queryFn: () => getCompletionStatus(currentJob!.id),
     enabled: !!currentJob?.id && currentJob?.status === 'in_progress',
     staleTime: 5_000,
     refetchInterval: 10_000,
+  })
+
+  // Find linked customer for completed jobs
+  const { data: linkedCustomer } = useQuery({
+    queryKey: ['job_customer', currentJob?.id],
+    queryFn: async () => {
+      if (!currentJob?.lead_id) return null
+      const { data } = await supabase.from('customers').select('id, full_name').eq('lead_id', currentJob.lead_id).maybeSingle()
+      return data
+    },
+    enabled: !!currentJob?.id && currentJob?.status === 'complete',
   })
 
   const canComplete = completionStatus?.ready === true
@@ -85,7 +95,7 @@ export function InstallationDetailPage() {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
-          <div className="text-red text-sm mb-2">Failed to load installation.</div>
+          <div className="text-sm mb-2" style={{ color: '#f87171' }}>Failed to load installation.</div>
           <button onClick={() => navigate('/installations')} className="text-accent text-sm hover:underline">← Back to list</button>
         </div>
       </div>
@@ -118,13 +128,14 @@ export function InstallationDetailPage() {
         </div>
       </div>
 
-      {/* Action bar — Installations owns Start Job + Mark Complete */}
+      {/* Action bar */}
       <div className="flex flex-wrap gap-2 mb-4 flex-shrink-0">
         {currentJob.status === 'scheduled' && (
           <button
             onClick={() => handleStatusChange('in_progress')}
             disabled={statusPending}
-            className="text-xs px-4 py-2 bg-cyan/15 text-cyan border border-cyan/30 rounded-lg font-semibold hover:bg-cyan/25 transition-colors disabled:opacity-50"
+            className="text-xs px-4 py-2 rounded-lg font-semibold transition-colors disabled:opacity-50"
+            style={{ backgroundColor: 'rgba(6,182,212,0.15)', color: '#22d3ee', border: '1px solid rgba(6,182,212,0.3)' }}
           >
             🔧 Start Installation
           </button>
@@ -134,25 +145,37 @@ export function InstallationDetailPage() {
             <button
               onClick={() => handleStatusChange('complete')}
               disabled={statusPending || !canComplete}
-              className={`text-xs px-4 py-2 rounded-lg font-semibold transition-colors ${
-                canComplete
-                  ? 'bg-green/15 text-green border border-green/30 hover:bg-green/25'
-                  : 'bg-muted/10 text-muted border border-border cursor-not-allowed'
-              }`}
+              className="text-xs px-4 py-2 rounded-lg font-semibold transition-colors disabled:opacity-50"
+              style={canComplete
+                ? { backgroundColor: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }
+                : { backgroundColor: 'rgba(148,163,184,0.1)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.2)', cursor: 'not-allowed' }
+              }
               title={!canComplete ? 'Complete all requirements first' : undefined}
             >
               ✅ Mark Complete
             </button>
             {!canComplete && completionStatus && (
-              <span className="text-xs text-amber">
+              <span className="text-xs" style={{ color: '#fbbf24' }}>
                 {completionStatus.issues.length} blocking issue{completionStatus.issues.length !== 1 ? 's' : ''}
               </span>
             )}
           </div>
         )}
         {currentJob.status === 'complete' && (
-          <div className="text-xs text-green font-semibold px-3 py-2">
-            ✅ Installation Complete — {formatDate(currentJob.completed_at)}
+          <div className="flex items-center gap-3">
+            <div className="text-xs font-semibold px-3 py-2" style={{ color: '#4ade80' }}>
+              ✅ Installation Complete — {formatDate(currentJob.completed_at)}
+            </div>
+            {/* Link to customer */}
+            {linkedCustomer && (
+              <button
+                onClick={() => navigate(`/customers/${linkedCustomer.id}`)}
+                className="text-xs px-3 py-2 rounded-lg font-semibold transition-colors"
+                style={{ backgroundColor: 'rgba(56,189,248,0.12)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.25)' }}
+              >
+                👤 View Customer: {linkedCustomer.full_name}
+              </button>
+            )}
           </div>
         )}
 
@@ -170,10 +193,10 @@ export function InstallationDetailPage() {
       </div>
 
       {statusError && (
-  <div className="mb-4 text-sm text-amber-300 bg-amber-500/15 border border-amber-500/30 rounded-lg px-4 py-3 font-semibold">
-    ⚠️ {statusError}
-  </div>
-)}
+        <div className="mb-4 text-sm font-semibold rounded-lg px-4 py-3" style={{ color: '#fbbf24', backgroundColor: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
+          ⚠️ {statusError}
+        </div>
+      )}
 
       {/* Completion Readiness */}
       <div className="mb-4 flex-shrink-0">
