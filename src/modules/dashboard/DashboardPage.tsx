@@ -439,9 +439,10 @@ export function DashboardPage() {
                   <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
                     cust.lifecycle_status === 'active'  ? 'bg-green-900/50 text-green-400' :
                     cust.lifecycle_status === 'at_risk' ? 'bg-red-900/50 text-red-400' :
+                    cust.lifecycle_status === 'churned' ? 'bg-gray-700 text-gray-500' :
                     'bg-gray-700 text-gray-400'
                   }`}>
-                    {cust.lifecycle_status}
+                    {cust.lifecycle_status || 'unknown'}
                   </span>
                 }
               />
