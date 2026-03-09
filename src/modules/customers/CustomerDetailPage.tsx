@@ -12,9 +12,10 @@ import { RentalBuyoutTab } from './tabs/RentalBuyoutTab'
 import { MaintenanceComplianceTab } from './tabs/MaintenanceComplianceTab'
 import { CustomerActivityTab } from './tabs/CustomerActivityTab'
 import { CustomerDocumentsTab } from './tabs/CustomerDocumentsTab'
+import { BillingTab } from './tabs/BillingTab'
 import SiteSurveyCapture from '../leads/SiteSurveyCapture'
 
-type CustTab = 'overview' | 'systems' | 'rental' | 'maintenance' | 'activity' | 'documents'
+type CustTab = 'overview' | 'systems' | 'rental' | 'billing' | 'maintenance' | 'activity' | 'documents'
 
 function formatDate(d: string | null) {
   if (!d) return '—'
@@ -66,12 +67,13 @@ export function CustomerDetailPage() {
 
   // ─── Tabs ─────────────────────────────────────────────────
   const TABS: { key: CustTab; label: string; show: boolean }[] = [
-    { key: 'overview', label: 'Overview', show: true },
-    { key: 'systems', label: 'Systems', show: true },
-    { key: 'rental', label: 'Rental & Buyout', show: hasRentals },
-    { key: 'maintenance', label: 'Maintenance', show: true },
-    { key: 'activity', label: 'Activity', show: true },
-    { key: 'documents', label: 'Documents', show: true },
+    { key: 'overview',    label: 'Overview',       show: true },
+    { key: 'systems',     label: 'Systems',         show: true },
+    { key: 'rental',      label: 'Rental & Buyout', show: hasRentals },
+    { key: 'billing',     label: 'Billing',         show: true },
+    { key: 'maintenance', label: 'Maintenance',     show: true },
+    { key: 'activity',    label: 'Activity',        show: true },
+    { key: 'documents',   label: 'Documents',       show: true },
   ]
 
   return (
@@ -130,7 +132,6 @@ export function CustomerDetailPage() {
 
       {/* ─── Summary Cards ───────────────────────────────── */}
       <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0">
-        {/* Systems */}
         <SummaryCard
           label="Installed Systems"
           value={String(activeSystems.length)}
@@ -140,14 +141,12 @@ export function CustomerDetailPage() {
           ].filter(Boolean).join(' · ') || 'None'}
           color="#38bdf8"
         />
-        {/* Warranty */}
         <SummaryCard
           label="Warranty"
           value={warrantyIssues.length > 0 ? `${warrantyIssues.length} issue${warrantyIssues.length !== 1 ? 's' : ''}` : '✓ Valid'}
           sub={voidWarranties.length > 0 ? `${voidWarranties.length} void` : warningWarranties.length > 0 ? `${warningWarranties.length} warning` : 'All systems covered'}
           color={voidWarranties.length > 0 ? '#f87171' : warningWarranties.length > 0 ? '#fbbf24' : '#4ade80'}
         />
-        {/* Maintenance */}
         <SummaryCard
           label="Maintenance Plan"
           value={activePlan ? 'Active' : 'None'}
@@ -156,7 +155,6 @@ export function CustomerDetailPage() {
             : 'No active plan'}
           color={activePlan ? '#4ade80' : '#94a3b8'}
         />
-        {/* Service */}
         <SummaryCard
           label="Service Schedule"
           value={overdueSchedules.length > 0 ? `${overdueSchedules.length} overdue` : dueSoonSchedules.length > 0 ? `${dueSoonSchedules.length} due soon` : '✓ Current'}
@@ -188,18 +186,18 @@ export function CustomerDetailPage() {
 
       {/* ─── Tab Content ─────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto py-5">
-        {activeTab === 'overview' && <CustomerOverviewTab customer={customer} />}
-        {activeTab === 'systems' && <InstalledSystemsTab customerId={customer.id} />}
-        {activeTab === 'rental' && <RentalBuyoutTab customerId={customer.id} />}
+        {activeTab === 'overview'    && <CustomerOverviewTab customer={customer} />}
+        {activeTab === 'systems'     && <InstalledSystemsTab customerId={customer.id} />}
+        {activeTab === 'rental'      && <RentalBuyoutTab customerId={customer.id} />}
+        {activeTab === 'billing'     && <BillingTab customerId={customer.id} customer={customer} />}
         {activeTab === 'maintenance' && <MaintenanceComplianceTab customerId={customer.id} />}
-        {activeTab === 'activity' && <CustomerActivityTab customerId={customer.id} />}
-        {activeTab === 'documents' && <CustomerDocumentsTab customerId={customer.id} />}
+        {activeTab === 'activity'    && <CustomerActivityTab customerId={customer.id} />}
+        {activeTab === 'documents'   && <CustomerDocumentsTab customerId={customer.id} />}
       </div>
     </div>
   )
 }
 
-// ─── Summary Card Component ─────────────────────────────────
 function SummaryCard({ label, value, sub, color }: { label: string; value: string; sub: string; color: string }) {
   return (
     <div className="bg-card border border-border rounded-xl p-3">
