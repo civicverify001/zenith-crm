@@ -326,8 +326,15 @@ export async function updateJobStatus(
   // Auto-convert to customer on completion (BEST-EFFORT)
   if (newStatus === 'complete') {
     try {
-      // Default to purchased — rental conversion needs explicit flow
-      await convertJobToCustomer(data as Job, 'purchased', actor)
+      // Check lead's payment method to determine ownership type
+      let ownershipType: 'purchased' | 'rented' = 'purchased'
+      if (currentJob.lead_id) {
+        const { data: lead } = await supabase.from('leads').select('payment_method, rental_monthly_amount, rental_term_months').eq('id', currentJob.lead_id).single()
+        if (lead?.payment_method === 'rental') {
+          ownershipType = 'rented'
+        }
+      }
+      await convertJobToCustomer(data as Job, ownershipType, actor)
     } catch (convErr: any) {
       console.error('[BEST-EFFORT] Customer conversion failed:', convErr.message)
       // Don't block job completion if conversion fails
