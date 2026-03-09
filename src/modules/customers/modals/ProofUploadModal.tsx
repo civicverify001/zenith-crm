@@ -1,35 +1,35 @@
 import { useState } from 'react'
-import { reviewProof } from '../../../services/complianceProofService'
+import { submitProof } from '../../../services/complianceProofService'
 import { useAuth } from '../../../hooks/useAuth'
 import { useQueryClient } from '@tanstack/react-query'
 import { CUSTOMER_KEYS } from '../useCustomers'
 
 interface Props {
-  proof: any
+  requirementId: string
   customerId: string
+  requirementLabel: string
   onClose: () => void
   onCompleted: () => void
 }
 
-export function ProofReviewModal({ proof, customerId, onClose, onCompleted }: Props) {
+export function ProofUploadModal({ requirementId, customerId, requirementLabel, onClose, onCompleted }: Props) {
   const { user, profile } = useAuth()
   const qc = useQueryClient()
-  const [notes, setNotes] = useState('')
+  const [proofUrl, setProofUrl] = useState('')
+  const [proofType, setProofType] = useState('receipt')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
 
-  async function handleReview(status: 'accepted' | 'rejected') {
-    if (!user) return
+  async function handleSubmit() {
+    if (!user || !proofUrl.trim()) return
     setPending(true)
     setError('')
     try {
-      await reviewProof(proof.id, status, {
+      await submitProof(requirementId, proofUrl.trim(), proofType, {
         actor_id: user.id, actor_name: profile?.full_name,
-      }, notes || undefined)
+      })
       qc.invalidateQueries({ queryKey: CUSTOMER_KEYS.proofs(customerId) })
-      qc.invalidateQueries({ queryKey: CUSTOMER_KEYS.warranties(customerId) })
       qc.invalidateQueries({ queryKey: CUSTOMER_KEYS.activity(customerId) })
-      qc.invalidateQueries({ queryKey: CUSTOMER_KEYS.detail(customerId) })
       onCompleted()
     } catch (e: any) {
       setError(e.message)
@@ -41,27 +41,27 @@ export function ProofReviewModal({ proof, customerId, onClose, onCompleted }: Pr
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div className="bg-card border border-border rounded-xl p-5 w-full max-w-md shadow-xl" onClick={e => e.stopPropagation()}>
-        <h3 className="text-sm font-bold text-white mb-1">Review Compliance Proof</h3>
-        <p className="text-xs text-muted mb-4">
-          {proof.proof_type?.replace(/_/g, ' ')} — submitted {new Date(proof.submitted_at).toLocaleDateString()}
-        </p>
+        <h3 className="text-sm font-bold text-white mb-1">Submit Compliance Proof</h3>
+        <p className="text-xs text-muted mb-4">{requirementLabel}</p>
 
-        {/* Proof link */}
-        {proof.proof_url && (
-          <div className="mb-3 p-3 bg-surface border border-border rounded-lg">
-            <a href={proof.proof_url} target="_blank" rel="noopener noreferrer"
-              className="text-xs font-medium break-all" style={{ color: '#38bdf8' }}>
-              📎 {proof.proof_url}
-            </a>
-          </div>
-        )}
+        <div className="mb-3">
+          <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide block mb-1">Proof Type</label>
+          <select value={proofType} onChange={e => setProofType(e.target.value)}
+            className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent">
+            <option value="receipt">Receipt</option>
+            <option value="invoice">Invoice</option>
+            <option value="photo">Photo</option>
+            <option value="service_record">Service Record</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
 
-        {/* Review notes */}
         <div className="mb-4">
-          <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide block mb-1">Review Notes (optional)</label>
-          <textarea value={notes} onChange={e => setNotes(e.target.value)}
-            rows={2} placeholder="Reason for acceptance or rejection..."
-            className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-muted focus:outline-none focus:border-accent resize-none" />
+          <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide block mb-1">Proof URL</label>
+          <input type="url" value={proofUrl} onChange={e => setProofUrl(e.target.value)}
+            placeholder="https://... (link to receipt, photo, or document)"
+            className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-muted focus:outline-none focus:border-accent" />
+          <p className="text-xs text-muted mt-1">Paste a link to the uploaded proof document or image.</p>
         </div>
 
         {error && (
@@ -72,18 +72,13 @@ export function ProofReviewModal({ proof, customerId, onClose, onCompleted }: Pr
 
         <div className="flex gap-2">
           <button onClick={onClose} disabled={pending}
-            className="text-xs px-3 py-2 rounded-lg border border-border text-muted hover:text-slate-300 transition-colors">
+            className="flex-1 text-xs px-3 py-2 rounded-lg border border-border text-muted hover:text-slate-300 transition-colors">
             Cancel
           </button>
-          <button onClick={() => handleReview('rejected')} disabled={pending}
+          <button onClick={handleSubmit} disabled={pending || !proofUrl.trim()}
             className="flex-1 text-xs px-3 py-2 rounded-lg font-semibold transition-colors disabled:opacity-50"
-            style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }}>
-            {pending ? '...' : '✗ Reject'}
-          </button>
-          <button onClick={() => handleReview('accepted')} disabled={pending}
-            className="flex-1 text-xs px-3 py-2 rounded-lg font-semibold transition-colors disabled:opacity-50"
-            style={{ backgroundColor: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}>
-            {pending ? '...' : '✓ Accept'}
+            style={{ backgroundColor: 'rgba(56,189,248,0.15)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.3)' }}>
+            {pending ? 'Submitting...' : 'Submit Proof'}
           </button>
         </div>
       </div>
