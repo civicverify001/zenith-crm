@@ -92,21 +92,6 @@ function useActiveLeadCounts() {
   })
 }
 
-function useActiveCustomerCount() {
-  return useQuery({
-    queryKey: ['dashboard', 'customer_count'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('customers')
-        .select('id', { count: 'exact', head: true })
-        .eq('lifecycle_status', 'active')
-      if (error) throw error
-      return data
-    },
-    refetchInterval: 60_000,
-  })
-}
-
 function useJobsThisWeek() {
   return useQuery({
     queryKey: ['dashboard', 'jobs_this_week'],
@@ -161,6 +146,25 @@ function useRecentCustomers() {
   })
 }
 
+function useFailedPayments() {
+  return useQuery({
+    queryKey: ['dashboard', 'failed_payments'],
+    queryFn: async () => {
+      const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+      const { data, error } = await supabase
+        .from('payment_transactions')
+        .select('id, amount, failure_reason, attempted_at, description, customer_id, customers!inner(full_name, phone)')
+        .eq('status', 'failed')
+        .gte('attempted_at', cutoff)
+        .order('amount', { ascending: false })
+        .limit(10)
+      if (error) throw error
+      return data || []
+    },
+    refetchInterval: 30_000,
+  })
+}
+
 // ============================================================
 // HELPERS
 // ============================================================
@@ -186,10 +190,10 @@ function formatShortDate(d: string): string {
 }
 
 const JOB_STATUS_BADGE: Record<string, { label: string; color: string }> = {
-  scheduled:   { label: 'Scheduled', color: 'bg-blue-900/50 text-blue-400' },
+  scheduled:   { label: 'Scheduled',  color: 'bg-blue-900/50 text-blue-400'  },
   in_progress: { label: 'In Progress', color: 'bg-cyan-900/50 text-cyan-400' },
-  complete:    { label: 'Complete', color: 'bg-green-900/50 text-green-400' },
-  cancelled:   { label: 'Cancelled', color: 'bg-red-900/50 text-red-400' },
+  complete:    { label: 'Complete',   color: 'bg-green-900/50 text-green-400' },
+  cancelled:   { label: 'Cancelled',  color: 'bg-red-900/50 text-red-400'    },
 }
 
 // ============================================================
@@ -200,32 +204,32 @@ export function DashboardPage() {
   const { profile, role } = useAuth()
   const navigate = useNavigate()
 
-  const { data: newLeadsToday = [] } = useNewLeadsToday()
+  const { data: newLeadsToday = [] }    = useNewLeadsToday()
   const { data: overdueFollowUps = [] } = useOverdueLeadFollowUps()
   const { data: uncontactedLeads = [] } = useUncontactedLeads()
-  const { data: todaysJobs = [] } = useTodaysJobs()
-  const { data: activeLeadCount = 0 } = useActiveLeadCounts()
-  const { data: jobsThisWeek = [] } = useJobsThisWeek()
-  const { data: overdueServices = [] } = useOverdueServices()
-  const { data: recentCustomers = [] } = useRecentCustomers()
+  const { data: todaysJobs = [] }       = useTodaysJobs()
+  const { data: activeLeadCount = 0 }  = useActiveLeadCounts()
+  const { data: jobsThisWeek = [] }     = useJobsThisWeek()
+  const { data: overdueServices = [] }  = useOverdueServices()
+  const { data: recentCustomers = [] }  = useRecentCustomers()
+  const { data: failedPayments = [] }   = useFailedPayments()
 
   const greeting = profile
     ? `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, ${profile.full_name.split(' ')[0]}.`
     : 'Welcome.'
 
   const completedJobsThisWeek = jobsThisWeek.filter((j: any) => j.status === 'complete').length
-  const scheduledToday = todaysJobs.filter((j: any) => j.status === 'scheduled').length
+  const scheduledToday  = todaysJobs.filter((j: any) => j.status === 'scheduled').length
   const inProgressToday = todaysJobs.filter((j: any) => j.status === 'in_progress').length
 
-  // Count total urgent items for the header
-  const urgentCount = overdueFollowUps.length + overdueServices.length
+  const urgentCount = overdueFollowUps.length + overdueServices.length + failedPayments.length
 
-  const isAdmin = role === 'admin'
+  const isAdmin        = role === 'admin'
   const isSalesOrAdmin = role === 'admin' || role === 'salesrep' || role === 'frontdesk'
-  const isTechnician = role === 'technician'
 
   return (
     <div className="space-y-5 max-w-6xl">
+
       {/* ─── Header ──────────────────────────────────────── */}
       <div className="flex items-start justify-between">
         <div>
@@ -236,7 +240,7 @@ export function DashboardPage() {
         </div>
         {urgentCount > 0 && (
           <div className="px-3 py-1.5 rounded-lg text-sm font-semibold"
-            style={{ backgroundColor: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171' }}>
+            style={{ backgroundColor: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171' }}>
             {urgentCount} item{urgentCount !== 1 ? 's' : ''} need attention
           </div>
         )}
@@ -269,17 +273,58 @@ export function DashboardPage() {
           onClick={() => navigate('/dispatch')}
         />
         <KPICard
-          label="Overdue Services"
-          value={String(overdueServices.length)}
-          sub={overdueServices.length > 0 ? 'Action required' : 'All current'}
-          icon="🔧"
-          color={overdueServices.length > 0 ? '#f87171' : '#4ade80'}
+          label="Failed Payments"
+          value={String(failedPayments.length)}
+          sub={failedPayments.length > 0 ? 'Last 48 hours' : 'All clear'}
+          icon="💳"
+          color={failedPayments.length > 0 ? '#f87171' : '#4ade80'}
           onClick={() => navigate('/customers')}
         />
       </div>
 
       {/* ─── Action Queue Grid ───────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+        {/* Failed Payments — Admin, always first */}
+        {isAdmin && failedPayments.length > 0 && (
+          <ActionSection
+            title="Failed Payments"
+            icon="💳"
+            count={failedPayments.length}
+            emptyText="No failed payments"
+            urgentColor={true}
+          >
+            {failedPayments.slice(0, 5).map((tx: any) => (
+              <ActionRow
+                key={tx.id}
+                onClick={() => navigate(`/customers/${tx.customer_id}`)}
+                left={
+                  <div>
+                    <div className="text-sm font-medium text-white">
+                      {tx.customers?.full_name || 'Unknown customer'}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {tx.failure_reason || 'Payment failed'} · {timeAgo(tx.attempted_at)}
+                    </div>
+                  </div>
+                }
+                right={
+                  <span className="text-sm font-semibold" style={{ color: '#f87171' }}>
+                    ${Number(tx.amount).toFixed(2)}
+                  </span>
+                }
+              />
+            ))}
+            {failedPayments.length > 5 && (
+              <button
+                onClick={() => navigate('/customers')}
+                className="text-xs text-accent hover:underline mt-2 block px-4 pb-2"
+              >
+                View all {failedPayments.length} failed →
+              </button>
+            )}
+          </ActionSection>
+        )}
 
         {/* Overdue Follow-Ups — Sales/Admin */}
         {isSalesOrAdmin && (
@@ -315,7 +360,7 @@ export function DashboardPage() {
           </ActionSection>
         )}
 
-        {/* New Leads to Contact — Sales/Admin */}
+        {/* Leads to Contact — Sales/Admin */}
         {isSalesOrAdmin && (
           <ActionSection
             title="Leads to Contact"
@@ -334,9 +379,7 @@ export function DashboardPage() {
                   </div>
                 }
                 right={
-                  <span className="text-xs text-gray-400">
-                    {timeAgo(lead.created_at)}
-                  </span>
+                  <span className="text-xs text-gray-400">{timeAgo(lead.created_at)}</span>
                 }
               />
             ))}
@@ -394,7 +437,7 @@ export function DashboardPage() {
                 }
                 right={
                   <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
-                    cust.lifecycle_status === 'active' ? 'bg-green-900/50 text-green-400' :
+                    cust.lifecycle_status === 'active'  ? 'bg-green-900/50 text-green-400' :
                     cust.lifecycle_status === 'at_risk' ? 'bg-red-900/50 text-red-400' :
                     'bg-gray-700 text-gray-400'
                   }`}>
@@ -434,18 +477,20 @@ export function DashboardPage() {
             ))}
           </ActionSection>
         )}
+
       </div>
 
       {/* ─── Quick Actions ───────────────────────────────── */}
       {isSalesOrAdmin && (
         <div className="flex flex-wrap gap-2 pt-2">
-          <QuickAction label="+ New Lead" onClick={() => navigate('/leads')} />
-          <QuickAction label="View Pipeline" onClick={() => navigate('/leads')} />
-          <QuickAction label="Dispatch Board" onClick={() => navigate('/dispatch')} />
-          <QuickAction label="All Customers" onClick={() => navigate('/customers')} />
+          <QuickAction label="+ New Lead"      onClick={() => navigate('/leads')}     />
+          <QuickAction label="View Pipeline"   onClick={() => navigate('/leads')}     />
+          <QuickAction label="Dispatch Board"  onClick={() => navigate('/dispatch')}  />
+          <QuickAction label="All Customers"   onClick={() => navigate('/customers')} />
           {isAdmin && <QuickAction label="Product Catalog" onClick={() => navigate('/products')} />}
         </div>
       )}
+
     </div>
   )
 }
@@ -485,8 +530,8 @@ function ActionSection({ title, icon, count, emptyText, urgentColor, children }:
           <h3 className="text-sm font-semibold text-white">{title}</h3>
         </div>
         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-          count === 0 ? 'bg-gray-700 text-gray-400' :
-          urgentColor ? 'bg-red-900/50 text-red-400' :
+          count === 0    ? 'bg-gray-700 text-gray-400' :
+          urgentColor    ? 'bg-red-900/50 text-red-400' :
           'bg-gray-700 text-gray-300'
         }`}>
           {count}
