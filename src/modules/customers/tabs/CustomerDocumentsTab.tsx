@@ -25,6 +25,12 @@ const REVIEW_STYLES: Record<string, { color: string; label: string }> = {
   rejected: { color: '#f87171', label: 'Rejected' },
 }
 
+const QUOTE_TYPE_LABELS: Record<string, string> = {
+  rental: 'Rental Agreement',
+  purchase: 'Purchase Agreement',
+  financing: 'Financing Agreement',
+}
+
 // ─── Data hooks ─────────────────────────────────────────────
 
 function useCustomerJobAndLead(customerId: string) {
@@ -67,7 +73,7 @@ function useJobFormResponses(jobId: string | null) {
         .from('job_form_responses')
         .select('*')
         .eq('job_id', jobId)
-        .order('created_at', { ascending: false })
+        .order('submitted_at', { ascending: false })
       return data || []
     },
     enabled: !!jobId,
@@ -83,7 +89,7 @@ function useJobSignatures(jobId: string | null) {
         .from('job_signatures')
         .select('*')
         .eq('job_id', jobId)
-        .order('created_at', { ascending: false })
+        .order('signed_at', { ascending: false })
       return data || []
     },
     enabled: !!jobId,
@@ -144,28 +150,34 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                 <div className="flex items-center gap-2">
                   <span className="text-sm">📝</span>
                   <span className="text-sm font-medium text-white">
-                    {agr.agreement_type?.replace(/_/g, ' ') || 'Agreement'}
+                    {QUOTE_TYPE_LABELS[agr.quote_type] || agr.quote_type?.replace(/_/g, ' ') || 'Agreement'}
                   </span>
                 </div>
                 <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                  agr.status === 'signed' ? 'bg-green-500/20 text-green-400' :
-                  agr.status === 'sent' ? 'bg-blue-500/20 text-blue-400' :
-                  'bg-gray-700 text-gray-400'
+                  agr.signed_at ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'
                 }`}>
-                  {agr.status || 'Unknown'}
+                  {agr.signed_at ? 'Signed' : 'Pending'}
                 </span>
               </div>
               <div className="text-xs text-muted space-y-0.5">
-                <div>Created: {formatDateTime(agr.created_at)}</div>
                 {agr.signed_at && <div>Signed: {formatDateTime(agr.signed_at)}</div>}
+                {agr.signed_by_rep && <div>Rep: {agr.signed_by_rep}</div>}
                 {agr.monthly_amount && <div>Monthly: ${agr.monthly_amount}</div>}
-                {agr.term_months && <div>Term: {agr.term_months} months</div>}
+                {agr.total_amount && <div>Total: ${agr.total_amount}</div>}
+                {agr.rental_term_months && <div>Term: {agr.rental_term_months} months</div>}
+                {agr.deposit_amount && <div>Deposit: ${agr.deposit_amount} ({agr.deposit_method || 'N/A'})</div>}
+                {agr.install_address && <div>Install: {agr.install_address}</div>}
               </div>
-              {agr.document_url && (
-                <a href={agr.document_url} target="_blank" rel="noopener noreferrer"
-                  className="text-xs mt-2 inline-block" style={{ color: '#38bdf8' }}>
-                  View document ↗
-                </a>
+              {agr.customer_signature && (
+                <div className="mt-2">
+                  <div className="text-xs text-gray-500 mb-1">Customer signature:</div>
+                  <img
+                    src={agr.customer_signature}
+                    alt="Signature"
+                    className="h-12 bg-white rounded px-2 py-1 cursor-pointer"
+                    onClick={() => setLightboxUrl(agr.customer_signature)}
+                  />
+                </div>
               )}
             </DocCard>
           ))}
@@ -189,19 +201,19 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                 </span>
               </div>
               <div className="text-xs text-muted space-y-0.5">
-                <div>Completed: {formatDateTime(form.created_at)}</div>
+                <div>Submitted: {formatDateTime(form.submitted_at)}</div>
                 {form.response_data?.customer_name && (
                   <div>Signed by: {form.response_data.customer_name}</div>
                 )}
               </div>
-              {form.signature_url && (
+              {form.customer_signature_url && (
                 <div className="mt-2">
                   <div className="text-xs text-gray-500 mb-1">Customer signature:</div>
                   <img
-                    src={form.signature_url}
+                    src={form.customer_signature_url}
                     alt="Signature"
                     className="h-12 bg-white rounded px-2 py-1 cursor-pointer"
-                    onClick={() => setLightboxUrl(form.signature_url)}
+                    onClick={() => setLightboxUrl(form.customer_signature_url)}
                   />
                 </div>
               )}
@@ -219,15 +231,16 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                 <div className="flex items-center gap-2">
                   <span className="text-sm">✍️</span>
                   <span className="text-sm font-medium text-white">
-                    {sig.signature_type?.replace(/_/g, ' ') || sig.form_type?.replace(/_/g, ' ') || 'Consent'}
+                    Customer Consent
                   </span>
                 </div>
                 <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-green-500/20 text-green-400">
                   Signed
                 </span>
               </div>
-              <div className="text-xs text-muted">
-                Signed: {formatDateTime(sig.signed_at || sig.created_at)}
+              <div className="text-xs text-muted space-y-0.5">
+                <div>Signed: {formatDateTime(sig.signed_at)}</div>
+                {sig.signed_by_name && <div>Signed by: {sig.signed_by_name}</div>}
               </div>
               {sig.signature_url && (
                 <div className="mt-2">
