@@ -196,7 +196,7 @@ export function CustomerDetailPage() {
           <CustomerQuotesTab
             customerId={customer.id}
             customerName={customer.full_name}
-            customerAddress={customer.service_address || customer.address}
+            customerAddress={''}
             customerPhone={customer.phone}
           />
         )}
