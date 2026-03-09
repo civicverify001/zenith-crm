@@ -171,8 +171,8 @@ export function QuotesPage() {
       <QuoteBuilder
         customerId={cust.id}
         customerName={cust.full_name}
-        customerAddress={cust.service_address || cust.address || ''}
-        customerPhone={cust.phone || ''}
+        customerAddress={''}
+        customerPhone={cust.phone || cust.mobile || ''}
         existingQuote={view === 'edit' ? editQuote : null}
         onSaved={(q) => {
           loadQuotes()
