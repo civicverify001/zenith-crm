@@ -93,7 +93,7 @@ module.exports = async function handler(req, res) {
       full_name: fullName,
       phone: cleanPhone,
       stage: 'new',
-      source: 'website',
+      source: 'website_form',
     }
 
     if (email) leadData.email = email
