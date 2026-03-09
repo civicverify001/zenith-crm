@@ -72,17 +72,18 @@ export function QuotesPage() {
   }
 
   async function loadCustomers(q: string) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('customers')
-      .select('id, full_name, email, phone, service_address')
+      .select('*')
       .ilike('full_name', `%${q}%`)
       .order('full_name')
       .limit(20)
+    if (error) console.error('Customer search error:', error)
     setCustomers(data || [])
   }
 
   useEffect(() => {
-    if (customerSearch.length > 1) loadCustomers(customerSearch)
+    if (customerSearch.length > 0) loadCustomers(customerSearch)
     else setCustomers([])
   }, [customerSearch])
 
@@ -170,7 +171,7 @@ export function QuotesPage() {
       <QuoteBuilder
         customerId={cust.id}
         customerName={cust.full_name}
-        customerAddress={cust.service_address || ''}
+        customerAddress={cust.service_address || cust.address || ''}
         customerPhone={cust.phone || ''}
         existingQuote={view === 'edit' ? editQuote : null}
         onSaved={(q) => {
