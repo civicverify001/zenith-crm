@@ -1,8 +1,13 @@
-import { useInstalledSystems } from '../useCustomers'
-import type { InstalledSystem } from '../customers.types'
-import { OWNERSHIP_LABELS, WARRANTY_LABELS, WARRANTY_COLORS } from '../customers.types'
+import { useInstalledSystems, useWarrantyRecords } from '../useCustomers'
+import { OWNERSHIP_LABELS } from '../customers.types'
 
 interface Props { customerId: string }
+
+const WARRANTY_STATUS_STYLES: Record<string, { bg: string; color: string; label: string }> = {
+  valid:   { bg: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', label: 'Valid' },
+  warning: { bg: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', label: 'Warning' },
+  void:    { bg: 'rgba(239, 68, 68, 0.15)', color: '#f87171', label: 'Void' },
+}
 
 function formatDate(d: string | null) {
   if (!d) return '—'
@@ -11,62 +16,102 @@ function formatDate(d: string | null) {
 
 export function InstalledSystemsTab({ customerId }: Props) {
   const { data: systems, isLoading } = useInstalledSystems(customerId)
+  const { data: warranties } = useWarrantyRecords(customerId)
 
   if (isLoading) return <p className="text-sm text-muted text-center py-8">Loading systems...</p>
   if (!systems?.length) return <p className="text-sm text-muted text-center py-8">No installed systems.</p>
 
+  const active = (systems as any[]).filter(s => s.is_active !== false)
+  const inactive = (systems as any[]).filter(s => s.is_active === false)
+
+  // Map warranties by system id
+  const warrantyMap: Record<string, any> = {}
+  for (const w of (warranties || []) as any[]) {
+    warrantyMap[w.installed_system_id] = w
+  }
+
   return (
     <div className="space-y-3">
-      {(systems as InstalledSystem[]).filter(s => s.is_active).map(sys => (
-        <div key={sys.id} className="bg-card border border-border rounded-xl p-4">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-bold text-white">{sys.name_snapshot}</h4>
-            <div className="flex items-center gap-2">
-              <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                sys.ownership_type === 'purchased' ? 'bg-green/20 text-green' : 'bg-amber/20 text-amber'
-              }`}>
-                {OWNERSHIP_LABELS[sys.ownership_type]}
-              </span>
-              <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${WARRANTY_COLORS[sys.warranty_status]}`}>
-                {WARRANTY_LABELS[sys.warranty_status]}
-              </span>
+      {active.length === 0 && <p className="text-sm text-muted text-center py-4">No active systems.</p>}
+      {active.map(sys => {
+        const warranty = warrantyMap[sys.id]
+        const wStatus = warranty?.warranty_status || 'valid'
+        const wStyle = WARRANTY_STATUS_STYLES[wStatus] || WARRANTY_STATUS_STYLES.valid
+
+        return (
+          <div key={sys.id} className="bg-card border border-border rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-bold text-white">{sys.name_snapshot || sys.system_type}</h4>
+              <div className="flex items-center gap-2">
+                <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{
+                  backgroundColor: sys.ownership_type === 'purchased' ? 'rgba(34,197,94,0.15)' : 'rgba(245,158,11,0.15)',
+                  color: sys.ownership_type === 'purchased' ? '#4ade80' : '#fbbf24',
+                }}>
+                  {OWNERSHIP_LABELS[sys.ownership_type as keyof typeof OWNERSHIP_LABELS] || sys.ownership_type}
+                </span>
+                <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{
+                  backgroundColor: wStyle.bg, color: wStyle.color,
+                }}>
+                  {wStyle.label}
+                </span>
+              </div>
             </div>
-          </div>
 
-          {sys.converted_from_rental && (
-            <div className="text-xs text-accent mb-2">
-              Converted from rental {sys.conversion_date ? `on ${formatDate(sys.conversion_date)}` : ''}
+            {sys.converted_from_rental && (
+              <div className="text-xs mb-2" style={{ color: '#38bdf8' }}>
+                Converted from rental {sys.conversion_date ? `on ${formatDate(sys.conversion_date)}` : ''}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+              {sys.sku_snapshot && <Field label="SKU" value={sys.sku_snapshot} />}
+              {sys.serial_number && <Field label="Serial" value={sys.serial_number} />}
+              <Field label="Installed" value={formatDate(sys.install_date)} />
+              {sys.retail_price_snapshot && <Field label="Retail Price" value={`$${Number(sys.retail_price_snapshot).toLocaleString()}`} />}
+              {sys.install_fee_snapshot > 0 && <Field label="Install Fee" value={`$${Number(sys.install_fee_snapshot).toLocaleString()}`} />}
             </div>
-          )}
 
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-            {sys.sku_snapshot && <Field label="SKU" value={sys.sku_snapshot} />}
-            {sys.serial_number && <Field label="Serial" value={sys.serial_number} />}
-            <Field label="Installed" value={formatDate(sys.install_date)} />
-            {sys.retail_price_snapshot && <Field label="Retail Price" value={`$${Number(sys.retail_price_snapshot).toLocaleString()}`} />}
-          </div>
-
-          {/* Warranty details */}
-          {(sys.warranty_parts_years || sys.warranty_labor_years) && (
-            <div className="mt-3 pt-2 border-t border-border">
-              <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-1">Warranty</div>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                {sys.warranty_parts_years ? (
-                  <Field label="Parts" value={`${sys.warranty_parts_years}yr — expires ${formatDate(sys.warranty_parts_expiry)}`} />
-                ) : (
-                  <Field label="Parts" value="Manufacturer warranty (see notes)" />
+            {/* Warranty details from warranty_records */}
+            {warranty && (
+              <div className="mt-3 pt-2 border-t border-border">
+                <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-1">Warranty</div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  {warranty.parts_duration_years && (
+                    <Field label="Parts" value={`${warranty.parts_duration_years}yr — expires ${formatDate(warranty.parts_end_date)}`} />
+                  )}
+                  {warranty.labor_duration_years && (
+                    <Field label="Labor" value={`${warranty.labor_duration_years}yr — expires ${formatDate(warranty.labor_end_date)}`} />
+                  )}
+                </div>
+                {warranty.manufacturer_parts_warranty_note && (
+                  <div className="text-xs text-muted mt-1">Note: {warranty.manufacturer_parts_warranty_note}</div>
                 )}
-                {sys.warranty_labor_years && (
-                  <Field label="Labor" value={`${sys.warranty_labor_years}yr — expires ${formatDate(sys.warranty_labor_expiry)}`} />
+                {warranty.warranty_status === 'void' && warranty.status_reason && (
+                  <div className="text-xs mt-1" style={{ color: '#f87171' }}>Void reason: {warranty.status_reason}</div>
+                )}
+                {warranty.warranty_status === 'warning' && warranty.status_reason && (
+                  <div className="text-xs mt-1" style={{ color: '#fbbf24' }}>Warning: {warranty.status_reason}</div>
                 )}
               </div>
-              {sys.warranty_status === 'void' && sys.warranty_void_reason && (
-                <div className="text-xs text-red mt-1">Void reason: {sys.warranty_void_reason}</div>
-              )}
+            )}
+          </div>
+        )
+      })}
+
+      {/* Inactive / removed systems */}
+      {inactive.length > 0 && (
+        <div className="mt-4">
+          <div className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Inactive / Removed Systems</div>
+          {inactive.map(sys => (
+            <div key={sys.id} className="bg-card/50 border border-border/50 rounded-xl p-3 opacity-60 mb-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-400">{sys.name_snapshot || sys.system_type}</span>
+                <span className="text-xs text-muted">Removed</span>
+              </div>
             </div>
-          )}
+          ))}
         </div>
-      ))}
+      )}
     </div>
   )
 }
