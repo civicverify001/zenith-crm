@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase'
 import type { Job } from '../modules/dispatch/dispatch.types'
+import { linkSurveyToCustomer } from './siteSurveyService'
 
 interface ActorInfo { actor_id: string; actor_name?: string }
 
@@ -131,6 +132,15 @@ export async function convertJobToCustomer(
     metadata: { job_id: job.id, system_type: job.system_type, ownership_type: ownershipType, skus: products.map((p: any) => p.sku) },
     actor_id: actor.actor_id, actor_name: actor.actor_name || null,
   })
+
+  // Link site survey photos to customer
+  if (job.lead_id) {
+    try {
+      await linkSurveyToCustomer(job.lead_id, customerId)
+    } catch (e) {
+      console.error('Failed to link survey to customer:', e)
+    }
+  }
 
   return customerId
 }
