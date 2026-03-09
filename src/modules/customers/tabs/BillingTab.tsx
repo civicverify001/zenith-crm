@@ -5,7 +5,7 @@ import { loadStripe } from '@stripe/stripe-js'
 import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js'
 import {
   fetchPaymentMethods, fetchPaymentTransactions,
-  createSetupIntent, confirmCardSetup, savePaymentMethod,
+  createSetupIntent, savePaymentMethod,
   updateStripeCustomerId, setDefaultPaymentMethod,
   removePaymentMethod, chargePaymentMethod, createInvoicePaymentLink,
   type PaymentMethod, type PaymentTransaction,
@@ -17,11 +17,6 @@ const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY)
 interface Props {
   customerId: string
   customer: any
-}
-
-function formatDate(d: string | null) {
-  if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function fmt(n: number) {
@@ -79,11 +74,15 @@ function AddCardForm({
         await updateStripeCustomerId(customerId, stripe_customer_id)
       }
 
-      // 3. Confirm card setup with Stripe.js
-      const setupIntent = await confirmCardSetup(client_secret, cardElement)
+      // 3. Confirm card setup using the SAME stripe instance from useStripe()
+      const result = await stripe.confirmCardSetup(client_secret, {
+        payment_method: { card: cardElement },
+      })
+
+      if (result.error) throw new Error(result.error.message)
 
       // 4. Extract card details from payment method
-      const pm = setupIntent?.payment_method as any
+      const pm = result.setupIntent?.payment_method as any
       const card = pm?.card || {}
 
       // 5. Save to Supabase payment_methods
@@ -108,12 +107,10 @@ function AddCardForm({
     <div className="rounded-xl p-4 space-y-4" style={{ backgroundColor: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.2)' }}>
       <div className="text-sm font-semibold text-slate-200">Add Payment Method</div>
 
-      {/* Stripe Card Element */}
       <div className="rounded-lg px-3 py-3" style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)' }}>
         <CardElement options={CARD_ELEMENT_OPTIONS} />
       </div>
 
-      {/* Make default */}
       <label className="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
         <input
           type="checkbox"
@@ -208,7 +205,6 @@ function ChargeModal({
           <button onClick={onClose} className="text-slate-400 hover:text-slate-200 text-xl">×</button>
         </div>
 
-        {/* Payment method select */}
         <div>
           <label className="text-xs text-muted uppercase tracking-wide block mb-1.5">Payment Method</label>
           <select
@@ -225,7 +221,6 @@ function ChargeModal({
           </select>
         </div>
 
-        {/* Contract select */}
         {contracts.length > 0 && (
           <div>
             <label className="text-xs text-muted uppercase tracking-wide block mb-1.5">Contract (optional)</label>
@@ -252,7 +247,6 @@ function ChargeModal({
           </div>
         )}
 
-        {/* Amount */}
         <div>
           <label className="text-xs text-muted uppercase tracking-wide block mb-1.5">Amount ($)</label>
           <input
@@ -265,7 +259,6 @@ function ChargeModal({
           />
         </div>
 
-        {/* Description */}
         <div>
           <label className="text-xs text-muted uppercase tracking-wide block mb-1.5">Description</label>
           <input
@@ -366,11 +359,7 @@ export function BillingTab({ customerId, customer }: Props) {
 
         {/* ── Summary row ────────────────────────────────── */}
         <div className="grid grid-cols-3 gap-3">
-          <BillingStatCard
-            label="Total Collected"
-            value={fmt(succeededTotal)}
-            color="#4ade80"
-          />
+          <BillingStatCard label="Total Collected" value={fmt(succeededTotal)} color="#4ade80" />
           <BillingStatCard
             label="Payment Methods"
             value={String(paymentMethods.length)}
@@ -424,7 +413,6 @@ export function BillingTab({ customerId, customer }: Props) {
             </div>
           </div>
 
-          {/* Add card form */}
           {showAddCard && (
             <div className="mb-3">
               <AddCardForm
@@ -436,7 +424,6 @@ export function BillingTab({ customerId, customer }: Props) {
             </div>
           )}
 
-          {/* Saved cards */}
           {pmLoading ? (
             <div className="text-xs text-muted py-3">Loading...</div>
           ) : paymentMethods.length === 0 ? (
@@ -447,14 +434,8 @@ export function BillingTab({ customerId, customer }: Props) {
                 <PaymentMethodRow
                   key={pm.id}
                   pm={pm}
-                  onSetDefault={async () => {
-                    await setDefaultPaymentMethod(customerId, pm.id)
-                    invalidate()
-                  }}
-                  onRemove={async () => {
-                    await removePaymentMethod(pm.id)
-                    invalidate()
-                  }}
+                  onSetDefault={async () => { await setDefaultPaymentMethod(customerId, pm.id); invalidate() }}
+                  onRemove={async () => { await removePaymentMethod(pm.id); invalidate() }}
                 />
               ))}
             </div>
@@ -472,21 +453,10 @@ export function BillingTab({ customerId, customer }: Props) {
               <div className="space-y-2">
                 <div className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ backgroundColor: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)' }}>
                   <span className="text-xs text-slate-300 truncate flex-1">{paymentLinkUrl}</span>
-                  <button
-                    onClick={() => { navigator.clipboard.writeText(paymentLinkUrl) }}
-                    className="text-xs font-semibold flex-shrink-0"
-                    style={{ color: '#4ade80' }}
-                  >
-                    Copy
-                  </button>
-                  <a href={paymentLinkUrl} target="_blank" rel="noopener noreferrer"
-                    className="text-xs font-semibold flex-shrink-0" style={{ color: '#60a5fa' }}>
-                    Open ↗
-                  </a>
+                  <button onClick={() => navigator.clipboard.writeText(paymentLinkUrl)} className="text-xs font-semibold flex-shrink-0" style={{ color: '#4ade80' }}>Copy</button>
+                  <a href={paymentLinkUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold flex-shrink-0" style={{ color: '#60a5fa' }}>Open ↗</a>
                 </div>
-                <button onClick={() => setPaymentLinkUrl('')} className="text-xs text-muted hover:text-slate-300">
-                  Generate new link
-                </button>
+                <button onClick={() => setPaymentLinkUrl('')} className="text-xs text-muted hover:text-slate-300">Generate new link</button>
               </div>
             ) : (
               <>
@@ -524,7 +494,6 @@ export function BillingTab({ customerId, customer }: Props) {
 
       </div>
 
-      {/* Charge modal */}
       {showChargeModal && (
         <ChargeModal
           customer={customer}
@@ -551,9 +520,7 @@ function BillingStatCard({ label, value, color, sub }: { label: string; value: s
 }
 
 function PaymentMethodRow({ pm, onSetDefault, onRemove }: {
-  pm: PaymentMethod
-  onSetDefault: () => void
-  onRemove: () => void
+  pm: PaymentMethod; onSetDefault: () => void; onRemove: () => void
 }) {
   return (
     <div
@@ -570,20 +537,14 @@ function PaymentMethodRow({ pm, onSetDefault, onRemove }: {
           <div className="text-xs text-muted">Expires {pm.exp_month}/{pm.exp_year}</div>
         </div>
         {pm.is_default && (
-          <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: 'rgba(96,165,250,0.15)', color: '#60a5fa' }}>
-            Default
-          </span>
+          <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: 'rgba(96,165,250,0.15)', color: '#60a5fa' }}>Default</span>
         )}
       </div>
       <div className="flex gap-2">
         {!pm.is_default && (
-          <button onClick={onSetDefault} className="text-xs text-muted hover:text-slate-200 transition-colors">
-            Set default
-          </button>
+          <button onClick={onSetDefault} className="text-xs text-muted hover:text-slate-200 transition-colors">Set default</button>
         )}
-        <button onClick={onRemove} className="text-xs hover:text-red-400 transition-colors" style={{ color: '#64748b' }}>
-          Remove
-        </button>
+        <button onClick={onRemove} className="text-xs hover:text-red-400 transition-colors" style={{ color: '#64748b' }}>Remove</button>
       </div>
     </div>
   )
@@ -597,7 +558,6 @@ function TransactionRow({ tx }: { tx: PaymentTransaction }) {
     refunded: '#94a3b8',
   }
   const color = statusColors[tx.status] || '#94a3b8'
-
   return (
     <div className="flex items-center justify-between py-2 border-b last:border-0" style={{ borderColor: 'rgba(148,163,184,0.1)' }}>
       <div className="flex-1 min-w-0">
@@ -605,9 +565,7 @@ function TransactionRow({ tx }: { tx: PaymentTransaction }) {
         <div className="text-xs text-muted">{new Date(tx.attempted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
       </div>
       <div className="text-right flex-shrink-0 ml-4">
-        <div className="text-sm font-semibold" style={{ color }}>
-          {tx.status === 'refunded' ? '-' : ''}{fmt(tx.amount)}
-        </div>
+        <div className="text-sm font-semibold" style={{ color }}>{tx.status === 'refunded' ? '-' : ''}{fmt(tx.amount)}</div>
         <div className="text-xs capitalize" style={{ color }}>{tx.status}</div>
       </div>
     </div>
