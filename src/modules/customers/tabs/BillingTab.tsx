@@ -35,17 +35,11 @@ const CARD_ELEMENT_OPTIONS = {
   },
 }
 
-// ─── Add Card Form (inner, needs Stripe context) ─────────────
+// ─── Add Card Form ───────────────────────────────────────────
 function AddCardForm({
-  customerId,
-  customer,
-  onSuccess,
-  onCancel,
+  customerId, customer, onSuccess, onCancel,
 }: {
-  customerId: string
-  customer: any
-  onSuccess: () => void
-  onCancel: () => void
+  customerId: string; customer: any; onSuccess: () => void; onCancel: () => void
 }) {
   const stripe = useStripe()
   const elements = useElements()
@@ -57,31 +51,22 @@ function AddCardForm({
     if (!stripe || !elements) return
     const cardElement = elements.getElement(CardElement)
     if (!cardElement) return
-
     setLoading(true)
     setError('')
-
     try {
-      // 1. Create setup intent (creates Stripe customer if needed)
       const { client_secret, stripe_customer_id } = await createSetupIntent({
         stripe_customer_id: customer.stripe_customer_id || undefined,
         customer_name: customer.full_name,
         customer_email: customer.email || undefined,
       })
-
-      // 2. Save stripe_customer_id to Supabase if new
       if (!customer.stripe_customer_id) {
         await updateStripeCustomerId(customerId, stripe_customer_id)
       }
-
-      // 3. Confirm card setup using the SAME stripe instance from useStripe()
       const result = await stripe.confirmCardSetup(client_secret, {
         payment_method: { card: cardElement },
       })
-
       if (result.error) throw new Error(result.error.message)
 
-      // 4. Retrieve actual card details from Stripe via backend
       const pmId = typeof result.setupIntent.payment_method === 'string'
         ? result.setupIntent.payment_method
         : (result.setupIntent.payment_method as any)?.id
@@ -93,7 +78,6 @@ function AddCardForm({
       })
       const pmDetails = await pmDetailsRes.json()
 
-      // 5. Save to Supabase payment_methods
       await savePaymentMethod({
         customer_id: customerId,
         stripe_payment_method_id: pmId,
@@ -102,7 +86,6 @@ function AddCardForm({
         exp_year: pmDetails.exp_year || 0,
         make_default: makeDefault,
       })
-
       onSuccess()
     } catch (e: any) {
       setError(e.message || 'Failed to save card')
@@ -113,21 +96,356 @@ function AddCardForm({
 
   return (
     <div className="rounded-xl p-4 space-y-4" style={{ backgroundColor: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.2)' }}>
-      <div className="text-sm font-semibold text-slate-200">Add Payment Method</div>
-
+      <div className="text-sm font-semibold text-slate-200">💳 Add Credit / Debit Card</div>
       <div className="rounded-lg px-3 py-3" style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)' }}>
         <CardElement options={CARD_ELEMENT_OPTIONS} />
       </div>
-
       <label className="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={makeDefault}
-          onChange={e => setMakeDefault(e.target.checked)}
-          className="rounded"
-        />
+        <input type="checkbox" checked={makeDefault} onChange={e => setMakeDefault(e.target.checked)} className="rounded" />
         Set as default payment method
       </label>
+      {error && (
+        <div className="text-xs rounded-lg px-3 py-2" style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
+          {error}
+        </div>
+      )}
+      <div className="flex gap-2 justify-end">
+        <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
+        <button onClick={handleSubmit} disabled={loading || !stripe} className="text-xs px-4 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
+          style={{ backgroundColor: 'rgba(96,165,250,0.15)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.3)' }}>
+          {loading ? 'Saving...' : 'Save Card'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Add Bank Account Form ───────────────────────────────────
+function AddBankAccountForm({
+  customerId, customer, onSuccess, onCancel,
+}: {
+  customerId: string; customer: any; onSuccess: () => void; onCancel: () => void
+}) {
+  const stripe = useStripe()
+  const [makeDefault, setMakeDefault] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [mode, setMode] = useState<'choose' | 'manual' | 'pending_verification'>('choose')
+
+  // Manual entry fields
+  const [routingNumber, setRoutingNumber] = useState('')
+  const [accountNumber, setAccountNumber] = useState('')
+  const [accountType, setAccountType] = useState<'checking' | 'savings'>('checking')
+  const [accountHolderName, setAccountHolderName] = useState(customer.full_name || '')
+
+  // Micro-deposit verification
+  const [clientSecretForVerify, setClientSecretForVerify] = useState('')
+  const [savedPmId, setSavedPmId] = useState('')
+  const [amount1, setAmount1] = useState('')
+  const [amount2, setAmount2] = useState('')
+
+  async function getBankSetupIntent() {
+    const res = await fetch('/api/stripe/setup-bank-account', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stripe_customer_id: customer.stripe_customer_id || undefined,
+        customer_name: customer.full_name,
+        customer_email: customer.email || undefined,
+      }),
+    })
+    const data = await res.json()
+    if (data.error) throw new Error(data.error)
+    return data
+  }
+
+  // Flow 1: Financial Connections (instant bank login)
+  async function handleFinancialConnections() {
+    if (!stripe) return
+    setLoading(true)
+    setError('')
+    try {
+      const { client_secret, stripe_customer_id } = await getBankSetupIntent()
+      if (!customer.stripe_customer_id) {
+        await updateStripeCustomerId(customerId, stripe_customer_id)
+      }
+
+      const result = await stripe.collectBankAccountForSetup({
+        clientSecret: client_secret,
+        params: {
+          payment_method_type: 'us_bank_account',
+          payment_method_data: {
+            billing_details: {
+              name: customer.full_name,
+              email: customer.email || undefined,
+            },
+          },
+        },
+      })
+
+      if (result.error) throw new Error(result.error.message)
+      if (result.setupIntent?.status === 'requires_confirmation') {
+        const confirmed = await stripe.confirmUsBankAccountSetup(client_secret)
+        if (confirmed.error) throw new Error(confirmed.error.message)
+      }
+
+      const pmId = typeof result.setupIntent?.payment_method === 'string'
+        ? result.setupIntent.payment_method
+        : (result.setupIntent?.payment_method as any)?.id
+
+      // Get bank details
+      const detailsRes = await fetch('/api/stripe/get-payment-method', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_method_id: pmId }),
+      })
+      const details = await detailsRes.json()
+
+      await savePaymentMethod({
+        customer_id: customerId,
+        stripe_payment_method_id: pmId,
+        last_four: details.last4 || '????',
+        exp_month: 0,
+        exp_year: 0,
+        make_default: makeDefault,
+        type: 'us_bank_account',
+      })
+      onSuccess()
+    } catch (e: any) {
+      setError(e.message || 'Bank connection failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Flow 2: Manual routing + account number
+  async function handleManualSubmit() {
+    if (!stripe) return
+    if (!routingNumber || !accountNumber || !accountHolderName) {
+      setError('Please fill in all fields')
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      const { client_secret, stripe_customer_id } = await getBankSetupIntent()
+      if (!customer.stripe_customer_id) {
+        await updateStripeCustomerId(customerId, stripe_customer_id)
+      }
+
+      const result = await stripe.confirmUsBankAccountSetup(client_secret, {
+        payment_method: {
+          us_bank_account: {
+            routing_number: routingNumber,
+            account_number: accountNumber,
+            account_holder_type: 'individual',
+            account_type: accountType,
+          },
+          billing_details: {
+            name: accountHolderName,
+            email: customer.email || undefined,
+          },
+        },
+      })
+
+      if (result.error) throw new Error(result.error.message)
+
+      const pmId = typeof result.setupIntent?.payment_method === 'string'
+        ? result.setupIntent.payment_method
+        : (result.setupIntent?.payment_method as any)?.id
+
+      // Save to Supabase with pending_verification status
+      await savePaymentMethod({
+        customer_id: customerId,
+        stripe_payment_method_id: pmId,
+        last_four: accountNumber.slice(-4),
+        exp_month: 0,
+        exp_year: 0,
+        make_default: false,
+        type: 'us_bank_account',
+        status: 'pending_verification',
+      })
+
+      setClientSecretForVerify(client_secret)
+      setSavedPmId(pmId)
+      setMode('pending_verification')
+    } catch (e: any) {
+      setError(e.message || 'Failed to add bank account')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Flow 2b: Verify micro-deposits
+  async function handleVerifyMicrodeposits() {
+    if (!amount1 || !amount2) { setError('Enter both deposit amounts'); return }
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch('/api/stripe/verify-microdeposits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_secret: clientSecretForVerify,
+          amounts: [parseInt(amount1), parseInt(amount2)],
+        }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      onSuccess()
+    } catch (e: any) {
+      setError(e.message || 'Verification failed — check your amounts')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ── Micro-deposit verification UI ──
+  if (mode === 'pending_verification') {
+    return (
+      <div className="rounded-xl p-4 space-y-4" style={{ backgroundColor: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.25)' }}>
+        <div className="text-sm font-semibold text-slate-200">🏦 Verify Bank Account</div>
+        <div className="text-xs text-slate-400">
+          Stripe sent 2 small deposits to your bank account (usually appear within 1–2 business days).
+          Enter the exact amounts in <span className="text-yellow-400 font-semibold">cents</span> to verify.
+        </div>
+        <div className="text-xs rounded-lg px-3 py-2" style={{ color: '#fbbf24', backgroundColor: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
+          Example: if you see $0.32 and $0.45, enter 32 and 45
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-muted uppercase tracking-wide block mb-1">First deposit (cents)</label>
+            <input type="number" value={amount1} onChange={e => setAmount1(e.target.value)} placeholder="32"
+              className="w-full text-sm rounded-lg px-3 py-2 outline-none"
+              style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }} />
+          </div>
+          <div>
+            <label className="text-xs text-muted uppercase tracking-wide block mb-1">Second deposit (cents)</label>
+            <input type="number" value={amount2} onChange={e => setAmount2(e.target.value)} placeholder="45"
+              className="w-full text-sm rounded-lg px-3 py-2 outline-none"
+              style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }} />
+          </div>
+        </div>
+        {error && (
+          <div className="text-xs rounded-lg px-3 py-2" style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
+            {error}
+          </div>
+        )}
+        <div className="flex gap-2 justify-end">
+          <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200">Cancel</button>
+          <button onClick={handleVerifyMicrodeposits} disabled={loading}
+            className="text-xs px-4 py-1.5 rounded-lg font-semibold disabled:opacity-50"
+            style={{ backgroundColor: 'rgba(251,191,36,0.15)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)' }}>
+            {loading ? 'Verifying...' : 'Verify Account'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Choose mode ──
+  if (mode === 'choose') {
+    return (
+      <div className="rounded-xl p-4 space-y-3" style={{ backgroundColor: 'rgba(74,222,128,0.05)', border: '1px solid rgba(74,222,128,0.2)' }}>
+        <div className="text-sm font-semibold text-slate-200">🏦 Add Bank Account (ACH)</div>
+        <div className="text-xs text-slate-400 mb-2">Lower fees than cards — 0.8% capped at $5/transaction</div>
+
+        {/* Option A — Financial Connections */}
+        <button
+          onClick={handleFinancialConnections}
+          disabled={loading}
+          className="w-full rounded-xl p-4 text-left transition-all disabled:opacity-50"
+          style={{ backgroundColor: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.25)' }}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold text-white">🔗 Connect via Bank Login</div>
+              <div className="text-xs text-slate-400 mt-0.5">Instant — log into Chase, Wells Fargo, BofA and 5,000+ banks. No waiting.</div>
+            </div>
+            <span className="text-xs px-2 py-0.5 rounded-full font-semibold ml-3 flex-shrink-0" style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80' }}>
+              Recommended
+            </span>
+          </div>
+        </button>
+
+        {/* Option B — Manual */}
+        <button
+          onClick={() => setMode('manual')}
+          className="w-full rounded-xl p-4 text-left transition-all"
+          style={{ backgroundColor: 'rgba(148,163,184,0.05)', border: '1px solid rgba(148,163,184,0.15)' }}
+        >
+          <div className="text-sm font-semibold text-white">✏️ Enter Routing & Account Number</div>
+          <div className="text-xs text-slate-400 mt-0.5">Manual entry — requires 1–2 day micro-deposit verification</div>
+        </button>
+
+        {error && (
+          <div className="text-xs rounded-lg px-3 py-2" style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
+            {error}
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200">Cancel</button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Manual entry form ──
+  return (
+    <div className="rounded-xl p-4 space-y-4" style={{ backgroundColor: 'rgba(148,163,184,0.05)', border: '1px solid rgba(148,163,184,0.15)' }}>
+      <div className="flex items-center gap-2">
+        <button onClick={() => setMode('choose')} className="text-xs text-slate-400 hover:text-slate-200">← Back</button>
+        <div className="text-sm font-semibold text-slate-200">✏️ Manual Bank Entry</div>
+      </div>
+
+      <div>
+        <label className="text-xs text-muted uppercase tracking-wide block mb-1">Account Holder Name</label>
+        <input type="text" value={accountHolderName} onChange={e => setAccountHolderName(e.target.value)}
+          className="w-full text-sm rounded-lg px-3 py-2 outline-none"
+          style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }} />
+      </div>
+
+      <div>
+        <label className="text-xs text-muted uppercase tracking-wide block mb-1">Routing Number</label>
+        <input type="text" value={routingNumber} onChange={e => setRoutingNumber(e.target.value)}
+          placeholder="9 digits" maxLength={9}
+          className="w-full text-sm rounded-lg px-3 py-2 outline-none"
+          style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }} />
+      </div>
+
+      <div>
+        <label className="text-xs text-muted uppercase tracking-wide block mb-1">Account Number</label>
+        <input type="text" value={accountNumber} onChange={e => setAccountNumber(e.target.value)}
+          className="w-full text-sm rounded-lg px-3 py-2 outline-none"
+          style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }} />
+      </div>
+
+      <div>
+        <label className="text-xs text-muted uppercase tracking-wide block mb-1">Account Type</label>
+        <div className="flex gap-2">
+          {(['checking', 'savings'] as const).map(t => (
+            <button key={t} onClick={() => setAccountType(t)}
+              className="text-xs px-4 py-1.5 rounded-lg font-medium capitalize transition-all"
+              style={{
+                backgroundColor: accountType === t ? 'rgba(96,165,250,0.15)' : 'rgba(148,163,184,0.05)',
+                color: accountType === t ? '#60a5fa' : '#94a3b8',
+                border: `1px solid ${accountType === t ? 'rgba(96,165,250,0.3)' : 'rgba(148,163,184,0.15)'}`,
+              }}>
+              {t}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <label className="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
+        <input type="checkbox" checked={makeDefault} onChange={e => setMakeDefault(e.target.checked)} className="rounded" />
+        Set as default after verification
+      </label>
+
+      <div className="text-xs rounded-lg px-3 py-2" style={{ color: '#fbbf24', backgroundColor: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
+        ⏱ Stripe will send 2 small deposits to verify this account (1–2 business days)
+      </div>
 
       {error && (
         <div className="text-xs rounded-lg px-3 py-2" style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
@@ -136,19 +454,11 @@ function AddCardForm({
       )}
 
       <div className="flex gap-2 justify-end">
-        <button
-          onClick={onCancel}
-          className="text-xs px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={handleSubmit}
-          disabled={loading || !stripe}
-          className="text-xs px-4 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
-          style={{ backgroundColor: 'rgba(96,165,250,0.15)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.3)' }}
-        >
-          {loading ? 'Saving...' : 'Save Card'}
+        <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200">Cancel</button>
+        <button onClick={handleManualSubmit} disabled={loading || !stripe}
+          className="text-xs px-4 py-1.5 rounded-lg font-semibold disabled:opacity-50"
+          style={{ backgroundColor: 'rgba(96,165,250,0.15)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.3)' }}>
+          {loading ? 'Saving...' : 'Save & Send Micro-Deposits'}
         </button>
       </div>
     </div>
@@ -157,30 +467,18 @@ function AddCardForm({
 
 // ─── Charge Modal ────────────────────────────────────────────
 function ChargeModal({
-  customer,
-  paymentMethods,
-  contracts,
-  onClose,
-  onSuccess,
+  customer, paymentMethods, contracts, onClose, onSuccess,
 }: {
-  customer: any
-  paymentMethods: PaymentMethod[]
-  contracts: any[]
-  onClose: () => void
-  onSuccess: () => void
+  customer: any; paymentMethods: PaymentMethod[]; contracts: any[]; onClose: () => void; onSuccess: () => void
 }) {
   const defaultPM = paymentMethods.find(p => p.is_default) || paymentMethods[0]
   const activeContract = contracts.find(c => c.status === 'active')
-
   const [selectedPMId, setSelectedPMId] = useState(defaultPM?.id || '')
   const [selectedContractId, setSelectedContractId] = useState(activeContract?.id || '')
   const [amount, setAmount] = useState(activeContract ? String(activeContract.monthly_amount) : '')
-  const [description, setDescription] = useState(
-    activeContract ? `Monthly rental — Contract ${activeContract.contract_number}` : ''
-  )
+  const [description, setDescription] = useState(activeContract ? `Monthly rental — Contract ${activeContract.contract_number}` : '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-
   const selectedPM = paymentMethods.find(p => p.id === selectedPMId)
 
   async function handleCharge() {
@@ -212,92 +510,65 @@ function ChargeModal({
           <div className="text-base font-bold text-white">Charge Payment</div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-200 text-xl">×</button>
         </div>
-
         <div>
           <label className="text-xs text-muted uppercase tracking-wide block mb-1.5">Payment Method</label>
-          <select
-            value={selectedPMId}
-            onChange={e => setSelectedPMId(e.target.value)}
+          <select value={selectedPMId} onChange={e => setSelectedPMId(e.target.value)}
             className="w-full text-sm rounded-lg px-3 py-2 outline-none"
-            style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }}
-          >
+            style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }}>
             {paymentMethods.map(pm => (
               <option key={pm.id} value={pm.id}>
-                •••• {pm.last_four} — {pm.exp_month}/{pm.exp_year} {pm.is_default ? '(default)' : ''}
+                {pm.type === 'us_bank_account' ? '🏦' : '💳'} •••• {pm.last_four}
+                {pm.type === 'us_bank_account' ? ' (ACH)' : ` — ${pm.exp_month}/${pm.exp_year}`}
+                {pm.is_default ? ' (default)' : ''}
               </option>
             ))}
           </select>
         </div>
-
         {contracts.length > 0 && (
           <div>
             <label className="text-xs text-muted uppercase tracking-wide block mb-1.5">Contract (optional)</label>
-            <select
-              value={selectedContractId}
+            <select value={selectedContractId}
               onChange={e => {
                 setSelectedContractId(e.target.value)
                 const c = contracts.find(x => x.id === e.target.value)
-                if (c) {
-                  setAmount(String(c.monthly_amount))
-                  setDescription(`Monthly rental — Contract ${c.contract_number}`)
-                }
+                if (c) { setAmount(String(c.monthly_amount)); setDescription(`Monthly rental — Contract ${c.contract_number}`) }
               }}
               className="w-full text-sm rounded-lg px-3 py-2 outline-none"
-              style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }}
-            >
+              style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }}>
               <option value="">No contract</option>
               {contracts.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.contract_number} — ${c.monthly_amount}/mo ({c.status})
-                </option>
+                <option key={c.id} value={c.id}>{c.contract_number} — ${c.monthly_amount}/mo ({c.status})</option>
               ))}
             </select>
           </div>
         )}
-
         <div>
           <label className="text-xs text-muted uppercase tracking-wide block mb-1.5">Amount ($)</label>
-          <input
-            type="number"
-            step="0.01"
-            value={amount}
-            onChange={e => setAmount(e.target.value)}
+          <input type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)}
             className="w-full text-sm rounded-lg px-3 py-2 outline-none"
-            style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }}
-          />
+            style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }} />
         </div>
-
         <div>
           <label className="text-xs text-muted uppercase tracking-wide block mb-1.5">Description</label>
-          <input
-            type="text"
-            value={description}
-            onChange={e => setDescription(e.target.value)}
+          <input type="text" value={description} onChange={e => setDescription(e.target.value)}
             className="w-full text-sm rounded-lg px-3 py-2 outline-none"
-            style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }}
-          />
+            style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }} />
         </div>
-
         {!customer.stripe_customer_id && (
           <div className="text-xs rounded-lg px-3 py-2" style={{ color: '#fbbf24', backgroundColor: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)' }}>
             ⚠️ No Stripe customer ID — save a payment method first
           </div>
         )}
-
         {error && (
           <div className="text-xs rounded-lg px-3 py-2" style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
             {error}
           </div>
         )}
-
         <div className="flex gap-2 justify-end pt-2">
           <button onClick={onClose} className="text-xs px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200">Cancel</button>
-          <button
-            onClick={handleCharge}
-            disabled={loading || !selectedPMId || !amount || !customer.stripe_customer_id}
+          <button onClick={handleCharge} disabled={loading || !selectedPMId || !amount || !customer.stripe_customer_id}
             className="text-xs px-4 py-1.5 rounded-lg font-semibold disabled:opacity-50"
-            style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}
-          >
+            style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}>
             {loading ? 'Charging...' : `Charge ${amount ? fmt(parseFloat(amount)) : ''}`}
           </button>
         </div>
@@ -309,7 +580,7 @@ function ChargeModal({
 // ─── Main BillingTab ─────────────────────────────────────────
 export function BillingTab({ customerId, customer }: Props) {
   const qc = useQueryClient()
-  const [showAddCard, setShowAddCard] = useState(false)
+  const [addMode, setAddMode] = useState<null | 'card' | 'bank'>(null)
   const [showChargeModal, setShowChargeModal] = useState(false)
   const [generatingLink, setGeneratingLink] = useState(false)
   const [paymentLinkUrl, setPaymentLinkUrl] = useState('')
@@ -319,12 +590,10 @@ export function BillingTab({ customerId, customer }: Props) {
     queryKey: ['payment-methods', customerId],
     queryFn: () => fetchPaymentMethods(customerId),
   })
-
   const { data: transactions = [], isLoading: txLoading } = useQuery({
     queryKey: ['payment-transactions', customerId],
     queryFn: () => fetchPaymentTransactions(customerId),
   })
-
   const { data: contracts = [] } = useRentalContracts(customerId)
   const activeContract = (contracts as any[]).find((c: any) => c.status === 'active')
 
@@ -355,17 +624,14 @@ export function BillingTab({ customerId, customer }: Props) {
     }
   }
 
-  const succeededTotal = transactions
-    .filter(t => t.status === 'succeeded')
-    .reduce((sum, t) => sum + Number(t.amount), 0)
-
+  const succeededTotal = transactions.filter(t => t.status === 'succeeded').reduce((sum, t) => sum + Number(t.amount), 0)
   const failedRecent = transactions.filter(t => t.status === 'failed').slice(0, 3)
 
   return (
     <Elements stripe={stripePromise}>
       <div className="space-y-5">
 
-        {/* ── Summary row ────────────────────────────────── */}
+        {/* ── Summary ─────────────────────────────────────── */}
         <div className="grid grid-cols-3 gap-3">
           <BillingStatCard label="Total Collected" value={fmt(succeededTotal)} color="#4ade80" />
           <BillingStatCard
@@ -382,7 +648,7 @@ export function BillingTab({ customerId, customer }: Props) {
           />
         </div>
 
-        {/* ── Failed payment alert ───────────────────────── */}
+        {/* ── Failed alert ─────────────────────────────────── */}
         {failedRecent.length > 0 && (
           <div className="rounded-xl p-4 space-y-2" style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>
             <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#f87171' }}>⚠️ Recent Failed Payments</div>
@@ -395,40 +661,47 @@ export function BillingTab({ customerId, customer }: Props) {
           </div>
         )}
 
-        {/* ── Payment methods ────────────────────────────── */}
+        {/* ── Payment methods ──────────────────────────────── */}
         <div className="bg-card border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">Payment Methods</div>
             <div className="flex gap-2">
               {paymentMethods.length > 0 && activeContract && (
-                <button
-                  onClick={() => setShowChargeModal(true)}
+                <button onClick={() => setShowChargeModal(true)}
                   className="text-xs px-3 py-1 rounded-lg font-semibold"
-                  style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}
-                >
+                  style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}>
                   💳 Charge
                 </button>
               )}
-              {!showAddCard && (
-                <button
-                  onClick={() => setShowAddCard(true)}
-                  className="text-xs px-3 py-1 rounded-lg font-semibold"
-                  style={{ backgroundColor: 'rgba(96,165,250,0.12)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.25)' }}
-                >
-                  + Add Card
-                </button>
+              {!addMode && (
+                <>
+                  <button onClick={() => setAddMode('bank')}
+                    className="text-xs px-3 py-1 rounded-lg font-semibold"
+                    style={{ backgroundColor: 'rgba(74,222,128,0.10)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.22)' }}>
+                    + Bank (ACH)
+                  </button>
+                  <button onClick={() => setAddMode('card')}
+                    className="text-xs px-3 py-1 rounded-lg font-semibold"
+                    style={{ backgroundColor: 'rgba(96,165,250,0.12)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.25)' }}>
+                    + Card
+                  </button>
+                </>
               )}
             </div>
           </div>
 
-          {showAddCard && (
+          {addMode === 'card' && (
             <div className="mb-3">
-              <AddCardForm
-                customerId={customerId}
-                customer={customer}
-                onSuccess={() => { setShowAddCard(false); invalidate() }}
-                onCancel={() => setShowAddCard(false)}
-              />
+              <AddCardForm customerId={customerId} customer={customer}
+                onSuccess={() => { setAddMode(null); invalidate() }}
+                onCancel={() => setAddMode(null)} />
+            </div>
+          )}
+          {addMode === 'bank' && (
+            <div className="mb-3">
+              <AddBankAccountForm customerId={customerId} customer={customer}
+                onSuccess={() => { setAddMode(null); invalidate() }}
+                onCancel={() => setAddMode(null)} />
             </div>
           )}
 
@@ -439,18 +712,15 @@ export function BillingTab({ customerId, customer }: Props) {
           ) : (
             <div className="space-y-2">
               {paymentMethods.map(pm => (
-                <PaymentMethodRow
-                  key={pm.id}
-                  pm={pm}
+                <PaymentMethodRow key={pm.id} pm={pm}
                   onSetDefault={async () => { await setDefaultPaymentMethod(customerId, pm.id); invalidate() }}
-                  onRemove={async () => { await removePaymentMethod(pm.id); invalidate() }}
-                />
+                  onRemove={async () => { await removePaymentMethod(pm.id); invalidate() }} />
               ))}
             </div>
           )}
         </div>
 
-        {/* ── Invoice payment link ───────────────────────── */}
+        {/* ── Invoice payment link ─────────────────────────── */}
         {activeContract && (
           <div className="bg-card border border-border rounded-xl p-4">
             <div className="text-xs font-bold text-slate-300 uppercase tracking-wide mb-3">Invoice Payment Link</div>
@@ -468,12 +738,9 @@ export function BillingTab({ customerId, customer }: Props) {
               </div>
             ) : (
               <>
-                <button
-                  onClick={handleGeneratePaymentLink}
-                  disabled={generatingLink}
+                <button onClick={handleGeneratePaymentLink} disabled={generatingLink}
                   className="text-xs px-4 py-1.5 rounded-lg font-semibold disabled:opacity-50"
-                  style={{ backgroundColor: 'rgba(56,189,248,0.12)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.25)' }}
-                >
+                  style={{ backgroundColor: 'rgba(56,189,248,0.12)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.25)' }}>
                   {generatingLink ? 'Generating...' : '🔗 Generate Payment Link'}
                 </button>
                 {linkError && <p className="text-xs mt-2" style={{ color: '#f87171' }}>{linkError}</p>}
@@ -482,7 +749,7 @@ export function BillingTab({ customerId, customer }: Props) {
           </div>
         )}
 
-        {/* ── Transaction history ────────────────────────── */}
+        {/* ── Transaction history ──────────────────────────── */}
         <div className="bg-card border border-border rounded-xl p-4">
           <div className="text-xs font-bold text-slate-300 uppercase tracking-wide mb-3">
             Transaction History {transactions.length > 0 && <span className="text-muted font-normal">({transactions.length})</span>}
@@ -493,13 +760,10 @@ export function BillingTab({ customerId, customer }: Props) {
             <div className="text-xs text-muted italic">No transactions yet</div>
           ) : (
             <div className="space-y-1 max-h-72 overflow-y-auto">
-              {transactions.map(tx => (
-                <TransactionRow key={tx.id} tx={tx} />
-              ))}
+              {transactions.map(tx => <TransactionRow key={tx.id} tx={tx} />)}
             </div>
           )}
         </div>
-
       </div>
 
       {showChargeModal && (
@@ -530,26 +794,31 @@ function BillingStatCard({ label, value, color, sub }: { label: string; value: s
 function PaymentMethodRow({ pm, onSetDefault, onRemove }: {
   pm: PaymentMethod; onSetDefault: () => void; onRemove: () => void
 }) {
+  const isBank = pm.type === 'us_bank_account'
+  const isPending = (pm as any).status === 'pending_verification'
   return (
-    <div
-      className="flex items-center justify-between px-3 py-2.5 rounded-lg"
+    <div className="flex items-center justify-between px-3 py-2.5 rounded-lg"
       style={{
         backgroundColor: pm.is_default ? 'rgba(96,165,250,0.08)' : 'rgba(148,163,184,0.05)',
-        border: `1px solid ${pm.is_default ? 'rgba(96,165,250,0.2)' : 'rgba(148,163,184,0.12)'}`,
-      }}
-    >
+        border: `1px solid ${isPending ? 'rgba(251,191,36,0.3)' : pm.is_default ? 'rgba(96,165,250,0.2)' : 'rgba(148,163,184,0.12)'}`,
+      }}>
       <div className="flex items-center gap-3">
-        <span className="text-base">💳</span>
+        <span className="text-base">{isBank ? '🏦' : '💳'}</span>
         <div>
           <div className="text-sm text-slate-200 font-medium">•••• {pm.last_four}</div>
-          <div className="text-xs text-muted">Expires {pm.exp_month}/{pm.exp_year}</div>
+          <div className="text-xs text-muted">
+            {isBank ? 'ACH Bank Account' : `Expires ${pm.exp_month}/${pm.exp_year}`}
+          </div>
         </div>
-        {pm.is_default && (
+        {pm.is_default && !isPending && (
           <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: 'rgba(96,165,250,0.15)', color: '#60a5fa' }}>Default</span>
+        )}
+        {isPending && (
+          <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: 'rgba(251,191,36,0.15)', color: '#fbbf24' }}>Pending Verification</span>
         )}
       </div>
       <div className="flex gap-2">
-        {!pm.is_default && (
+        {!pm.is_default && !isPending && (
           <button onClick={onSetDefault} className="text-xs text-muted hover:text-slate-200 transition-colors">Set default</button>
         )}
         <button onClick={onRemove} className="text-xs hover:text-red-400 transition-colors" style={{ color: '#64748b' }}>Remove</button>
@@ -560,10 +829,7 @@ function PaymentMethodRow({ pm, onSetDefault, onRemove }: {
 
 function TransactionRow({ tx }: { tx: PaymentTransaction }) {
   const statusColors: Record<string, string> = {
-    succeeded: '#4ade80',
-    failed: '#f87171',
-    pending: '#fbbf24',
-    refunded: '#94a3b8',
+    succeeded: '#4ade80', failed: '#f87171', pending: '#fbbf24', refunded: '#94a3b8',
   }
   const color = statusColors[tx.status] || '#94a3b8'
   return (
