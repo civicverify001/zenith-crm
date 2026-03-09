@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { path: '/invoices',       label: 'Accounting',        icon: '💰', roles: ['admin'] as UserRole[] },
   { path: '/inventory',      label: 'Inventory',         icon: '📦', roles: ['admin'] as UserRole[] },
   { path: '/services',       label: 'Plans & Rentals',   icon: '🔄', roles: ['admin','frontdesk'] as UserRole[] },
+  { path: '/products',      label: 'Products',          icon: '🏷️', roles: ['admin'] as UserRole[] },
   { path: '/marketing',      label: 'Marketing ROI',     icon: '📊', roles: ['admin'] as UserRole[] },
   { path: '/reports',        label: 'Reports',           icon: '📈', roles: ['admin'] as UserRole[] },
 ]
