@@ -74,7 +74,7 @@ export function QuotesPage() {
   async function loadCustomers(q: string) {
     const { data } = await supabase
       .from('customers')
-      .select('id, full_name, email, phone, address')
+      .select('id, full_name, email, phone, service_address')
       .ilike('full_name', `%${q}%`)
       .order('full_name')
       .limit(20)
@@ -162,13 +162,15 @@ export function QuotesPage() {
       )
     }
 
-    const cust = view === 'edit' ? { id: editQuote?.customer_id, full_name: editQuote?.customer_name, address: editQuote?.customer_address, phone: editQuote?.customer_phone } : selectedCustomer
+    const cust = view === 'edit'
+      ? { id: editQuote?.customer_id, full_name: editQuote?.customer_name, service_address: editQuote?.customer_address, phone: editQuote?.customer_phone }
+      : selectedCustomer
 
     return (
       <QuoteBuilder
         customerId={cust.id}
         customerName={cust.full_name}
-        customerAddress={cust.address || ''}
+        customerAddress={cust.service_address || ''}
         customerPhone={cust.phone || ''}
         existingQuote={view === 'edit' ? editQuote : null}
         onSaved={(q) => {
