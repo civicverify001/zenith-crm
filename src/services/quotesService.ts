@@ -85,24 +85,34 @@ export async function fetchProducts(): Promise<Product[]> {
 export async function fetchQuotes(customerId?: string): Promise<Quote[]> {
   let q = supabase
     .from('quotes')
-    .select(`
-      *,
-      customers ( full_name, email, phone, address )
-    `)
+    .select('*')
     .order('created_at', { ascending: false })
 
   if (customerId) q = q.eq('customer_id', customerId)
 
-  const { data, error } = await q
+  const { data: quotes, error } = await q
   if (error) throw error
+  if (!quotes || quotes.length === 0) return []
 
-  return (data || []).map((row: any) => ({
-    ...row,
-    customer_name:    row.customers?.full_name || '',
-    customer_email:   row.customers?.email || '',
-    customer_phone:   row.customers?.phone || '',
-    customer_address: row.customers?.address || '',
-  }))
+  // Fetch customer info separately — no FK constraint required
+  const customerIds = [...new Set(quotes.map((r: any) => r.customer_id).filter(Boolean))] as string[]
+  const { data: customers } = customerIds.length
+    ? await supabase.from('customers').select('id, full_name, email, phone, service_address').in('id', customerIds)
+    : { data: [] }
+
+  const custMap: Record<string, any> = {}
+  for (const c of customers || []) custMap[c.id] = c
+
+  return quotes.map((row: any) => {
+    const c = custMap[row.customer_id] || {}
+    return {
+      ...row,
+      customer_name:    c.full_name || '',
+      customer_email:   c.email || '',
+      customer_phone:   c.phone || '',
+      customer_address: c.service_address || '',
+    }
+  })
 }
 
 // ─── Quote — single with line items ──────────────────────────
@@ -110,23 +120,25 @@ export async function fetchQuotes(customerId?: string): Promise<Quote[]> {
 export async function fetchQuote(quoteId: string): Promise<Quote | null> {
   const { data, error } = await supabase
     .from('quotes')
-    .select(`
-      *,
-      customers ( full_name, email, phone, address ),
-      quote_line_items ( * )
-    `)
+    .select(`*, quote_line_items ( * )`)
     .eq('id', quoteId)
     .single()
 
   if (error) throw error
   if (!data) return null
 
+  const { data: cust } = await supabase
+    .from('customers')
+    .select('id, full_name, email, phone, service_address')
+    .eq('id', data.customer_id)
+    .single()
+
   return {
     ...data,
-    customer_name:    data.customers?.full_name || '',
-    customer_email:   data.customers?.email || '',
-    customer_phone:   data.customers?.phone || '',
-    customer_address: data.customers?.address || '',
+    customer_name:    cust?.full_name || '',
+    customer_email:   cust?.email || '',
+    customer_phone:   cust?.phone || '',
+    customer_address: cust?.service_address || '',
     line_items: (data.quote_line_items || []).sort((a: any, b: any) => a.sort_order - b.sort_order),
   }
 }
