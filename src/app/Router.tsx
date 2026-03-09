@@ -4,6 +4,7 @@ import { AppLayout } from './Layout'
 import { LoginPage } from '../modules/auth/LoginPage'
 import { LoadingScreen } from '../shared/ui/LoadingScreen'
 import ProductCatalog from '../services/ProductCatalog'
+import { FollowUpsPage } from '../modules/followups/FollowUpsPage'
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
@@ -55,7 +56,7 @@ export function AppRouter() {
         {/* Future modules */}
         <Route path="/customers" element={<CustomersListPage />} />
         <Route path="/customers/:customerId" element={<CustomerDetailPage />} />
-        <Route path="/follow-ups" element={<ComingSoon name="Follow-Up Center" />} />
+        <Route path="/follow-ups" element={<FollowUpsPage />} />
         <Route path="/invoices" element={<ComingSoon name="Accounting" />} />
         <Route path="/inventory" element={<ComingSoon name="Inventory" />} />
         <Route path="/services" element={<ComingSoon name="Plans & Rentals" />} />
