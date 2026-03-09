@@ -785,7 +785,9 @@ function PreviewView({
                       )}
                     </td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top' }}>{li.quantity}.0</td>
-                    <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top' }}>$ {li.unit_price.toFixed(2)}</td>
+                    <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top' }}>
+                      $ {li.unit_price.toFixed(2)}{isRental && li.item_type === 'product' ? <span style={{fontSize:10,color:Z.teal,fontWeight:700}}>/mo</span> : ''}
+                    </td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top', color: Z.muted }}>
                       {discAmt > 0 ? `$ ${discAmt.toFixed(2)}` : '—'}
                     </td>
@@ -811,8 +813,8 @@ function PreviewView({
                 </div>
               ))}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '2px solid ' + Z.navy, fontSize: 14, fontWeight: 900 }}>
-                <span>Total</span>
-                <span>$ {total.toFixed(2)}</span>
+                <span>{isRental ? 'Monthly Total' : 'Total'}</span>
+                <span>$ {total.toFixed(2)}{isRental ? <span style={{fontSize:11,fontWeight:400,color:Z.teal}}> /mo</span> : ''}</span>
               </div>
             </div>
           </div>
