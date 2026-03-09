@@ -168,7 +168,7 @@ export async function markDND(
 }
 
 // ─── Sign Agreement ──────────────────────────────────────────────
-export type PaymentMethodEnum = 'cash' | 'check' | 'card' | 'financing'
+export type PaymentMethodEnum = 'cash' | 'check' | 'card' | 'financing' | 'rental'
 export type InstallPreferenceEnum = 'asap' | 'specific_date' | 'flexible'
 
 export interface AgreementData {
@@ -178,6 +178,8 @@ export interface AgreementData {
   payment_method: PaymentMethodEnum
   financing_provider?: string
   agreement_file_url?: string
+  rental_monthly_amount?: number
+  rental_term_months?: number
   install_preference?: InstallPreferenceEnum
   install_preferred_date?: string
 }
@@ -194,6 +196,12 @@ export async function signAgreement(
     throw new Error('Signed by name is required')
   if (data.payment_method === 'financing' && !data.financing_provider?.trim())
     throw new Error('Financing provider is required when payment method is financing')
+  if (data.payment_method === 'rental') {
+    if (!data.rental_monthly_amount || data.rental_monthly_amount <= 0)
+      throw new Error('Monthly rental amount is required')
+    if (!data.rental_term_months || data.rental_term_months <= 0)
+      throw new Error('Rental term (months) is required')
+  }
 
   const { data: updated, error } = await supabase
     .from('leads')
@@ -208,6 +216,8 @@ export async function signAgreement(
       financing_provider: data.financing_provider?.trim() || null,
       agreement_file_url: data.agreement_file_url || null,
       has_signature: true,
+      rental_monthly_amount: data.rental_monthly_amount || null,
+      rental_term_months: data.rental_term_months || null,
       install_preference: data.install_preference || null,
       install_preferred_date: data.install_preferred_date || null,
     })
@@ -220,12 +230,16 @@ export async function signAgreement(
   await logActivity({
     lead_id: leadId,
     event_type: 'agreement_signed',
-    title: `Agreement signed — $${data.quote_total.toLocaleString()}`,
+    title: data.payment_method === 'rental'
+      ? `Rental agreement signed — $${data.rental_monthly_amount}/mo × ${data.rental_term_months} months`
+      : `Agreement signed — $${data.quote_total.toLocaleString()}`,
     metadata: {
       quote_total: data.quote_total,
       deposit_amount: data.deposit_amount || null,
       payment_method: data.payment_method,
       financing_provider: data.financing_provider || null,
+      rental_monthly_amount: data.rental_monthly_amount || null,
+      rental_term_months: data.rental_term_months || null,
       signed_by: data.signed_by.trim(),
     },
     ...actor,
