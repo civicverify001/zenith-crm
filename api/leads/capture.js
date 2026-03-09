@@ -92,7 +92,7 @@ module.exports = async function handler(req, res) {
     const leadData = {
       full_name: fullName,
       phone: cleanPhone,
-      stage: 'new',
+      stage: 'new_lead',
       source: 'website_form',
     }
 
