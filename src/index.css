@@ -1,0 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+.kanban-col {
+  width: 280px;
+  min-width: 280px;
+}
