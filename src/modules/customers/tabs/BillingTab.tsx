@@ -81,17 +81,25 @@ function AddCardForm({
 
       if (result.error) throw new Error(result.error.message)
 
-      // 4. Extract card details from payment method
-      const pm = result.setupIntent?.payment_method as any
-      const card = pm?.card || {}
+      // 4. Retrieve actual card details from Stripe via backend
+      const pmId = typeof result.setupIntent.payment_method === 'string'
+        ? result.setupIntent.payment_method
+        : (result.setupIntent.payment_method as any)?.id
+
+      const pmDetailsRes = await fetch('/api/stripe/get-payment-method', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_method_id: pmId }),
+      })
+      const pmDetails = await pmDetailsRes.json()
 
       // 5. Save to Supabase payment_methods
       await savePaymentMethod({
         customer_id: customerId,
-        stripe_payment_method_id: typeof pm === 'string' ? pm : pm?.id,
-        last_four: card.last4 || '????',
-        exp_month: card.exp_month || 0,
-        exp_year: card.exp_year || 0,
+        stripe_payment_method_id: pmId,
+        last_four: pmDetails.last4 || '????',
+        exp_month: pmDetails.exp_month || 0,
+        exp_year: pmDetails.exp_year || 0,
         make_default: makeDefault,
       })
 
