@@ -436,12 +436,15 @@ export function DashboardPage() {
                   </div>
                 }
                 right={
-                  <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
-                    cust.lifecycle_status === 'active'  ? 'bg-green-900/50 text-green-400' :
-                    cust.lifecycle_status === 'at_risk' ? 'bg-red-900/50 text-red-400' :
-                    cust.lifecycle_status === 'churned' ? 'bg-gray-700 text-gray-500' :
-                    'bg-gray-700 text-gray-400'
-                  }`}>
+                  <span className="text-[10px] px-2 py-0.5 rounded font-medium"
+                    style={{
+                      backgroundColor: cust.lifecycle_status === 'active' ? 'rgba(74,222,128,0.15)' :
+                        cust.lifecycle_status === 'at_risk' ? 'rgba(248,113,113,0.15)' :
+                        'rgba(148,163,184,0.15)',
+                      color: cust.lifecycle_status === 'active' ? '#4ade80' :
+                        cust.lifecycle_status === 'at_risk' ? '#f87171' :
+                        '#94a3b8',
+                    }}>
                     {cust.lifecycle_status || 'unknown'}
                   </span>
                 }
