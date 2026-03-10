@@ -18,7 +18,6 @@ export interface QuoteLineItem {
   total: number
   item_type: LineItemType
   sort_order: number
-  // enriched
   sku?: string
 }
 
@@ -43,9 +42,9 @@ export interface Quote {
   accepted_at?: string | null
   declined_at?: string | null
   accept_token?: string | null
+  decline_reason?: string | null
   created_at: string
   updated_at: string
-  // joined
   customer_name?: string
   customer_email?: string
   customer_phone?: string
@@ -94,7 +93,6 @@ export async function fetchQuotes(customerId?: string): Promise<Quote[]> {
   if (error) throw error
   if (!quotes || quotes.length === 0) return []
 
-  // Fetch customer info separately — no FK constraint required
   const customerIds = [...new Set(quotes.map((r: any) => r.customer_id).filter(Boolean))] as string[]
   const { data: customers } = customerIds.length
     ? await supabase.from('customers').select('id, full_name, email, phone').in('id', customerIds)
@@ -110,7 +108,7 @@ export async function fetchQuotes(customerId?: string): Promise<Quote[]> {
       customer_name:    c.full_name || '',
       customer_email:   c.email || '',
       customer_phone:   c.phone || '',
-      customer_address: '' || '',
+      customer_address: '',
     }
   })
 }
@@ -204,7 +202,6 @@ export async function updateQuote(quoteId: string, params: {
   valid_until?: string
   line_items?: Omit<QuoteLineItem, 'id' | 'quote_id'>[]
 }): Promise<void> {
-  // Check it's still draft
   const { data: existing } = await supabase
     .from('quotes')
     .select('status')
@@ -214,7 +211,6 @@ export async function updateQuote(quoteId: string, params: {
   if (existing?.status !== 'draft') throw new Error('Cannot edit a non-draft quote')
 
   if (params.line_items !== undefined) {
-    // Replace all line items
     await supabase.from('quote_line_items').delete().eq('quote_id', quoteId)
 
     const subtotal = params.line_items.reduce((s, li) => s + li.total, 0)
@@ -249,9 +245,12 @@ export async function updateQuote(quoteId: string, params: {
   }
 }
 
-// ─── Send quote (freeze snapshot) ────────────────────────────
+// ─── Send quote (freeze snapshot + generate accept token) ────
 
-export async function sendQuote(quoteId: string): Promise<void> {
+export async function sendQuote(quoteId: string): Promise<string> {
+  // Generate a unique accept token
+  const accept_token = crypto.randomUUID()
+
   // Fetch line items to snapshot
   const { data: lineItems } = await supabase
     .from('quote_line_items')
@@ -264,9 +263,10 @@ export async function sendQuote(quoteId: string): Promise<void> {
   const { error } = await supabase
     .from('quotes')
     .update({
-      status:               'sent',
-      sent_at:              new Date().toISOString(),
-      line_items_snapshot:  snapshot,
+      status:              'sent',
+      sent_at:             new Date().toISOString(),
+      line_items_snapshot: snapshot,
+      accept_token,
     })
     .eq('id', quoteId)
     .eq('status', 'draft') // guard: only send drafts
@@ -280,6 +280,16 @@ export async function sendQuote(quoteId: string): Promise<void> {
     event:       'sent',
     actor_type:  'staff',
   })
+
+  // Return the token so the UI can show/copy the link
+  return accept_token
+}
+
+// ─── Get public review URL ───────────────────────────────────
+
+export function getQuoteReviewUrl(accept_token: string): string {
+  const base = window.location.origin
+  return `${base}/q/${accept_token}`
 }
 
 // ─── Status helpers ───────────────────────────────────────────
