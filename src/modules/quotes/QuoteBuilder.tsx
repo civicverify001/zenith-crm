@@ -125,33 +125,33 @@ export function QuoteBuilder({
   const [savedQuoteId, setSavedQuoteId] = useState<string | null>(existingQuote?.id || null)
   const [serviceAddress, setServiceAddress] = useState(customerAddress || existingQuote?.customer_address || '')
 
-  // Fetch address from lead if not provided
+  // Auto-fetch address from leads via customer.lead_id
   useEffect(() => {
-    if (!serviceAddress && customerId) {
-      import('../../lib/supabase').then(({ supabase }) => {
-        supabase
-          .from('customers')
-          .select('lead_id')
-          .eq('id', customerId)
-          .single()
-          .then(({ data: cust }) => {
-            if (cust?.lead_id) {
-              supabase
-                .from('leads')
-                .select('address, service_address, street_address, city, state, zip')
-                .eq('id', cust.lead_id)
-                .single()
-                .then(({ data: lead }) => {
-                  if (lead) {
-                    const addr = lead.address || lead.service_address || lead.street_address ||
-                      [lead.city, lead.state, lead.zip].filter(Boolean).join(', ')
-                    if (addr) setServiceAddress(addr)
-                  }
-                })
-            }
-          })
-      })
-    }
+    if (serviceAddress || !customerId) return
+    import('../../lib/supabase').then(({ supabase }) => {
+      supabase
+        .from('customers')
+        .select('lead_id')
+        .eq('id', customerId)
+        .single()
+        .then(({ data: cust }) => {
+          if (!cust?.lead_id) return
+          supabase
+            .from('leads')
+            .select('address, city, state, zip')
+            .eq('id', cust.lead_id)
+            .single()
+            .then(({ data: lead }) => {
+              if (!lead) return
+              const parts = [
+                lead.address,
+                lead.city,
+                lead.state && lead.zip ? `${lead.state} ${lead.zip}` : lead.state || lead.zip,
+              ].filter(Boolean)
+              if (parts.length) setServiceAddress(parts.join(', '))
+            })
+        })
+    })
   }, [customerId])
 
   // Load products
