@@ -3,7 +3,7 @@
 // Route: /q/:token
 
 import { useState, useEffect, useRef } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -474,6 +474,7 @@ function InvoiceDocument({ invoice, customer, terms, onSign, signing, error }: {
 // ─── Main ─────────────────────────────────────────────────────────
 export function QuoteReviewPage() {
   const { token } = useParams<{ token: string }>()
+  const [searchParams] = useSearchParams()
   const [step, setStep] = useState<FlowStep>('loading')
   const [quote, setQuote] = useState<Quote | null>(null)
   const [lineItems, setLineItems] = useState<LineItem[]>([])
@@ -501,7 +502,7 @@ export function QuoteReviewPage() {
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-checkout-session`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`, 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY },
           body: JSON.stringify({
             customer_name: customer.full_name,
             customer_email: customer.email,
@@ -512,8 +513,8 @@ export function QuoteReviewPage() {
             invoice_id: params.invoice_id,
             quote_id: quote.id,
             customer_id: quote.customer_id,
-            success_url: `${origin}/q/${token}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${origin}/q/${token}/payment-cancelled`,
+            success_url: `${origin}/q/${token}?paid=1&session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${origin}/q/${token}?cancelled=1`,
           }),
         }
       )
@@ -526,7 +527,10 @@ export function QuoteReviewPage() {
     }
   }
 
-  useEffect(() => { if (token) loadQuote(token) }, [token])
+  useEffect(() => {
+    if (searchParams.get('paid') === '1') { setStep('complete'); return }
+    if (token) loadQuote(token)
+  }, [token])
   function scrollTop() { setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth' }), 100) }
 
   async function loadQuote(t: string) {
