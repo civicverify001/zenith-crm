@@ -178,7 +178,7 @@ export function QuoteReviewPage() {
 
           {/* Company Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '28px 40px 24px', borderBottom: '3px solid #0c4a6e' }}>
-            <img src={LOGO_URL} alt="Zenith Pure Solutions" style={{ height: 100, objectFit: 'contain' }} />
+            <img src={LOGO_URL} alt="Zenith Pure Solutions" style={{ height: 150, objectFit: 'contain' }} />
             <div style={{ textAlign: 'right', fontSize: 13, color: '#475569', lineHeight: 1.6 }}>
               <div style={{ fontWeight: 700 }}>Zenith Pure Solutions LLC</div>
               <div>6951 E 30th, Suite B</div>
