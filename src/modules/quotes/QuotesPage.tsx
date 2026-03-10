@@ -43,6 +43,7 @@ type View = 'list' | 'create' | 'edit'
 export function QuotesPage() {
   const { profile } = useAuth()
   const navigate = useNavigate()
+  const isAdmin = profile?.role === 'admin'
 
   const [view, setView]           = useState<View>('list')
   const [quotes, setQuotes]       = useState<Quote[]>([])
@@ -50,6 +51,7 @@ export function QuotesPage() {
   const [filterStatus, setFilter] = useState<FilterStatus>('all')
   const [search, setSearch]       = useState('')
   const [editQuote, setEditQuote] = useState<Quote | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // For new quote — customer picker
   const [customers, setCustomers]     = useState<any[]>([])
@@ -86,6 +88,22 @@ export function QuotesPage() {
     if (customerSearch.length > 0) loadCustomers(customerSearch)
     else setCustomers([])
   }, [customerSearch])
+
+  async function handleDelete(q: Quote, e: React.MouseEvent) {
+    e.stopPropagation()
+    const label = q.quote_number + (q.customer_name ? ` — ${q.customer_name}` : '')
+    if (!confirm(`Delete ${label}?\n\nThis cannot be undone.`)) return
+    setDeletingId(q.id)
+    try {
+      const { error } = await supabase.from('quotes').delete().eq('id', q.id)
+      if (error) throw error
+      setQuotes(prev => prev.filter(x => x.id !== q.id))
+    } catch (err: any) {
+      alert('Delete failed: ' + (err.message || err))
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   // ─── Filtered list ─────────────────────────────────────────
   const filtered = quotes.filter(q => {
@@ -235,10 +253,10 @@ export function QuotesPage() {
         {/* Stats row */}
         <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
           {[
-            { label: 'Total',    val: stats.total,                  color: '#94a3b8' },
-            { label: 'Open',     val: stats.sent,                   color: '#60a5fa' },
-            { label: 'Accepted', val: stats.accepted,               color: '#4ade80' },
-            { label: 'Value Won',val: fmt(stats.value),             color: '#22d3ee' },
+            { label: 'Total',    val: stats.total,      color: '#94a3b8' },
+            { label: 'Open',     val: stats.sent,       color: '#60a5fa' },
+            { label: 'Accepted', val: stats.accepted,   color: '#4ade80' },
+            { label: 'Value Won',val: fmt(stats.value), color: '#22d3ee' },
           ].map(s => (
             <div key={s.label} style={S.statCard}>
               <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{s.label}</div>
@@ -311,10 +329,11 @@ export function QuotesPage() {
                     {filtered.map(q => {
                       const sc = STATUS_COLORS[q.status] || { bg: '#1e293b', text: '#94a3b8' }
                       const tc = TYPE_COLORS[q.commercial_type] || '#94a3b8'
+                      const isDeleting = deletingId === q.id
                       return (
                         <tr
                           key={q.id}
-                          style={{ borderBottom: '1px solid #1a2a3a', transition: 'background 0.1s', cursor: 'pointer' }}
+                          style={{ borderBottom: '1px solid #1a2a3a', transition: 'background 0.1s', cursor: 'pointer', opacity: isDeleting ? 0.4 : 1 }}
                           onMouseEnter={e => (e.currentTarget.style.background = '#1a2e42')}
                           onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                           onClick={() => {
@@ -349,23 +368,48 @@ export function QuotesPage() {
                             {timeAgo(q.created_at)}
                           </td>
                           <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                            {q.status === 'draft' && (
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation()
-                                  if (confirm('Mark this quote as sent?')) {
-                                    await sendQuote(q.id)
-                                    loadQuotes()
-                                  }
-                                }}
-                                style={{
-                                  padding: '4px 12px', borderRadius: 6, border: '1px solid #0d7ea3',
-                                  background: 'transparent', color: '#22d3ee', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                                }}
-                              >
-                                Send
-                              </button>
-                            )}
+                            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+                              {q.status === 'draft' && (
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation()
+                                    if (confirm('Mark this quote as sent?')) {
+                                      await sendQuote(q.id)
+                                      loadQuotes()
+                                    }
+                                  }}
+                                  style={{
+                                    padding: '4px 12px', borderRadius: 6, border: '1px solid #0d7ea3',
+                                    background: 'transparent', color: '#22d3ee', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                                  }}
+                                >
+                                  Send
+                                </button>
+                              )}
+                              {isAdmin && (
+                                <button
+                                  onClick={(e) => handleDelete(q, e)}
+                                  disabled={isDeleting}
+                                  title="Delete quote"
+                                  style={{
+                                    padding: '4px 8px', borderRadius: 6, border: '1px solid #3f1a1a',
+                                    background: 'transparent', color: '#ef4444', cursor: 'pointer',
+                                    fontSize: 14, lineHeight: 1, opacity: isDeleting ? 0.5 : 1,
+                                    transition: 'all 0.12s',
+                                  }}
+                                  onMouseEnter={e => {
+                                    e.currentTarget.style.background = '#3f1a1a'
+                                    e.currentTarget.style.borderColor = '#ef4444'
+                                  }}
+                                  onMouseLeave={e => {
+                                    e.currentTarget.style.background = 'transparent'
+                                    e.currentTarget.style.borderColor = '#3f1a1a'
+                                  }}
+                                >
+                                  🗑
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       )
