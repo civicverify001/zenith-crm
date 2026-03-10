@@ -8,8 +8,8 @@ import type { UserRole } from '../types/domain.types'
 const NAV_ITEMS = [
   { path: '/dashboard',     label: 'Dashboard',      icon: '◉',  hex: '#60a5fa', soon: false, roles: ['admin','frontdesk','salesrep','technician'] as UserRole[] },
   { path: '/leads',         label: 'Pipeline',        icon: '⬡',  hex: '#22d3ee', soon: false, roles: ['admin','frontdesk','salesrep'] as UserRole[] },
-  { path: '/invoices',      label: 'Invoices',        icon: '🧾', hex: '#34d399', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
   { path: '/quotes',        label: 'Quotes',          icon: '📋', hex: '#22d3ee', soon: false, roles: ['admin','frontdesk','salesrep'] as UserRole[] },
+  { path: '/invoices',      label: 'Invoices',        icon: '🧾', hex: '#34d399', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
   { path: '/follow-ups',    label: 'Follow-Ups',      icon: '📞', hex: '#f472b6', soon: false, roles: ['admin','frontdesk','salesrep'] as UserRole[] },
   { path: '/dispatch',      label: 'Dispatch',        icon: '📅', hex: '#a78bfa', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
   { path: '/installations', label: 'Installations',   icon: '🔧', hex: '#fb923c', soon: false, roles: ['admin','technician'] as UserRole[] },
