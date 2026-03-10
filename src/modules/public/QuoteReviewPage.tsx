@@ -1,7 +1,6 @@
 // QuoteReviewPage.tsx
 // Public customer-facing page — no auth required
 // Route: /q/:token
-// Handles: Rental flow, Purchase flow, Finance flow
 
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
@@ -33,16 +32,18 @@ interface Quote {
   expires_at: string
   signed_at: string | null
   finance_redirect_url: string | null
-  customers: {
-    first_name: string
-    last_name: string
-    email: string
-    phone: string
-    address: string
-    city: string
-    state: string
-    zip: string
-  }
+  customer_id: string
+  customer?: Customer
+}
+
+interface Customer {
+  full_name: string
+  email: string
+  phone: string
+  address: string
+  city: string
+  state: string
+  zip: string
 }
 
 interface TermBlock {
@@ -55,50 +56,46 @@ interface TermBlock {
 interface Agreement {
   id: string
   agreement_number: string
-  public_token: string
   status: string
   monthly_amount: number
   install_fee: number
   signed_at: string | null
+  terms_snapshot?: any
+  line_items_snapshot?: any
 }
 
 interface Invoice {
   id: string
   invoice_number: string
-  public_token: string
   status: string
   total: number
   deposit_amount: number
   deposit_percent: number
+  tax_amount: number
   signed_at: string | null
+  terms_snapshot?: any
+  line_items_snapshot?: any
 }
 
-// ─── Step tracker ────────────────────────────────────────────────
 type FlowStep =
-  | 'loading'
-  | 'error'
-  | 'expired'
-  | 'already_complete'
-  | 'view_quote'
-  | 'sign_quote'
-  | 'view_agreement'
-  | 'sign_agreement'
-  | 'stripe_first_payment'
-  | 'view_invoice'
-  | 'sign_invoice'
-  | 'stripe_purchase_payment'
-  | 'hearth_redirect'
-  | 'complete'
+  | 'loading' | 'error' | 'expired' | 'already_complete'
+  | 'view_quote' | 'view_agreement' | 'view_invoice'
+  | 'stripe_first_payment' | 'stripe_purchase_payment'
+  | 'hearth_redirect' | 'complete'
 
 // ─── Helpers ─────────────────────────────────────────────────────
 function fmt(n: number) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0)
+}
+function today() {
+  return new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
 }
 
+// ─── Logo ────────────────────────────────────────────────────────
 function ZenithLogo() {
   return (
     <div className="flex items-center gap-3">
-      <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#0a2540' }}>
+      <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#0a2540' }}>
         <span className="text-white font-black text-base">Z</span>
       </div>
       <div>
@@ -109,84 +106,370 @@ function ZenithLogo() {
   )
 }
 
+// ─── Step bar ────────────────────────────────────────────────────
 function StepBar({ steps, current }: { steps: string[]; current: number }) {
   return (
-    <div className="flex items-center gap-2 mb-8">
+    <div className="flex items-center gap-1 mb-8 overflow-x-auto pb-1">
       {steps.map((label, i) => (
-        <div key={i} className="flex items-center gap-2">
+        <div key={i} className="flex items-center gap-1 flex-shrink-0">
           <div className="flex items-center gap-1.5">
-            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
-              i < current ? 'bg-green-500 text-white' :
-              i === current ? 'bg-blue-600 text-white' :
-              'bg-gray-200 text-gray-400'
-            }`}>
+            <div
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${i < current ? 'bg-green-500 text-white' : i === current ? 'text-white' : 'bg-gray-200 text-gray-400'}`}
+              style={i === current ? { backgroundColor: '#0a2540' } : {}}
+            >
               {i < current ? '✓' : i + 1}
             </div>
-            <span className={`text-xs font-medium hidden sm:block ${
-              i === current ? 'text-blue-700' : i < current ? 'text-green-600' : 'text-gray-400'
-            }`}>{label}</span>
+            <span className={`text-xs font-medium hidden sm:block whitespace-nowrap ${i === current ? 'text-gray-800 font-semibold' : i < current ? 'text-green-600' : 'text-gray-400'}`}>
+              {label}
+            </span>
           </div>
-          {i < steps.length - 1 && <div className={`h-px w-8 flex-shrink-0 ${i < current ? 'bg-green-400' : 'bg-gray-200'}`} />}
+          {i < steps.length - 1 && <div className={`h-px w-6 flex-shrink-0 ${i < current ? 'bg-green-400' : 'bg-gray-200'}`} />}
         </div>
       ))}
     </div>
   )
 }
 
-// ─── Signature pad ───────────────────────────────────────────────
-function SignaturePad({ onSign }: { onSign: (name: string) => void }) {
-  const [name, setName] = useState('')
+// ─── Signature Pad ────────────────────────────────────────────────
+function SignaturePad({ onSign, label = 'Sign Document', loading = false }: {
+  onSign: (name: string, signatureDataUrl?: string) => void
+  label?: string
+  loading?: boolean
+}) {
+  const [mode, setMode] = useState<'type' | 'draw'>('type')
+  const [typedName, setTypedName] = useState('')
   const [agreed, setAgreed] = useState(false)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [isDrawing, setIsDrawing] = useState(false)
+  const [hasDrawn, setHasDrawn] = useState(false)
+  const lastPos = useRef<{ x: number; y: number } | null>(null)
+
+  function getPos(e: React.MouseEvent | React.TouchEvent, canvas: HTMLCanvasElement) {
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = canvas.width / rect.width
+    const scaleY = canvas.height / rect.height
+    if ('touches' in e) {
+      return { x: (e.touches[0].clientX - rect.left) * scaleX, y: (e.touches[0].clientY - rect.top) * scaleY }
+    }
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY }
+  }
+
+  function startDraw(e: React.MouseEvent | React.TouchEvent) {
+    const canvas = canvasRef.current; if (!canvas) return
+    e.preventDefault(); setIsDrawing(true); lastPos.current = getPos(e, canvas)
+  }
+
+  function draw(e: React.MouseEvent | React.TouchEvent) {
+    if (!isDrawing) return
+    const canvas = canvasRef.current; if (!canvas) return
+    e.preventDefault()
+    const ctx = canvas.getContext('2d'); if (!ctx || !lastPos.current) return
+    const pos = getPos(e, canvas)
+    ctx.beginPath(); ctx.moveTo(lastPos.current.x, lastPos.current.y); ctx.lineTo(pos.x, pos.y)
+    ctx.strokeStyle = '#0a2540'; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke()
+    lastPos.current = pos; setHasDrawn(true)
+  }
+
+  function endDraw() { setIsDrawing(false); lastPos.current = null }
+
+  function clearCanvas() {
+    const canvas = canvasRef.current; if (!canvas) return
+    canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height); setHasDrawn(false)
+  }
+
+  function handleSign() {
+    if (!agreed) return
+    if (mode === 'type') {
+      if (typedName.trim().length < 2) return
+      onSign(typedName.trim(), undefined)
+    } else {
+      if (!hasDrawn) return
+      onSign('Drawn signature', canvasRef.current?.toDataURL('image/png'))
+    }
+  }
+
+  const canSubmit = agreed && (mode === 'type' ? typedName.trim().length >= 2 : hasDrawn)
 
   return (
     <div className="border border-gray-200 rounded-xl p-5 bg-gray-50">
       <div className="text-sm font-semibold text-gray-700 mb-4">Sign this document</div>
 
-      <div className="mb-4">
-        <label className="block text-xs font-medium text-gray-600 mb-1">Full Legal Name</label>
-        <input
-          type="text"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="Type your full name to sign"
-          className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
+      {/* Toggle */}
+      <div className="flex gap-1 mb-4 bg-white border border-gray-200 rounded-lg p-1 w-fit">
+        {(['type', 'draw'] as const).map(m => (
+          <button key={m} onClick={() => setMode(m)}
+            className="px-4 py-1.5 rounded-md text-xs font-semibold transition-colors"
+            style={mode === m ? { backgroundColor: '#0a2540', color: 'white' } : { color: '#64748b' }}
+          >
+            {m === 'type' ? '⌨️ Type' : '✏️ Draw'}
+          </button>
+        ))}
       </div>
 
-      {name.trim().length > 2 && (
-        <div className="mb-4 p-3 bg-white border border-gray-200 rounded-lg">
-          <div className="text-xs text-gray-400 mb-1">Signature preview</div>
-          <div className="font-serif text-2xl text-gray-800" style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>
-            {name}
+      {mode === 'type' ? (
+        <div className="mb-4">
+          <label className="block text-xs font-medium text-gray-600 mb-1">Full Legal Name</label>
+          <input
+            type="text" value={typedName} onChange={e => setTypedName(e.target.value)}
+            placeholder="Type your full name to sign"
+            className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          {typedName.trim().length >= 2 && (
+            <div className="mt-3 p-3 bg-white border border-gray-200 rounded-lg">
+              <div className="text-xs text-gray-400 mb-1">Signature preview</div>
+              <div className="text-2xl text-gray-800" style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>{typedName}</div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="mb-4">
+          <label className="block text-xs font-medium text-gray-600 mb-1">Draw your signature</label>
+          <div className="relative bg-white border-2 border-dashed border-gray-300 rounded-lg overflow-hidden" style={{ height: 120 }}>
+            <canvas
+              ref={canvasRef} width={600} height={120}
+              className="w-full h-full cursor-crosshair touch-none"
+              onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+              onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}
+            />
+            {!hasDrawn && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span className="text-gray-300 text-sm">Sign here</span>
+              </div>
+            )}
+            <div className="absolute bottom-3 left-4 right-4 border-b border-gray-300 pointer-events-none" />
           </div>
+          {hasDrawn && <button onClick={clearCanvas} className="mt-1.5 text-xs text-red-400 hover:text-red-600">✕ Clear</button>}
         </div>
       )}
 
       <label className="flex items-start gap-3 mb-4 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={agreed}
-          onChange={e => setAgreed(e.target.checked)}
-          className="mt-0.5 w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-        />
+        <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-0.5 w-4 h-4 rounded border-gray-300 flex-shrink-0" />
         <span className="text-xs text-gray-600">
-          By typing my name above and clicking Sign, I agree that this constitutes my legal electronic signature, with the same legal effect as a handwritten signature.
+          By signing, I agree this constitutes my legal electronic signature with the same effect as a handwritten signature.
         </span>
       </label>
 
       <button
-        onClick={() => name.trim().length > 2 && agreed && onSign(name.trim())}
-        disabled={name.trim().length < 2 || !agreed}
-        className="w-full py-3 rounded-lg text-white font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        onClick={handleSign} disabled={!canSubmit || loading}
+        className="w-full py-3 rounded-lg text-white font-semibold text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         style={{ backgroundColor: '#0a2540' }}
       >
-        Sign Document
+        {loading ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Processing...</> : label}
       </button>
     </div>
   )
 }
 
-// ─── Main component ───────────────────────────────────────────────
+// ─── Agreement Document ──────────────────────────────────────────
+function AgreementDocument({ agreement, customer, terms, onSign, signing, error }: {
+  agreement: Agreement; customer: Customer | undefined; terms: TermBlock[]
+  onSign: (name: string, sig?: string) => void; signing: boolean; error: string
+}) {
+  return (
+    <div className="space-y-4">
+      {/* Cover */}
+      <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+        <div className="px-8 py-6 text-white text-center" style={{ backgroundColor: '#0a2540' }}>
+          <div className="text-xl font-bold tracking-wide">ZENITH PURE SOLUTIONS LLC</div>
+          <div className="text-sm text-blue-200 mt-1">6951 E 30th St, Suite B · Indianapolis, IN 46219</div>
+          <div className="text-sm text-blue-200">(317) 690-4172 · zenithpuresolutions.com</div>
+        </div>
+        <div className="px-8 py-5 text-center bg-gray-50 border-b border-gray-200">
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Legal Agreement</div>
+          <div className="text-2xl font-bold text-gray-900">Residential Equipment Rental Agreement</div>
+          <div className="text-sm font-semibold mt-2" style={{ color: '#0a2540' }}>{agreement.agreement_number}</div>
+        </div>
+        <div className="px-8 py-5 grid grid-cols-2 gap-8 border-b border-gray-100">
+          <div>
+            <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">Company</div>
+            <div className="font-bold text-gray-900">Zenith Pure Solutions LLC</div>
+            <div className="text-sm text-gray-500">6951 E 30th St, Suite B</div>
+            <div className="text-sm text-gray-500">Indianapolis, IN 46219</div>
+          </div>
+          <div>
+            <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">Customer</div>
+            <div className="font-bold text-gray-900">{customer?.full_name}</div>
+            <div className="text-sm text-gray-500">{customer?.address}</div>
+            <div className="text-sm text-gray-500">{customer?.city}, {customer?.state} {customer?.zip}</div>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-4 px-8 py-5 bg-blue-50 border-b border-blue-100 text-center">
+          {[
+            { label: 'Monthly Payment', value: `${fmt(agreement.monthly_amount)}/mo` },
+            { label: 'Setup Fee (one-time)', value: fmt(agreement.install_fee) },
+            { label: 'Initial Term', value: '36 months' },
+          ].map(item => (
+            <div key={item.label}>
+              <div className="text-xs text-blue-500 font-semibold uppercase tracking-wide">{item.label}</div>
+              <div className="text-lg font-bold text-blue-900 mt-1">{item.value}</div>
+            </div>
+          ))}
+        </div>
+        <div className="px-8 py-4 bg-amber-50 border-b border-amber-100">
+          <p className="text-xs font-bold text-amber-700 text-center uppercase tracking-wide">
+            By signing, you agree to all terms including the binding arbitration clause in Article IX.
+          </p>
+        </div>
+        <div className="px-8 py-5">
+          <p className="text-sm text-gray-700 leading-relaxed">
+            This Agreement is entered into as of <strong>{today()}</strong> between{' '}
+            <strong>Zenith Pure Solutions LLC</strong> ("Company") and <strong>{customer?.full_name}</strong> ("Customer").
+          </p>
+        </div>
+      </div>
+
+      {/* Articles */}
+      {terms.map(block => (
+        <div key={block.slug} className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+          <div className="px-6 py-3 bg-gray-50 border-b border-gray-100">
+            <h3 className="text-sm font-bold text-gray-800">{block.display_title}</h3>
+          </div>
+          <div className="px-6 py-5">
+            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+              {block.content
+                .replace(/\[INSTALL_FEE\]/g, fmt(agreement.install_fee))
+                .replace(/\[MONTHLY_AMOUNT\]/g, fmt(agreement.monthly_amount))
+              }
+            </p>
+          </div>
+        </div>
+      ))}
+
+      {/* Signature */}
+      <div className="bg-white border-2 border-gray-200 rounded-2xl p-8 shadow-sm">
+        <div className="font-bold text-gray-700 text-sm mb-1">IN WITNESS WHEREOF</div>
+        <p className="text-xs text-gray-500 mb-6">Executed as of {today()}.</p>
+        <div className="grid grid-cols-2 gap-6 mb-8">
+          <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+            <div className="text-xs text-gray-400 font-semibold mb-2">ZENITH PURE SOLUTIONS LLC</div>
+            <div className="h-10 border-b border-gray-400 mb-2 flex items-end">
+              <span className="text-xl pb-1" style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', color: '#0a2540' }}>Kuldeep Singh</span>
+            </div>
+            <div className="text-xs text-gray-500">Authorized Representative · {today()}</div>
+          </div>
+          <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+            <div className="text-xs text-gray-400 font-semibold mb-2">CUSTOMER</div>
+            <div className="h-10 border-b border-gray-300 mb-2" />
+            <div className="text-xs text-gray-500">{customer?.full_name}</div>
+          </div>
+        </div>
+        {error && <p className="text-red-500 text-xs mb-4">{error}</p>}
+        <SignaturePad onSign={onSign} label="Sign Rental Agreement" loading={signing} />
+      </div>
+    </div>
+  )
+}
+
+// ─── Invoice Document ─────────────────────────────────────────────
+function InvoiceDocument({ invoice, customer, terms, onSign, signing, error }: {
+  invoice: Invoice; customer: Customer | undefined; terms: TermBlock[]
+  onSign: (name: string, sig?: string) => void; signing: boolean; error: string
+}) {
+  const items: LineItem[] = invoice.line_items_snapshot || []
+  return (
+    <div className="space-y-4">
+      <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+        <div className="px-8 py-6 text-white" style={{ backgroundColor: '#0a2540' }}>
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="text-2xl font-bold">INVOICE</div>
+              <div className="text-blue-200 text-sm">{invoice.invoice_number}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-3xl font-black">{fmt(invoice.total)}</div>
+              <div className="text-blue-200 text-xs mt-1">Total Amount</div>
+            </div>
+          </div>
+        </div>
+        <div className="px-8 py-5 grid grid-cols-2 gap-8 border-b border-gray-100">
+          <div>
+            <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">Bill To</div>
+            <div className="font-bold text-gray-900">{customer?.full_name}</div>
+            <div className="text-sm text-gray-500">{customer?.address}</div>
+            <div className="text-sm text-gray-500">{customer?.city}, {customer?.state} {customer?.zip}</div>
+            <div className="text-sm text-gray-500">{customer?.phone}</div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">From</div>
+            <div className="font-bold text-gray-900">Zenith Pure Solutions LLC</div>
+            <div className="text-sm text-gray-500">6951 E 30th St, Suite B</div>
+            <div className="text-sm text-gray-500">Indianapolis, IN 46219</div>
+            <div className="mt-3 text-xs text-gray-400">Invoice Date</div>
+            <div className="font-semibold text-gray-700 text-sm">{today()}</div>
+          </div>
+        </div>
+        {items.length > 0 && (
+          <>
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-xs text-gray-400 font-bold uppercase tracking-wide">
+                  <th className="px-8 py-3 text-left">Description</th>
+                  <th className="px-4 py-3 text-center">Qty</th>
+                  <th className="px-4 py-3 text-right">Unit Price</th>
+                  <th className="px-8 py-3 text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item, i) => (
+                  <tr key={i} className="border-b border-gray-50">
+                    <td className="px-8 py-4 text-sm text-gray-800">{item.description}</td>
+                    <td className="px-4 py-4 text-sm text-gray-600 text-center">{item.quantity}</td>
+                    <td className="px-4 py-4 text-sm text-gray-600 text-right">{fmt(item.unit_price)}</td>
+                    <td className="px-8 py-4 text-sm font-semibold text-gray-900 text-right">{fmt(item.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="px-8 py-5 bg-gray-50">
+              <div className="max-w-xs ml-auto space-y-2">
+                <div className="flex justify-between text-sm text-gray-600"><span>Subtotal</span><span>{fmt(invoice.total - (invoice.tax_amount || 0))}</span></div>
+                <div className="flex justify-between text-sm text-gray-600"><span>Tax</span><span>{fmt(invoice.tax_amount || 0)}</span></div>
+                <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-300"><span>Total</span><span>{fmt(invoice.total)}</span></div>
+                <div className="flex justify-between text-sm font-bold pt-2 border-t border-gray-200" style={{ color: '#0a2540' }}>
+                  <span>Deposit Due Today ({invoice.deposit_percent}%)</span><span>{fmt(invoice.deposit_amount)}</span>
+                </div>
+                <div className="flex justify-between text-sm text-gray-500">
+                  <span>Balance at Installation</span><span>{fmt(invoice.total - invoice.deposit_amount)}</span>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-6">
+        <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Terms & Conditions</div>
+        <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline block mb-3">
+          View full Terms & Conditions (v1.0, effective 01/30/2026) ↗
+        </a>
+        {terms.map(t => <p key={t.slug} className="text-xs text-gray-600 leading-relaxed mb-2">{t.content}</p>)}
+      </div>
+
+      <div className="bg-white border-2 border-gray-200 rounded-2xl p-8 shadow-sm">
+        <div className="font-bold text-gray-700 text-sm mb-1">Customer Authorization</div>
+        <p className="text-xs text-gray-500 mb-6">By signing, I authorize Zenith Pure Solutions to proceed and agree to the payment terms above.</p>
+        <div className="grid grid-cols-2 gap-6 mb-8">
+          <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+            <div className="text-xs text-gray-400 font-semibold mb-2">ZENITH PURE SOLUTIONS LLC</div>
+            <div className="h-10 border-b border-gray-400 mb-2 flex items-end">
+              <span className="text-xl pb-1" style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', color: '#0a2540' }}>Kuldeep Singh</span>
+            </div>
+            <div className="text-xs text-gray-500">Authorized Representative · {today()}</div>
+          </div>
+          <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+            <div className="text-xs text-gray-400 font-semibold mb-2">CUSTOMER</div>
+            <div className="h-10 border-b border-gray-300 mb-2" />
+            <div className="text-xs text-gray-500">{customer?.full_name}</div>
+          </div>
+        </div>
+        {error && <p className="text-red-500 text-xs mb-4">{error}</p>}
+        <SignaturePad onSign={onSign} label="Sign Invoice" loading={signing} />
+      </div>
+    </div>
+  )
+}
+
+// ─── Main ─────────────────────────────────────────────────────────
 export function QuoteReviewPage() {
   const { token } = useParams<{ token: string }>()
   const [step, setStep] = useState<FlowStep>('loading')
@@ -201,231 +484,144 @@ export function QuoteReviewPage() {
   const topRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { if (token) loadQuote(token) }, [token])
-
-  function scrollTop() {
-    setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
-  }
+  function scrollTop() { setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth' }), 100) }
 
   async function loadQuote(t: string) {
     try {
-      // Load quote (no join — fetch customer separately)
-      const { data: q, error: qErr } = await supabase
-        .from('quotes')
-        .select('*')
-        .eq('public_token', t)
-        .single()
-
+      const { data: q, error: qErr } = await supabase.from('quotes').select('*').eq('public_token', t).single()
       if (qErr || !q) { setStep('error'); setError('Quote not found.'); return }
-
-      // Load customer separately
-      if (q.customer_id) {
-        const { data: cust } = await supabase
-          .from('customers')
-          .select('first_name, last_name, email, phone, address, city, state, zip')
-          .eq('id', q.customer_id)
-          .single()
-        if (cust) q.customers = cust
-      }
-
-      // Check expired
       if (q.expires_at && new Date(q.expires_at) < new Date()) { setStep('expired'); return }
-
-      // Check already completed
       if (['accepted', 'declined', 'void'].includes(q.status)) { setStep('already_complete'); setQuote(q); return }
 
+      if (q.customer_id) {
+        const { data: cust } = await supabase.from('customers')
+          .select('full_name, email, phone, address, city, state, zip').eq('id', q.customer_id).single()
+        if (cust) q.customer = cust
+      }
       setQuote(q)
 
-      // Load line items
-      const { data: items } = await supabase
-        .from('document_line_items')
-        .select('*')
-        .eq('document_id', q.id)
-        .order('sort_order')
+      const { data: items } = await supabase.from('document_line_items')
+        .select('*').eq('document_id', q.id).order('sort_order')
       setLineItems(items || [])
 
-      // Load term blocks
-      const { data: allTerms } = await supabase
-        .from('term_blocks')
+      const { data: allTerms } = await supabase.from('term_blocks')
         .select('slug, display_title, content, version')
         .in('document_type', ['rental_agreement', 'purchase_invoice'])
-        .eq('is_active', true)
-        .order('sort_order')
+        .eq('is_active', true).order('sort_order')
 
-      setRentalTerms((allTerms || []).filter(t => t.slug.startsWith('ra-')))
-      setPurchaseTerms((allTerms || []).filter(t => t.slug.startsWith('purchase-')))
+      setRentalTerms((allTerms || []).filter((b: any) => b.slug?.startsWith('ra-')))
+      setPurchaseTerms((allTerms || []).filter((b: any) =>
+        b.slug?.startsWith('purchase-') || b.slug?.startsWith('inv-')
+      ))
 
-      // If quote already signed, check for existing agreement/invoice
       if (q.signed_at) {
         if (q.quote_type === 'rental') {
-          const { data: ag } = await supabase
-            .from('agreements')
-            .select('*')
-            .eq('quote_id', q.id)
-            .single()
-          if (ag) {
-            setAgreement(ag)
-            setStep(ag.signed_at ? 'complete' : 'view_agreement')
-            return
-          }
+          const { data: ag } = await supabase.from('agreements').select('*').eq('quote_id', q.id).single()
+          if (ag) { setAgreement(ag); setStep(ag.signed_at ? 'complete' : 'view_agreement'); return }
         } else {
-          const { data: inv } = await supabase
-            .from('invoices')
-            .select('*')
-            .eq('quote_id', q.id)
-            .single()
-          if (inv) {
-            setInvoice(inv)
-            setStep(inv.signed_at ? 'complete' : 'view_invoice')
-            return
-          }
+          const { data: inv } = await supabase.from('invoices').select('*').eq('quote_id', q.id).single()
+          if (inv) { setInvoice(inv); setStep(inv.signed_at ? 'complete' : 'view_invoice'); return }
         }
       }
-
       setStep('view_quote')
-    } catch (e: any) {
-      setStep('error')
-      setError(e.message || 'Something went wrong.')
-    }
+    } catch (e: any) { setStep('error'); setError(e.message || 'Something went wrong.') }
+  }
+
+  async function getIp() {
+    return fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip).catch(() => 'unknown')
   }
 
   async function handleSignQuote(signedName: string) {
     if (!quote) return
-    setSigning(true)
+    setSigning(true); setError('')
     try {
-      const ip = await fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip).catch(() => 'unknown')
-
-      // Mark quote signed
-      await supabase.from('quotes').update({
-        status: 'signed',
-        signed_at: new Date().toISOString(),
-        signed_name: signedName,
-        signed_ip: ip,
+      const ip = await getIp()
+      const { error: upErr } = await supabase.from('quotes').update({
+        status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName, signed_ip: ip,
       }).eq('id', quote.id)
-
+      if (upErr) throw upErr
       setQuote(prev => prev ? { ...prev, status: 'signed', signed_at: new Date().toISOString() } : prev)
 
+      const year = new Date().getFullYear()
       if (quote.quote_type === 'rental') {
-        // Generate rental agreement
-        const agNum = await generateNumber('rental_agreement')
-        const { data: ag } = await supabase.from('agreements').insert({
-          agreement_number: agNum,
-          quote_id: quote.id,
-          customer_id: quote.customers ? (quote as any).customer_id : null,
-          agreement_type: 'rental',
-          status: 'pending_signature',
-          monthly_amount: quote.monthly_amount,
-          install_fee: quote.install_fee,
-          term_months: 36,
+        const { data: last } = await supabase.from('agreements')
+          .select('agreement_number').like('agreement_number', `RA-${year}-%`)
+          .order('agreement_number', { ascending: false }).limit(1)
+        const lastNum = last?.[0]?.agreement_number ? parseInt(last[0].agreement_number.split('-')[2]) : 0
+        const agNum = `RA-${year}-${String(lastNum + 1).padStart(4, '0')}`
+        const { data: ag, error: agErr } = await supabase.from('agreements').insert({
+          agreement_number: agNum, quote_id: quote.id, customer_id: quote.customer_id,
+          agreement_type: 'rental', status: 'pending_signature',
+          monthly_amount: quote.monthly_amount, install_fee: quote.install_fee || 0, term_months: 36,
           terms_snapshot: { blocks: rentalTerms, captured_at: new Date().toISOString() },
           line_items_snapshot: lineItems,
         }).select().single()
-        if (ag) {
-          setAgreement(ag)
-          setStep('view_agreement')
-          scrollTop()
-        }
+        if (agErr) throw agErr
+        setAgreement(ag); setStep('view_agreement'); scrollTop()
       } else if (quote.quote_type === 'purchase') {
-        // Generate invoice
-        const invNum = await generateNumber('invoice')
-        const depositAmt = quote.deposit_type === '50_percent'
-          ? Math.round(quote.total * 0.5 * 100) / 100
-          : quote.total
-        const { data: inv } = await supabase.from('invoices').insert({
-          invoice_number: invNum,
-          quote_id: quote.id,
-          customer_id: (quote as any).customer_id,
-          invoice_type: 'purchase',
-          status: 'draft',
-          subtotal: quote.subtotal,
-          tax_amount: quote.tax_amount,
-          total: quote.total,
+        const { data: last } = await supabase.from('invoices')
+          .select('invoice_number').like('invoice_number', `INV-${year}-%`)
+          .order('invoice_number', { ascending: false }).limit(1)
+        const lastNum = last?.[0]?.invoice_number ? parseInt(last[0].invoice_number.split('-')[2]) : 0
+        const invNum = `INV-${year}-${String(lastNum + 1).padStart(4, '0')}`
+        const depositAmt = quote.deposit_type === '50_percent' ? Math.round(quote.total * 0.5 * 100) / 100 : quote.total
+        const { data: inv, error: invErr } = await supabase.from('invoices').insert({
+          invoice_number: invNum, quote_id: quote.id, customer_id: quote.customer_id,
+          invoice_type: 'purchase', status: 'draft',
+          subtotal: quote.subtotal, tax_amount: quote.tax_amount, total: quote.total,
           deposit_percent: quote.deposit_type === '50_percent' ? 50 : 100,
-          deposit_amount: depositAmt,
-          amount_due: depositAmt,
+          deposit_amount: depositAmt, amount_due: depositAmt,
           terms_snapshot: { blocks: purchaseTerms, captured_at: new Date().toISOString() },
           line_items_snapshot: lineItems,
         }).select().single()
-        if (inv) {
-          setInvoice(inv)
-          setStep('view_invoice')
-          scrollTop()
-        }
-      } else if (quote.quote_type === 'finance') {
-        // Redirect to Hearth
+        if (invErr) throw invErr
+        setInvoice(inv); setStep('view_invoice'); scrollTop()
+      } else {
         setStep('hearth_redirect')
-        if (quote.finance_redirect_url) {
-          setTimeout(() => window.location.href = quote.finance_redirect_url!, 2000)
-        }
+        if (quote.finance_redirect_url) setTimeout(() => window.location.href = quote.finance_redirect_url!, 2000)
       }
-    } catch (e: any) {
-      setError(e.message)
-    }
+    } catch (e: any) { setError(e.message) }
     setSigning(false)
   }
 
   async function handleSignAgreement(signedName: string) {
     if (!agreement) return
-    setSigning(true)
+    setSigning(true); setError('')
     try {
-      const ip = await fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip).catch(() => 'unknown')
-      await supabase.from('agreements').update({
-        status: 'signed',
-        signed_at: new Date().toISOString(),
-        signed_name: signedName,
-        signed_ip: ip,
+      const ip = await getIp()
+      const { error: e } = await supabase.from('agreements').update({
+        status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName, signed_ip: ip,
       }).eq('id', agreement.id)
-      setAgreement(prev => prev ? { ...prev, status: 'signed', signed_at: new Date().toISOString() } : prev)
-      setStep('stripe_first_payment')
-      scrollTop()
-    } catch (e: any) {
-      setError(e.message)
-    }
+      if (e) throw e
+      setStep('stripe_first_payment'); scrollTop()
+    } catch (e: any) { setError(e.message) }
     setSigning(false)
   }
 
   async function handleSignInvoice(signedName: string) {
     if (!invoice) return
-    setSigning(true)
+    setSigning(true); setError('')
     try {
-      const ip = await fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip).catch(() => 'unknown')
-      await supabase.from('invoices').update({
-        status: 'signed',
-        signed_at: new Date().toISOString(),
-        signed_name: signedName,
-        signed_ip: ip,
+      const ip = await getIp()
+      const { error: e } = await supabase.from('invoices').update({
+        status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName, signed_ip: ip,
       }).eq('id', invoice.id)
-      setInvoice(prev => prev ? { ...prev, status: 'signed', signed_at: new Date().toISOString() } : prev)
-      setStep('stripe_purchase_payment')
-      scrollTop()
-    } catch (e: any) {
-      setError(e.message)
-    }
+      if (e) throw e
+      setStep('stripe_purchase_payment'); scrollTop()
+    } catch (e: any) { setError(e.message) }
     setSigning(false)
   }
 
-  async function generateNumber(type: 'rental_quote' | 'purchase_order' | 'rental_agreement' | 'invoice') {
-    const fnMap = {
-      rental_quote: 'generate_rental_quote_number',
-      purchase_order: 'generate_purchase_order_number',
-      rental_agreement: 'generate_rental_agreement_number',
-      invoice: 'generate_invoice_number',
-    }
-    const { data } = await supabase.rpc(fnMap[type])
-    return data as string
-  }
-
-  const customer = quote?.customers
-  const customerName = customer ? `${customer.first_name} ${customer.last_name}` : ''
-  const customerAddress = customer
-    ? `${customer.address}, ${customer.city}, ${customer.state} ${customer.zip}`
-    : ''
-
-  // ─── RENDER STATES ────────────────────────────────────────────
+  const customer = quote?.customer
+  const rentalSteps = ['Review Quote', 'Sign Quote', 'Sign Agreement', 'Payment']
+  const purchaseSteps = ['Review Quote', 'Sign Quote', 'Sign Invoice', 'Payment']
+  const currentStep = step === 'view_quote' ? 0 : step === 'view_agreement' || step === 'view_invoice' ? 2 :
+    step === 'stripe_first_payment' || step === 'stripe_purchase_payment' ? 3 : 0
 
   if (step === 'loading') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <div className="text-center">
-        <div className="w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+        <div className="w-10 h-10 border-2 border-t-transparent rounded-full animate-spin mx-auto mb-3" style={{ borderColor: '#0a2540', borderTopColor: 'transparent' }} />
         <p className="text-gray-500 text-sm">Loading your document...</p>
       </div>
     </div>
@@ -435,9 +631,9 @@ export function QuoteReviewPage() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
         <div className="text-4xl mb-3">⚠️</div>
-        <h2 className="text-lg font-bold text-gray-800 mb-2">Document Not Found</h2>
-        <p className="text-sm text-gray-500">{error || 'This link is invalid or has been removed.'}</p>
-        <p className="text-xs text-gray-400 mt-4">Contact Zenith Pure Solutions: (317) 690-4172</p>
+        <h2 className="text-lg font-bold mb-2">Document Not Found</h2>
+        <p className="text-sm text-gray-500">{error}</p>
+        <p className="text-xs text-gray-400 mt-4">(317) 690-4172</p>
       </div>
     </div>
   )
@@ -446,9 +642,9 @@ export function QuoteReviewPage() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
         <div className="text-4xl mb-3">⏰</div>
-        <h2 className="text-lg font-bold text-gray-800 mb-2">Quote Expired</h2>
-        <p className="text-sm text-gray-500">This quote has expired. Please contact your sales rep for an updated quote.</p>
-        <p className="text-xs text-gray-400 mt-4">(317) 690-4172 · info@zenithpuresolutions.com</p>
+        <h2 className="text-lg font-bold mb-2">Quote Expired</h2>
+        <p className="text-sm text-gray-500">Please contact your sales rep for a new quote.</p>
+        <p className="text-xs text-gray-400 mt-4">(317) 690-4172</p>
       </div>
     </div>
   )
@@ -457,9 +653,9 @@ export function QuoteReviewPage() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
         <div className="text-4xl mb-3">✅</div>
-        <h2 className="text-lg font-bold text-gray-800 mb-2">Already Processed</h2>
-        <p className="text-sm text-gray-500">This document has already been signed and processed.</p>
-        <p className="text-xs text-gray-400 mt-4">Questions? Call (317) 690-4172</p>
+        <h2 className="text-lg font-bold mb-2">Already Processed</h2>
+        <p className="text-sm text-gray-500">This document has already been signed.</p>
+        <p className="text-xs text-gray-400 mt-4">(317) 690-4172</p>
       </div>
     </div>
   )
@@ -467,11 +663,9 @@ export function QuoteReviewPage() {
   if (step === 'hearth_redirect') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
-        <div className="text-4xl mb-3">🏦</div>
-        <h2 className="text-lg font-bold text-gray-800 mb-2">Redirecting to Hearth</h2>
-        <p className="text-sm text-gray-500">You're being redirected to Hearth to complete your financing application...</p>
-        <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mt-4" />
-        <p className="text-xs text-gray-400 mt-4">No financing link set up yet. Contact (317) 690-4172</p>
+        <div className="text-4xl mb-4">🏦</div>
+        <h2 className="text-xl font-bold mb-2">Redirecting to Hearth...</h2>
+        <div className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin mx-auto mt-4" style={{ borderColor: '#0a2540', borderTopColor: 'transparent' }} />
       </div>
     </div>
   )
@@ -479,24 +673,16 @@ export function QuoteReviewPage() {
   if (step === 'stripe_first_payment') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
-        <div className="text-5xl mb-4">✅</div>
-        <h2 className="text-xl font-bold text-gray-800 mb-2">Agreement Signed!</h2>
-        <p className="text-sm text-gray-600 mb-6">
-          Your Rental Agreement is signed. The final step is your first monthly payment of{' '}
-          <strong>{fmt(agreement?.monthly_amount || 0)}</strong> to activate your service.
-        </p>
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 text-left">
-          <div className="text-xs font-semibold text-blue-700 mb-2">What happens next</div>
-          <div className="space-y-1 text-xs text-blue-600">
-            <div>✓ Your card is securely saved for monthly autopay</div>
-            <div>✓ Zenith schedules your installation</div>
-            <div>✓ Monthly billing starts on your install date</div>
-          </div>
+        <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4 text-3xl">✅</div>
+        <h2 className="text-xl font-bold mb-2">Agreement Signed!</h2>
+        <p className="text-sm text-gray-600 mb-5">Your Rental Agreement is complete. Your rep will contact you to collect your first payment of <strong>{fmt(agreement?.monthly_amount || 0)}/mo</strong> and schedule installation.</p>
+        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-left text-xs text-blue-600 space-y-1">
+          <div className="font-bold text-blue-700 mb-1">What happens next</div>
+          <div>✓ Zenith will contact you to set up autopay</div>
+          <div>✓ Installation scheduled after first payment</div>
+          <div>✓ Monthly billing begins on install date</div>
         </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700 mb-6">
-          <strong>Stripe payment coming soon.</strong> Your rep will contact you to collect your first payment securely.
-        </div>
-        <p className="text-xs text-gray-400">Questions? Call (317) 690-4172</p>
+        <p className="text-xs text-gray-400 mt-5">(317) 690-4172</p>
       </div>
     </div>
   )
@@ -504,24 +690,15 @@ export function QuoteReviewPage() {
   if (step === 'stripe_purchase_payment') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
-        <div className="text-5xl mb-4">✅</div>
-        <h2 className="text-xl font-bold text-gray-800 mb-2">Invoice Signed!</h2>
-        <p className="text-sm text-gray-600 mb-6">
-          Your invoice is signed. Your deposit of{' '}
-          <strong>{fmt(invoice?.deposit_amount || 0)}</strong> is due to schedule installation.
-        </p>
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 text-left">
-          <div className="text-xs font-semibold text-blue-700 mb-2">What happens next</div>
-          <div className="space-y-1 text-xs text-blue-600">
-            <div>✓ Pay your deposit to lock in your installation date</div>
-            <div>✓ Remaining balance due on installation day</div>
-            <div>✓ Zenith contacts you to schedule</div>
-          </div>
+        <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4 text-3xl">✅</div>
+        <h2 className="text-xl font-bold mb-2">Invoice Signed!</h2>
+        <p className="text-sm text-gray-600 mb-5">Your rep will contact you to collect your deposit of <strong>{fmt(invoice?.deposit_amount || 0)}</strong> and schedule installation.</p>
+        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-left text-xs text-blue-600 space-y-1">
+          <div className="font-bold text-blue-700 mb-1">What happens next</div>
+          <div>✓ Pay deposit to lock in install date</div>
+          <div>✓ Remaining balance due on installation day</div>
         </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700 mb-6">
-          <strong>Stripe payment coming soon.</strong> Your rep will contact you to collect your deposit securely.
-        </div>
-        <p className="text-xs text-gray-400">Questions? Call (317) 690-4172</p>
+        <p className="text-xs text-gray-400 mt-5">(317) 690-4172</p>
       </div>
     </div>
   )
@@ -530,156 +707,103 @@ export function QuoteReviewPage() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
         <div className="text-5xl mb-4">🎉</div>
-        <h2 className="text-xl font-bold text-gray-800 mb-2">All Done!</h2>
-        <p className="text-sm text-gray-600">Your documents are signed and on file. Zenith will be in touch to schedule your installation.</p>
-        <p className="text-xs text-gray-400 mt-6">(317) 690-4172 · zenithpuresolutions.com</p>
+        <h2 className="text-xl font-bold mb-2">All Done!</h2>
+        <p className="text-sm text-gray-500">Documents signed. Zenith will be in touch soon.</p>
+        <p className="text-xs text-gray-400 mt-5">(317) 690-4172</p>
       </div>
     </div>
   )
 
-  // ─── SHARED HEADER ────────────────────────────────────────────
-  const rentalSteps = ['Review Quote', 'Sign Quote', 'Sign Agreement', 'Payment']
-  const purchaseSteps = ['Review Quote', 'Sign Quote', 'Sign Invoice', 'Payment']
-  const currentStepIndex =
-    step === 'view_quote' ? 0 :
-    step === 'sign_quote' ? 1 :
-    step === 'view_agreement' || step === 'sign_agreement' ? 2 :
-    step === 'view_invoice' || step === 'sign_invoice' ? 2 :
-    3
-
   return (
     <div className="min-h-screen bg-gray-50" ref={topRef}>
-
-      {/* Top bar */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <div className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
           <ZenithLogo />
-          <div className="text-xs text-gray-400">
-            {quote?.quote_number}
-          </div>
+          <div className="text-xs text-gray-400 font-mono">{quote?.quote_number}</div>
         </div>
       </div>
 
       <div className="max-w-3xl mx-auto px-4 py-8">
+        <StepBar steps={quote?.quote_type === 'rental' ? rentalSteps : purchaseSteps} current={currentStep} />
 
-        {/* Step bar */}
-        <StepBar
-          steps={quote?.quote_type === 'rental' ? rentalSteps : purchaseSteps}
-          current={currentStepIndex}
-        />
-
-        {/* ── VIEW QUOTE ─────────────────────────────────────── */}
-        {(step === 'view_quote' || step === 'sign_quote') && quote && (
-          <div className="space-y-6">
-
-            {/* Quote header card */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              <div className="px-6 py-5 border-b border-gray-100" style={{ backgroundColor: '#0a2540' }}>
+        {/* ── VIEW QUOTE ────────────────────────────── */}
+        {step === 'view_quote' && quote && (
+          <div className="space-y-5">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-5 text-white" style={{ backgroundColor: '#0a2540' }}>
                 <div className="flex items-start justify-between">
                   <div>
-                    <div className="text-white font-bold text-xl">
-                      {quote.quote_type === 'rental' ? 'Rental Quote' :
-                       quote.quote_type === 'purchase' ? 'Purchase Order' : 'Finance Quote'}
+                    <div className="text-xl font-bold">
+                      {quote.quote_type === 'rental' ? 'Rental Quote' : quote.quote_type === 'purchase' ? 'Purchase Order' : 'Finance Quote'}
                     </div>
-                    <div className="text-blue-200 text-sm mt-0.5">{quote.quote_number}</div>
+                    <div className="text-blue-200 text-sm">{quote.quote_number}</div>
                   </div>
                   <div className="text-right">
-                    <div className="text-blue-200 text-xs">Expires</div>
-                    <div className="text-white text-sm font-medium">
-                      {quote.expires_at ? new Date(quote.expires_at).toLocaleDateString() : '—'}
-                    </div>
+                    <div className="text-xs text-blue-300">Expires</div>
+                    <div className="text-white font-medium text-sm">{quote.expires_at ? new Date(quote.expires_at).toLocaleDateString() : '—'}</div>
                   </div>
                 </div>
               </div>
-
-              <div className="px-6 py-5 grid grid-cols-2 gap-4 text-sm">
+              <div className="px-6 py-5 grid grid-cols-2 gap-4 text-sm border-b border-gray-100">
                 <div>
-                  <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Bill To</div>
-                  <div className="font-semibold text-gray-800">{customerName}</div>
-                  <div className="text-gray-500 text-xs mt-0.5">{customerAddress}</div>
-                  {customer?.phone && <div className="text-gray-500 text-xs">{customer.phone}</div>}
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">Bill To</div>
+                  <div className="font-semibold text-gray-800">{customer?.full_name || '—'}</div>
+                  <div className="text-gray-500 text-xs">{customer?.address}</div>
+                  <div className="text-gray-500 text-xs">{customer?.city}, {customer?.state} {customer?.zip}</div>
+                  <div className="text-gray-500 text-xs">{customer?.phone}</div>
                 </div>
                 <div className="text-right">
-                  <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">From</div>
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">From</div>
                   <div className="font-semibold text-gray-800">Zenith Pure Solutions</div>
-                  <div className="text-gray-500 text-xs mt-0.5">6951 E 30th St, Suite B</div>
+                  <div className="text-gray-500 text-xs">6951 E 30th St, Suite B</div>
                   <div className="text-gray-500 text-xs">Indianapolis, IN 46219</div>
                 </div>
               </div>
             </div>
 
-            {/* Estimation details */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-              <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">Estimation Details</div>
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+              <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Estimation Details</div>
               <p className="text-sm text-gray-600 leading-relaxed">
                 This system has been recommended based on your home size, water usage, and water quality needs.
                 It is designed to improve overall water quality, enhance efficiency, and protect your plumbing, appliances, and fixtures.
               </p>
+              {quote.notes && <p className="text-sm text-gray-600 mt-2">{quote.notes}</p>}
             </div>
 
-            {/* Line items */}
             {lineItems.length > 0 && (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="px-6 py-4 border-b border-gray-100">
-                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wide">Equipment & Services</div>
-                </div>
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-6 py-3 bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-400 uppercase tracking-wide">Equipment & Services</div>
                 <table className="w-full">
-                  <thead>
-                    <tr className="text-xs font-semibold text-gray-400 border-b border-gray-100">
-                      <th className="px-6 py-3 text-left">Description</th>
-                      <th className="px-4 py-3 text-center">Qty</th>
-                      <th className="px-4 py-3 text-right">Unit Price</th>
-                      <th className="px-6 py-3 text-right">Total</th>
-                    </tr>
-                  </thead>
+                  <thead><tr className="text-xs text-gray-400 border-b border-gray-100">
+                    <th className="px-6 py-3 text-left font-semibold">Description</th>
+                    <th className="px-4 py-3 text-center font-semibold">Qty</th>
+                    <th className="px-4 py-3 text-right font-semibold">Price</th>
+                    <th className="px-6 py-3 text-right font-semibold">Total</th>
+                  </tr></thead>
                   <tbody>
                     {lineItems.map(item => (
                       <tr key={item.id} className="border-b border-gray-50">
                         <td className="px-6 py-4 text-sm text-gray-800">{item.description}</td>
                         <td className="px-4 py-4 text-sm text-gray-600 text-center">{item.quantity}</td>
-                        <td className="px-4 py-4 text-sm text-gray-600 text-right">
-                          {quote.quote_type === 'rental' ? `${fmt(item.unit_price)}/mo` : fmt(item.unit_price)}
-                        </td>
-                        <td className="px-6 py-4 text-sm font-semibold text-gray-800 text-right">
-                          {quote.quote_type === 'rental' ? `${fmt(item.total)}/mo` : fmt(item.total)}
-                        </td>
+                        <td className="px-4 py-4 text-sm text-gray-600 text-right">{quote.quote_type === 'rental' ? `${fmt(item.unit_price)}/mo` : fmt(item.unit_price)}</td>
+                        <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">{quote.quote_type === 'rental' ? `${fmt(item.total)}/mo` : fmt(item.total)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-
-                {/* Totals */}
                 <div className="px-6 py-4 bg-gray-50">
                   {quote.quote_type === 'rental' ? (
                     <div className="space-y-2">
-                      <div className="flex justify-between text-sm text-gray-600">
-                        <span>Setup / Installation Fee (one-time)</span>
-                        <span className="font-medium">{fmt(quote.install_fee || 0)}</span>
-                      </div>
-                      <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-200">
-                        <span>Monthly Total</span>
-                        <span style={{ color: '#0a2540' }}>{fmt(quote.monthly_amount || 0)}/mo</span>
-                      </div>
+                      <div className="flex justify-between text-sm text-gray-600"><span>Installation Fee (one-time)</span><span className="font-medium">{fmt(quote.install_fee || 0)}</span></div>
+                      <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-200"><span>Monthly Total</span><span style={{ color: '#0a2540' }}>{fmt(quote.monthly_amount)}/mo</span></div>
                     </div>
                   ) : (
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between text-sm text-gray-600">
-                        <span>Subtotal</span>
-                        <span>{fmt(quote.subtotal || 0)}</span>
-                      </div>
-                      <div className="flex justify-between text-sm text-gray-600">
-                        <span>Tax</span>
-                        <span>{fmt(quote.tax_amount || 0)}</span>
-                      </div>
-                      <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-200">
-                        <span>Total</span>
-                        <span style={{ color: '#0a2540' }}>{fmt(quote.total || 0)}</span>
-                      </div>
+                    <div className="max-w-xs ml-auto space-y-1.5">
+                      <div className="flex justify-between text-sm text-gray-600"><span>Subtotal</span><span>{fmt(quote.subtotal)}</span></div>
+                      <div className="flex justify-between text-sm text-gray-600"><span>Tax</span><span>{fmt(quote.tax_amount)}</span></div>
+                      <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-200"><span>Total</span><span>{fmt(quote.total)}</span></div>
                       {quote.deposit_type === '50_percent' && (
-                        <div className="flex justify-between text-sm font-semibold text-blue-700 pt-1">
-                          <span>Deposit Due Today (50%)</span>
-                          <span>{fmt(quote.deposit_amount || quote.total * 0.5)}</span>
-                        </div>
+                        <div className="flex justify-between text-sm font-bold pt-1" style={{ color: '#0a2540' }}><span>Deposit Due (50%)</span><span>{fmt(quote.total * 0.5)}</span></div>
                       )}
                     </div>
                   )}
@@ -687,240 +811,44 @@ export function QuoteReviewPage() {
               </div>
             )}
 
-            {/* Rental notice */}
             {quote.quote_type === 'rental' && (
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                 <div className="text-xs font-bold text-blue-700 mb-1">Rental Agreement Notice</div>
-                <p className="text-xs text-blue-600">
-                  Accepting this quote initiates a 36-month Residential Equipment Rental Agreement.
-                  Monthly payments apply. Equipment remains property of Zenith Pure Solutions LLC.
-                  50% of payments made apply toward buyout at any time.
-                </p>
+                <p className="text-xs text-blue-600">Accepting this quote initiates a 36-month Residential Equipment Rental Agreement. Equipment remains property of Zenith Pure Solutions LLC. 50% of payments apply toward buyout.</p>
               </div>
             )}
 
-            {/* Finance notice */}
-            {quote.quote_type === 'finance' && (
-              <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
-                <div className="text-xs font-bold text-purple-700 mb-1">Financing via Hearth</div>
-                <p className="text-xs text-purple-600">
-                  After signing this quote, you will be redirected to Hearth to complete your financing application.
-                  Once approved, Hearth funds your account and you pay Zenith directly.
-                </p>
-              </div>
-            )}
-
-            {/* T&C link */}
-            <div className="text-center">
-              <a
-                href="/terms"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-blue-600 hover:underline"
-              >
-                Click here to view Terms & Conditions (Version v1.0, Date 01/30/2026)
-              </a>
-            </div>
-
-            {/* Customer authorization + sign */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-              <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">Customer Authorization</div>
-              <p className="text-xs text-gray-600 leading-relaxed mb-5">
-                This is an estimate, not a final invoice or contract for services. The summary above is a good-faith
-                estimate based on our evaluation of the work to be performed. I understand that the final cost may differ
-                if extra materials or labor are required. By signing, I authorize Zenith Pure Solutions to proceed as
-                outlined and agree to pay for all services rendered.
-              </p>
-              <SignaturePad onSign={handleSignQuote} />
-              {error && <p className="text-red-500 text-xs mt-2">{error}</p>}
-            </div>
-
-          </div>
-        )}
-
-        {/* ── VIEW AGREEMENT ─────────────────────────────────── */}
-        {(step === 'view_agreement' || step === 'sign_agreement') && quote && agreement && (
-          <div className="space-y-6">
-
-            {/* Agreement header */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              <div className="px-6 py-5" style={{ backgroundColor: '#0a2540' }}>
-                <div className="text-white font-bold text-xl">Residential Equipment Rental Agreement</div>
-                <div className="text-blue-200 text-sm mt-0.5">{agreement.agreement_number}</div>
-              </div>
-              <div className="px-6 py-4 grid grid-cols-2 gap-4 text-sm border-b border-gray-100">
-                <div>
-                  <div className="text-xs text-gray-400 mb-0.5">Customer</div>
-                  <div className="font-semibold text-gray-800">{customerName}</div>
-                  <div className="text-gray-500 text-xs">{customerAddress}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-xs text-gray-400 mb-0.5">Agreement Date</div>
-                  <div className="font-semibold text-gray-800">{new Date().toLocaleDateString()}</div>
-                </div>
-              </div>
-              <div className="px-6 py-4 bg-blue-50 flex gap-6 text-sm">
-                <div>
-                  <div className="text-xs text-blue-500">Monthly Payment</div>
-                  <div className="font-bold text-blue-800">{fmt(agreement.monthly_amount)}/mo</div>
-                </div>
-                <div>
-                  <div className="text-xs text-blue-500">Installation Fee</div>
-                  <div className="font-bold text-blue-800">{fmt(agreement.install_fee)}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-blue-500">Initial Term</div>
-                  <div className="font-bold text-blue-800">36 months</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Agreement intro */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-              <p className="text-sm text-gray-700 leading-relaxed">
-                This Residential Equipment Rental and Service Agreement is entered into between{' '}
-                <strong>Zenith Pure Solutions LLC</strong>, an Indiana limited liability company, and{' '}
-                <strong>{customerName}</strong> ("Customer").
-              </p>
-              <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                <p className="text-xs font-bold text-amber-700">
-                  BY SIGNING BELOW, YOU ACKNOWLEDGE THAT YOU HAVE READ, UNDERSTOOD, AND AGREE TO BE BOUND BY
-                  ALL TERMS AND CONDITIONS CONTAINED IN THIS AGREEMENT, INCLUDING THE BINDING ARBITRATION
-                  AND CLASS ACTION WAIVER PROVISIONS IN ARTICLE IX.
-                </p>
-              </div>
-            </div>
-
-            {/* All articles */}
-            {rentalTerms.map(block => (
-              <div key={block.slug} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-                <h3 className="font-bold text-gray-800 mb-3 pb-2 border-b border-gray-100 text-sm">
-                  {block.display_title}
-                </h3>
-                <div className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">
-                  {block.content
-                    .replace('[INSTALL_FEE]', fmt(agreement.install_fee))
-                    .replace('[MONTHLY_AMOUNT]', fmt(agreement.monthly_amount))
-                  }
-                </div>
-              </div>
-            ))}
-
-            {/* Sign agreement */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-              <div className="text-sm font-bold text-gray-700 mb-2">IN WITNESS WHEREOF</div>
-              <p className="text-xs text-gray-500 mb-5">
-                The parties have executed this Agreement as of {new Date().toLocaleDateString()}.
-              </p>
-              <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <div className="text-xs text-gray-400 mb-1">Zenith Pure Solutions LLC</div>
-                  <div className="font-semibold text-gray-700">Kuldeep Singh</div>
-                  <div className="text-xs text-gray-400">{new Date().toLocaleDateString()}</div>
-                </div>
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <div className="text-xs text-gray-400 mb-1">Customer</div>
-                  <div className="font-semibold text-gray-700">{customerName}</div>
-                  <div className="text-xs text-gray-400">Signing below...</div>
-                </div>
-              </div>
-              <SignaturePad onSign={handleSignAgreement} />
-              {error && <p className="text-red-500 text-xs mt-2">{error}</p>}
-            </div>
-
-          </div>
-        )}
-
-        {/* ── VIEW INVOICE ───────────────────────────────────── */}
-        {(step === 'view_invoice' || step === 'sign_invoice') && quote && invoice && (
-          <div className="space-y-6">
-
-            {/* Invoice header */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              <div className="px-6 py-5" style={{ backgroundColor: '#0a2540' }}>
-                <div className="text-white font-bold text-xl">Purchase Invoice</div>
-                <div className="text-blue-200 text-sm mt-0.5">{invoice.invoice_number}</div>
-              </div>
-              <div className="px-6 py-4 grid grid-cols-2 gap-4 text-sm border-b border-gray-100">
-                <div>
-                  <div className="text-xs text-gray-400 mb-0.5">Bill To</div>
-                  <div className="font-semibold text-gray-800">{customerName}</div>
-                  <div className="text-gray-500 text-xs">{customerAddress}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-xs text-gray-400 mb-0.5">Invoice Date</div>
-                  <div className="font-semibold text-gray-800">{new Date().toLocaleDateString()}</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Line items */}
-            {(invoice.line_items_snapshot as any[])?.length > 0 && (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <table className="w-full">
-                  <thead>
-                    <tr className="text-xs font-semibold text-gray-400 border-b border-gray-100 bg-gray-50">
-                      <th className="px-6 py-3 text-left">Description</th>
-                      <th className="px-4 py-3 text-center">Qty</th>
-                      <th className="px-4 py-3 text-right">Unit Price</th>
-                      <th className="px-6 py-3 text-right">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(invoice.line_items_snapshot as LineItem[]).map((item, i) => (
-                      <tr key={i} className="border-b border-gray-50">
-                        <td className="px-6 py-4 text-sm text-gray-800">{item.description}</td>
-                        <td className="px-4 py-4 text-sm text-gray-600 text-center">{item.quantity}</td>
-                        <td className="px-4 py-4 text-sm text-gray-600 text-right">{fmt(item.unit_price)}</td>
-                        <td className="px-6 py-4 text-sm font-semibold text-gray-800 text-right">{fmt(item.total)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="px-6 py-4 bg-gray-50 space-y-1.5">
-                  <div className="flex justify-between text-sm text-gray-600">
-                    <span>Subtotal</span><span>{fmt(invoice.total - (invoice as any).tax_amount || 0)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm text-gray-600">
-                    <span>Tax</span><span>{fmt((invoice as any).tax_amount || 0)}</span>
-                  </div>
-                  <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-200">
-                    <span>Total</span><span>{fmt(invoice.total)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm font-semibold text-blue-700 pt-1">
-                    <span>Deposit Due ({invoice.deposit_percent}%)</span>
-                    <span>{fmt(invoice.deposit_amount)}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* T&C link */}
             <div className="text-center">
               <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
-                Click here to view Terms & Conditions (Version v1.0, Date 01/30/2026)
+                View Terms & Conditions (v1.0, effective 01/30/2026) ↗
               </a>
             </div>
 
-            {/* Customer authorization + sign */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-              <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">Customer Authorization</div>
-              {purchaseTerms.map(t => (
-                <p key={t.slug} className="text-xs text-gray-600 leading-relaxed mb-4">{t.content}</p>
-              ))}
-              <SignaturePad onSign={handleSignInvoice} />
-              {error && <p className="text-red-500 text-xs mt-2">{error}</p>}
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+              <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Customer Authorization</div>
+              <p className="text-xs text-gray-600 leading-relaxed mb-5">
+                This is a good-faith estimate. By signing, I authorize Zenith Pure Solutions to proceed as outlined and agree to pay for all services rendered.
+              </p>
+              <SignaturePad onSign={handleSignQuote} label="Sign & Accept Quote" loading={signing} />
+              {error && <p className="text-red-500 text-xs mt-3">{error}</p>}
             </div>
-
           </div>
         )}
 
-        {/* Footer */}
-        <div className="mt-10 text-center text-xs text-gray-400 pb-8">
-          <p>Zenith Pure Solutions LLC · 6951 E 30th St, Suite B, Indianapolis, IN 46219</p>
-          <p className="mt-1">(317) 690-4172 · info@zenithpuresolutions.com · zenithpuresolutions.com</p>
-        </div>
+        {/* ── AGREEMENT ─────────────────────────────── */}
+        {step === 'view_agreement' && quote && agreement && (
+          <AgreementDocument agreement={agreement} customer={customer} terms={rentalTerms} onSign={handleSignAgreement} signing={signing} error={error} />
+        )}
 
+        {/* ── INVOICE ───────────────────────────────── */}
+        {step === 'view_invoice' && quote && invoice && (
+          <InvoiceDocument invoice={invoice} customer={customer} terms={purchaseTerms} onSign={handleSignInvoice} signing={signing} error={error} />
+        )}
+
+        <div className="mt-10 text-center text-xs text-gray-400 pb-8 space-y-1">
+          <p>Zenith Pure Solutions LLC · 6951 E 30th St, Suite B, Indianapolis, IN 46219</p>
+          <p>(317) 690-4172 · info@zenithpuresolutions.com · zenithpuresolutions.com</p>
+        </div>
       </div>
     </div>
   )
