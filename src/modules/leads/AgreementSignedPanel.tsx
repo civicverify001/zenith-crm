@@ -48,7 +48,7 @@ function systemTypeFromAgreement(agreementType: string | null, lineItems: any[])
     const desc = lineItems.map((li: any) =>
       (li.description || li.name || '').toLowerCase()
     ).join(' ')
-    if (desc.includes('combo') || (desc.includes('ro') && desc.includes('softener'))) return 'combo_whole_home_ro'
+    if (desc.includes('combo') || ((desc.includes('ro') || desc.includes('reverse osmosis')) && desc.includes('softener'))) return 'combo_whole_home_ro'
     if (desc.includes('dual tank') || desc.includes('dual_tank')) return 'dual_tank'
     if (desc.includes('advanced') && desc.includes('softener')) return 'advanced_softener'
     if (desc.includes('pure start') || desc.includes('pure_start')) return 'pure_start_softener'
