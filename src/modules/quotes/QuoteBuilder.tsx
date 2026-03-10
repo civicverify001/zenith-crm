@@ -64,6 +64,7 @@ interface Props {
   customerAddress?: string
   customerPhone?: string
   opportunityId?: string | null
+  leadId?: string | null          // ← ADDED: links quote to lead
   existingQuote?: Quote | null
   onSaved?: (quote: Quote) => void
   onCancel?: () => void
@@ -97,7 +98,7 @@ function uid() {
 
 export function QuoteBuilder({
   customerId, customerName, customerAddress = '', customerPhone = '',
-  opportunityId = null, existingQuote = null, onSaved, onCancel,
+  opportunityId = null, leadId = null, existingQuote = null, onSaved, onCancel,
 }: Props) {
   const { profile } = useAuth()
   const [view, setView] = useState<'form' | 'preview'>('form')
@@ -271,9 +272,9 @@ export function QuoteBuilder({
   const taxAmount = parseFloat((subtotal * 0.07).toFixed(2))
   const total     = parseFloat((subtotal + taxAmount).toFixed(2))
 
-  // ─── Save / Send ───────────────────────────────────────────
-  async function handleSave() {
-    if (!customerId) return
+  // ─── Save ──────────────────────────────────────────────────
+  async function handleSave(): Promise<string | null> {
+    if (!customerId) return null
     setSaving(true)
     try {
       const items = lineItems.map((li, i) => ({
@@ -296,11 +297,13 @@ export function QuoteBuilder({
         })
         const { data } = await supabase.from('quotes').select('*').eq('id', savedQuoteId).single()
         if (data && onSaved) onSaved(data)
+        return savedQuoteId
       } else {
         const q = await createQuote({
           customer_id:     customerId,
           commercial_type: commercialType,
           opportunity_id:  opportunityId,
+          lead_id:         leadId,             // ← FIXED: stores lead FK on quote
           created_by:      profile?.id || null,
           notes:           estimation,
           valid_until:     validUntil,
@@ -308,31 +311,57 @@ export function QuoteBuilder({
         })
         setSavedQuoteId(q.id)
         if (onSaved) onSaved(q)
+        return q.id
       }
     } catch (e: any) {
       alert(e.message || 'Save failed')
+      return null
     } finally {
       setSaving(false)
     }
   }
 
+  // ─── Send ──────────────────────────────────────────────────
   async function handleSend() {
-    if (!savedQuoteId) await handleSave()
-    if (!savedQuoteId) return
+    // Save first if not yet saved — handleSave now returns the ID directly
+    let qId = savedQuoteId
+    if (!qId) {
+      qId = await handleSave()
+    }
+    if (!qId) return
+
     setSending(true)
     try {
       const res = await fetch('/api/email/send-quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          quoteId: savedQuoteId,
+          quoteId: qId,
           senderEmail: profile?.email,
           senderName:  profile?.full_name,
         }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Send failed')
-      await sendQuote(savedQuoteId) // update local status
+
+      // Mark quote as sent in DB
+      await sendQuote(qId)
+
+      // ← FIXED: fetch updated quote and call onSaved
+      // This is what triggers LeadDetailPanel → moves lead to quote_sent → shows link banner
+      const { data: updatedQuote } = await supabase
+        .from('quotes')
+        .select('*')
+        .eq('id', qId)
+        .single()
+
+      if (updatedQuote) {
+        setQuoteStatus(updatedQuote.status || 'sent')
+        if (onSaved) onSaved(updatedQuote)
+      } else {
+        setQuoteStatus('sent')
+      }
+
       alert(`✓ Quote emailed to ${data.to}`)
     } catch (e: any) {
       alert(e.message || 'Send failed')
@@ -363,7 +392,6 @@ export function QuoteBuilder({
   }
 
   function handleDownloadPDF() {
-    // Inject html2pdf if not already loaded
     if (typeof html2pdf === 'undefined') {
       const script = document.createElement('script')
       script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'
@@ -804,7 +832,7 @@ function FormView({
   )
 }
 
-// ─── Preview View — matches Odoo PDF exactly ──────────────────
+// ─── Preview View ─────────────────────────────────────────────
 
 function PreviewView({
   quoteNumber, quoteDate, validUntil, customerName, customerAddress = '', customerPhone,
@@ -832,7 +860,6 @@ function PreviewView({
 
           {/* Header row */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
-            {/* Logo placeholder */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{
                 width: 48, height: 48, borderRadius: 4,
@@ -845,7 +872,6 @@ function PreviewView({
                 <div style={{ fontSize: 10, color: Z.teal, fontWeight: 600, letterSpacing: '0.15em' }}>PURE SOLUTIONS</div>
               </div>
             </div>
-            {/* Company address */}
             <div style={{ textAlign: 'right', fontSize: 12, color: Z.muted, lineHeight: 1.7 }}>
               <div style={{ fontWeight: 600, color: Z.text }}>{COMPANY.name}</div>
               <div>{COMPANY.address}</div>
@@ -977,7 +1003,7 @@ function PreviewView({
             </div>
           </div>
 
-          {/* Rental-only: Rental type callout */}
+          {/* Rental-only callout */}
           {isRental && (
             <div style={{
               background: '#f0f8ff', border: '1px solid #b3d9ed', borderRadius: 6,
@@ -1044,7 +1070,7 @@ function PreviewView({
   )
 }
 
-// ─── Rental Agreement Modal ───────────────────────────────────────────────────
+// ─── Rental Agreement Modal ───────────────────────────────────
 
 function RentalAgreementModal({ quoteNumber, customerName, customerAddress, lineItems, subtotal, total, onClose }: any) {
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
