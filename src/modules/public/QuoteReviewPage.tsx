@@ -35,6 +35,7 @@ interface Quote {
   signed_at: string | null
   finance_redirect_url: string | null
   customer_id: string
+  lead_id: string | null       // ← connects quote back to originating lead
   customer?: Customer
 }
 
@@ -91,6 +92,46 @@ function fmt(n: number) {
 }
 function today() {
   return new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+}
+
+// ─── Lead → Customer conversion ──────────────────────────────────
+// Called when customer signs their first document.
+// Upgrades customer lifecycle_status and marks lead as converted.
+async function convertLeadToCustomer(leadId: string | null | undefined, customerId: string | null | undefined) {
+  if (!leadId || !customerId) return
+
+  try {
+    const now = new Date().toISOString()
+
+    // 1. Upgrade customer from 'lead' → 'active'
+    await supabase
+      .from('customers')
+      .update({ lifecycle_status: 'active', lifecycle_updated_at: now })
+      .eq('id', customerId)
+
+    // 2. Move lead stage to agreement_signed + stamp conversion
+    await supabase
+      .from('leads')
+      .update({
+        stage: 'agreement_signed',
+        stage_entered_at: now,
+        stage_changed_at: now,
+        converted_at: now,
+        converted_to_customer_id: customerId,
+      })
+      .eq('id', leadId)
+
+    // 3. Log to activity feed
+    await supabase.from('lead_activity_log').insert({
+      lead_id: leadId,
+      event_type: 'agreement_signed',
+      summary: 'Customer signed agreement — lead converted to customer',
+      metadata: { customer_id: customerId },
+    })
+  } catch (e) {
+    // Non-blocking — conversion failure should never stop the signing flow
+    console.error('convertLeadToCustomer error:', e)
+  }
 }
 
 // ─── Logo ────────────────────────────────────────────────────────
@@ -196,7 +237,6 @@ function SignaturePad({ onSign, label = 'Sign Document', loading = false }: {
     <div className="border border-gray-200 rounded-xl p-5 bg-gray-50">
       <div className="text-sm font-semibold text-gray-700 mb-4">Sign this document</div>
 
-      {/* Toggle */}
       <div className="flex gap-1 mb-4 bg-white border border-gray-200 rounded-lg p-1 w-fit">
         {(['type', 'draw'] as const).map(m => (
           <button key={m} onClick={() => setMode(m)}
@@ -269,7 +309,6 @@ function AgreementDocument({ agreement, customer, terms, onSign, signing, error 
 }) {
   return (
     <div className="space-y-4">
-      {/* Cover */}
       <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
         <div className="px-8 py-6 text-white text-center" style={{ backgroundColor: '#0a2540' }}>
           <div className="text-xl font-bold tracking-wide">ZENITH PURE SOLUTIONS LLC</div>
@@ -320,7 +359,6 @@ function AgreementDocument({ agreement, customer, terms, onSign, signing, error 
         </div>
       </div>
 
-      {/* Articles */}
       {terms.map(block => (
         <div key={block.slug} className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
           <div className="px-6 py-3 bg-gray-50 border-b border-gray-100">
@@ -337,7 +375,6 @@ function AgreementDocument({ agreement, customer, terms, onSign, signing, error 
         </div>
       ))}
 
-      {/* Signature */}
       <div className="bg-white border-2 border-gray-200 rounded-2xl p-8 shadow-sm">
         <div className="font-bold text-gray-700 text-sm mb-1">IN WITNESS WHEREOF</div>
         <p className="text-xs text-gray-500 mb-6">Executed as of {today()}.</p>
@@ -502,7 +539,11 @@ export function QuoteReviewPage() {
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-checkout-session`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`, 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
           body: JSON.stringify({
             customer_name: customer.full_name,
             customer_email: customer.email,
@@ -528,9 +569,27 @@ export function QuoteReviewPage() {
   }
 
   useEffect(() => {
-    if (searchParams.get('paid') === '1') { setStep('complete'); return }
+    // Returning from Stripe — mark lead as won then show complete screen
+    if (searchParams.get('paid') === '1') {
+      setStep('complete')
+      // Fire-and-forget: mark lead as won after payment
+      if (token) {
+        supabase.from('quotes').select('lead_id, customer_id').eq('public_token', token).maybeSingle()
+          .then(({ data }) => {
+            if (data?.lead_id) {
+              supabase.from('leads').update({
+                stage: 'won',
+                stage_entered_at: new Date().toISOString(),
+                stage_changed_at: new Date().toISOString(),
+              }).eq('id', data.lead_id).then(() => {})
+            }
+          })
+      }
+      return
+    }
     if (token) loadQuote(token)
   }, [token])
+
   function scrollTop() { setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth' }), 100) }
 
   async function loadQuote(t: string) {
@@ -546,10 +605,8 @@ export function QuoteReviewPage() {
         if (cust) q.customer = cust
       }
 
-      // Fetch sales rep name
       if (q.created_by) {
-        const { data: rep } = await supabase.from('profiles')
-          .select('full_name').eq('id', q.created_by).single()
+        const { data: rep } = await supabase.from('profiles').select('full_name').eq('id', q.created_by).single()
         q.created_by_name = rep?.full_name || null
       }
 
@@ -598,7 +655,9 @@ export function QuoteReviewPage() {
       setQuote(prev => prev ? { ...prev, status: 'signed', signed_at: new Date().toISOString() } : prev)
 
       const year = new Date().getFullYear()
+
       if (quote.quote_type === 'rental') {
+        // Generate rental agreement
         const { data: last } = await supabase.from('agreements')
           .select('agreement_number').like('agreement_number', `RA-${year}-%`)
           .order('agreement_number', { ascending: false }).limit(1)
@@ -612,8 +671,14 @@ export function QuoteReviewPage() {
           line_items_snapshot: lineItems,
         }).select().single()
         if (agErr) throw agErr
+
+        // ── Convert lead → customer on quote sign ──
+        await convertLeadToCustomer(quote.lead_id, quote.customer_id)
+
         setAgreement(ag); setStep('view_agreement'); scrollTop()
+
       } else if (quote.quote_type === 'purchase') {
+        // Generate purchase invoice
         const { data: last } = await supabase.from('invoices')
           .select('invoice_number').like('invoice_number', `INV-${year}-%`)
           .order('invoice_number', { ascending: false }).limit(1)
@@ -630,8 +695,15 @@ export function QuoteReviewPage() {
           line_items_snapshot: lineItems,
         }).select().single()
         if (invErr) throw invErr
+
+        // ── Convert lead → customer on quote sign ──
+        await convertLeadToCustomer(quote.lead_id, quote.customer_id)
+
         setInvoice(inv); setStep('view_invoice'); scrollTop()
+
       } else {
+        // Finance path
+        await convertLeadToCustomer(quote.lead_id, quote.customer_id)
         setStep('hearth_redirect')
         if (quote.finance_redirect_url) setTimeout(() => window.location.href = quote.finance_redirect_url!, 2000)
       }
@@ -685,6 +757,7 @@ export function QuoteReviewPage() {
   const currentStep = step === 'view_quote' ? 0 : step === 'view_agreement' || step === 'view_invoice' ? 2 :
     step === 'stripe_first_payment' || step === 'stripe_purchase_payment' ? 3 : 0
 
+  // ── Terminal screens ──────────────────────────────────────────
   if (step === 'loading') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <div className="text-center">
@@ -820,6 +893,7 @@ export function QuoteReviewPage() {
     </div>
   )
 
+  // ── Main document flow ────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50" ref={topRef}>
       <div className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
