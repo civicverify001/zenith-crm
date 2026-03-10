@@ -483,7 +483,48 @@ export function QuoteReviewPage() {
   const [invoice, setInvoice] = useState<Invoice | null>(null)
   const [error, setError] = useState('')
   const [signing, setSigning] = useState(false)
+  const [redirecting, setRedirecting] = useState(false)
   const topRef = useRef<HTMLDivElement>(null)
+
+  async function redirectToStripe(params: {
+    amount_cents: number
+    description: string
+    quote_type: 'rental' | 'purchase'
+    agreement_id?: string
+    invoice_id?: string
+  }) {
+    if (!quote || !customer) return
+    setRedirecting(true)
+    try {
+      const origin = window.location.origin
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-checkout-session`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY },
+          body: JSON.stringify({
+            customer_name: customer.full_name,
+            customer_email: customer.email,
+            amount_cents: params.amount_cents,
+            description: params.description,
+            quote_type: params.quote_type,
+            agreement_id: params.agreement_id,
+            invoice_id: params.invoice_id,
+            quote_id: quote.id,
+            customer_id: quote.customer_id,
+            success_url: `${origin}/q/${token}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${origin}/q/${token}/payment-cancelled`,
+          }),
+        }
+      )
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      window.location.href = data.url
+    } catch (e: any) {
+      setError(e.message || 'Failed to start payment. Please call (317) 690-4172.')
+      setRedirecting(false)
+    }
+  }
 
   useEffect(() => { if (token) loadQuote(token) }, [token])
   function scrollTop() { setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth' }), 100) }
@@ -604,6 +645,12 @@ export function QuoteReviewPage() {
       }).eq('id', agreement.id)
       if (e) throw e
       setStep('stripe_first_payment'); scrollTop()
+      await redirectToStripe({
+        amount_cents: Math.round((agreement.monthly_amount || 0) * 100),
+        description: `First Month Rental Payment — ${agreement.agreement_number}`,
+        quote_type: 'rental',
+        agreement_id: agreement.id,
+      })
     } catch (e: any) { setError(e.message) }
     setSigning(false)
   }
@@ -618,6 +665,12 @@ export function QuoteReviewPage() {
       }).eq('id', invoice.id)
       if (e) throw e
       setStep('stripe_purchase_payment'); scrollTop()
+      await redirectToStripe({
+        amount_cents: Math.round((invoice.deposit_amount || 0) * 100),
+        description: `Purchase Deposit (${invoice.deposit_percent}%) — ${invoice.invoice_number}`,
+        quote_type: 'purchase',
+        invoice_id: invoice.id,
+      })
     } catch (e: any) { setError(e.message) }
     setSigning(false)
   }
@@ -683,16 +736,35 @@ export function QuoteReviewPage() {
   if (step === 'stripe_first_payment') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
-        <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4 text-3xl">✅</div>
-        <h2 className="text-xl font-bold mb-2">Agreement Signed!</h2>
-        <p className="text-sm text-gray-600 mb-5">Your Rental Agreement is complete. Your rep will contact you to collect your first payment of <strong>{fmt(agreement?.monthly_amount || 0)}/mo</strong> and schedule installation.</p>
-        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-left text-xs text-blue-600 space-y-1">
-          <div className="font-bold text-blue-700 mb-1">What happens next</div>
-          <div>✓ Zenith will contact you to set up autopay</div>
-          <div>✓ Installation scheduled after first payment</div>
-          <div>✓ Monthly billing begins on install date</div>
-        </div>
-        <p className="text-xs text-gray-400 mt-5">(317) 690-4172</p>
+        {redirecting ? (
+          <>
+            <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: '#eff6ff' }}>
+              <div className="w-7 h-7 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#0a2540', borderTopColor: 'transparent' }} />
+            </div>
+            <h2 className="text-xl font-bold mb-2">Agreement Signed!</h2>
+            <p className="text-sm text-gray-500">Taking you to secure payment...</p>
+          </>
+        ) : (
+          <>
+            <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4 text-3xl">✅</div>
+            <h2 className="text-xl font-bold mb-2">Agreement Signed!</h2>
+            <p className="text-sm text-gray-600 mb-4">Ready to collect your first payment of <strong>{fmt(agreement?.monthly_amount || 0)}</strong>.</p>
+            {error && <p className="text-red-500 text-xs mb-4">{error}</p>}
+            <button
+              onClick={() => redirectToStripe({
+                amount_cents: Math.round((agreement?.monthly_amount || 0) * 100),
+                description: `First Month Rental Payment — ${agreement?.agreement_number}`,
+                quote_type: 'rental',
+                agreement_id: agreement?.id,
+              })}
+              className="w-full py-3 rounded-xl text-white font-semibold text-sm"
+              style={{ backgroundColor: '#0a2540' }}
+            >
+              Continue to Payment →
+            </button>
+            <p className="text-xs text-gray-400 mt-4">(317) 690-4172</p>
+          </>
+        )}
       </div>
     </div>
   )
@@ -700,15 +772,35 @@ export function QuoteReviewPage() {
   if (step === 'stripe_purchase_payment') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
-        <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4 text-3xl">✅</div>
-        <h2 className="text-xl font-bold mb-2">Invoice Signed!</h2>
-        <p className="text-sm text-gray-600 mb-5">Your rep will contact you to collect your deposit of <strong>{fmt(invoice?.deposit_amount || 0)}</strong> and schedule installation.</p>
-        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-left text-xs text-blue-600 space-y-1">
-          <div className="font-bold text-blue-700 mb-1">What happens next</div>
-          <div>✓ Pay deposit to lock in install date</div>
-          <div>✓ Remaining balance due on installation day</div>
-        </div>
-        <p className="text-xs text-gray-400 mt-5">(317) 690-4172</p>
+        {redirecting ? (
+          <>
+            <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: '#eff6ff' }}>
+              <div className="w-7 h-7 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#0a2540', borderTopColor: 'transparent' }} />
+            </div>
+            <h2 className="text-xl font-bold mb-2">Invoice Signed!</h2>
+            <p className="text-sm text-gray-500">Taking you to secure payment...</p>
+          </>
+        ) : (
+          <>
+            <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4 text-3xl">✅</div>
+            <h2 className="text-xl font-bold mb-2">Invoice Signed!</h2>
+            <p className="text-sm text-gray-600 mb-4">Ready to collect your deposit of <strong>{fmt(invoice?.deposit_amount || 0)}</strong>.</p>
+            {error && <p className="text-red-500 text-xs mb-4">{error}</p>}
+            <button
+              onClick={() => redirectToStripe({
+                amount_cents: Math.round((invoice?.deposit_amount || 0) * 100),
+                description: `Purchase Deposit (${invoice?.deposit_percent}%) — ${invoice?.invoice_number}`,
+                quote_type: 'purchase',
+                invoice_id: invoice?.id,
+              })}
+              className="w-full py-3 rounded-xl text-white font-semibold text-sm"
+              style={{ backgroundColor: '#0a2540' }}
+            >
+              Continue to Payment →
+            </button>
+            <p className="text-xs text-gray-400 mt-4">(317) 690-4172</p>
+          </>
+        )}
       </div>
     </div>
   )
