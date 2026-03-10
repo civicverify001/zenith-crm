@@ -388,6 +388,8 @@ export function QuoteBuilder({
         ? <FormView
             commercialType={commercialType}
             setCommercialType={setCommercialType}
+            serviceAddress={serviceAddress}
+            setServiceAddress={setServiceAddress}
             estimation={estimation}
             setEstimation={setEstimation}
             validUntil={validUntil}
@@ -428,6 +430,7 @@ export function QuoteBuilder({
 
 function FormView({
   commercialType, setCommercialType,
+  serviceAddress, setServiceAddress,
   estimation, setEstimation,
   validUntil, setValidUntil,
   lineItems, products, loadingProducts,
