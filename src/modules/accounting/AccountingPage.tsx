@@ -40,43 +40,29 @@ function fmt(n: number) {
   return '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 
-function downloadCSV(rows: MonthRow[], title: string) {
-  const headers = [
-    'Period','Rental Revenue','Purchase Revenue','Installation Revenue',
-    'Taxable Sales','Sales Tax (7%)','Total Collected','Transactions'
-  ]
-  const lines = [
-    `Zenith Pure Solutions LLC — ${title}`,
-    `Generated: ${new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })}`,
-    `Indiana Sales Tax Rate: 7.00%`,
-    '',
-    headers.join(','),
-    ...rows.map(r => [
-      r.label,
-      r.rental_revenue.toFixed(2),
-      r.purchase_revenue.toFixed(2),
-      r.install_revenue.toFixed(2),
-      r.taxable_sales.toFixed(2),
-      r.tax_collected.toFixed(2),
-      r.total_collected.toFixed(2),
-      r.transaction_count,
-    ].join(',')),
-    '',
-    ['TOTALS',
-      rows.reduce((s,r)=>s+r.rental_revenue,0).toFixed(2),
-      rows.reduce((s,r)=>s+r.purchase_revenue,0).toFixed(2),
-      rows.reduce((s,r)=>s+r.install_revenue,0).toFixed(2),
-      rows.reduce((s,r)=>s+r.taxable_sales,0).toFixed(2),
-      rows.reduce((s,r)=>s+r.tax_collected,0).toFixed(2),
-      rows.reduce((s,r)=>s+r.total_collected,0).toFixed(2),
-      rows.reduce((s,r)=>s+r.transaction_count,0),
-    ].join(','),
-  ]
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+async function downloadTaxReport(year: number, month: number, mode: string) {
+  const params = new URLSearchParams({ year: String(year), month: String(month), mode })
+  const res = await fetch(`/api/export/sales-tax-report?${params}`)
+  if (!res.ok) { alert('Export failed — check console'); return }
+  const blob = await res.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${title.replace(/\s+/g,'-')}.csv`
+  const cd = res.headers.get('content-disposition') || ''
+  const match = cd.match(/filename="(.+)"/)
+  a.download = match ? match[1] : `Zenith_SalesTax.xlsx`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function downloadBookOfBusiness() {
+  const res = await fetch('/api/export/book-of-business')
+  if (!res.ok) { alert('Export failed — check console'); return }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `Zenith_Book_of_Business_${new Date().toISOString().slice(0,10)}.xlsx`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -263,14 +249,24 @@ export function AccountingPage() {
             </div>
           </div>
           <button
-            onClick={() => downloadCSV(mode === 'monthly' ? (nonZeroRows.length ? nonZeroRows : rows) : rows, reportTitle)}
+            onClick={() => downloadTaxReport(selectedYear, selectedMonth, mode)}
             style={{
               padding: '10px 22px', borderRadius: 8, border: 'none', cursor: 'pointer',
               background: Z.teal, color: '#fff', fontWeight: 700, fontSize: 14,
               display: 'flex', alignItems: 'center', gap: 8,
             }}
           >
-            ⬇ Export CSV for Accountant
+            ⬇ Export Tax Report
+          </button>
+          <button
+            onClick={downloadBookOfBusiness}
+            style={{
+              padding: '10px 22px', borderRadius: 8, border: '1px solid #1e3a4f', cursor: 'pointer',
+              background: '#162232', color: '#94a3b8', fontWeight: 700, fontSize: 14,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}
+          >
+            📊 Book of Business
           </button>
         </div>
       </div>
