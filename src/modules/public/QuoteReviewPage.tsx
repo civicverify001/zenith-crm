@@ -208,14 +208,24 @@ export function QuoteReviewPage() {
 
   async function loadQuote(t: string) {
     try {
-      // Load quote
+      // Load quote (no join — fetch customer separately)
       const { data: q, error: qErr } = await supabase
         .from('quotes')
-        .select(`*, customers(first_name, last_name, email, phone, address, city, state, zip)`)
+        .select('*')
         .eq('public_token', t)
         .single()
 
       if (qErr || !q) { setStep('error'); setError('Quote not found.'); return }
+
+      // Load customer separately
+      if (q.customer_id) {
+        const { data: cust } = await supabase
+          .from('customers')
+          .select('first_name, last_name, email, phone, address, city, state, zip')
+          .eq('id', q.customer_id)
+          .single()
+        if (cust) q.customers = cust
+      }
 
       // Check expired
       if (q.expires_at && new Date(q.expires_at) < new Date()) { setStep('expired'); return }
