@@ -9,6 +9,9 @@ import {
   type QuoteLineItem, type CommercialType, type Product, type Quote,
 } from '../../services/quotesService'
 
+// html2pdf loaded via CDN script tag injected at runtime
+declare const html2pdf: any
+
 // ─── Zenith brand colors ──────────────────────────────────────
 const Z = {
   navy:    '#0c1e35',
@@ -100,6 +103,10 @@ export function QuoteBuilder({
   const [view, setView] = useState<'form' | 'preview'>('form')
   const [saving, setSaving] = useState(false)
   const [sending, setSending] = useState(false)
+  const [accepting, setAccepting] = useState(false)
+  const [showAgreement, setShowAgreement] = useState(false)
+  const [quoteStatus, setQuoteStatus] = useState<string>(existingQuote?.status || 'draft')
+  const previewRef = useRef<HTMLDivElement>(null)
   const [products, setProducts] = useState<Product[]>([])
   const [loadingProducts, setLoadingProducts] = useState(true)
 
@@ -325,6 +332,52 @@ export function QuoteBuilder({
     }
   }
 
+  async function handleAccept() {
+    if (!savedQuoteId) { alert('Save the quote first.'); return }
+    setAccepting(true)
+    try {
+      await supabase.from('quotes').update({
+        status: 'accepted',
+        accepted_at: new Date().toISOString(),
+      }).eq('id', savedQuoteId)
+      setQuoteStatus('accepted')
+      if (commercialType === 'rental') {
+        setShowAgreement(true)
+      } else {
+        alert('Quote accepted. Generate invoice from the quotes list.')
+      }
+    } catch (e: any) {
+      alert(e.message || 'Accept failed')
+    } finally {
+      setAccepting(false)
+    }
+  }
+
+  function handleDownloadPDF() {
+    // Inject html2pdf if not already loaded
+    if (typeof html2pdf === 'undefined') {
+      const script = document.createElement('script')
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'
+      script.onload = () => doDownload()
+      document.head.appendChild(script)
+    } else {
+      doDownload()
+    }
+  }
+
+  function doDownload() {
+    const el = document.getElementById('zenith-quote-preview')
+    if (!el) { alert('Switch to Preview tab first.'); return }
+    const name = `${quoteNumber || 'Quote'}_${customerName.replace(/\s+/g,'-')}.pdf`
+    html2pdf().set({
+      margin: 0,
+      filename: name,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    }).from(el).save()
+  }
+
   // ─── Render ────────────────────────────────────────────────
   return (
     <div style={{ background: '#0f1923', minHeight: '100vh', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
@@ -361,28 +414,68 @@ export function QuoteBuilder({
         </div>
         {/* Actions */}
         <button
+          onClick={handleDownloadPDF}
+          title="Download PDF"
+          style={{
+            padding: '8px 14px', borderRadius: 8, border: '1px solid #1e3a4f', cursor: 'pointer',
+            background: 'transparent', color: '#64748b', fontWeight: 600, fontSize: 13,
+          }}
+        >
+          ⬇ PDF
+        </button>
+        <button
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || quoteStatus !== 'draft'}
           style={{
             padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
             background: '#1e3a5f', color: '#60a5fa', fontWeight: 600, fontSize: 13,
+            opacity: quoteStatus !== 'draft' ? 0.4 : 1,
           }}
         >
           {saving ? 'Saving…' : 'Save Draft'}
         </button>
         <button
           onClick={handleSend}
-          disabled={sending || lineItems.length === 0}
+          disabled={sending || lineItems.length === 0 || quoteStatus !== 'draft'}
           style={{
             padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
-            background: lineItems.length === 0 ? '#1a2a3a' : '#0d7ea3',
-            color: lineItems.length === 0 ? '#334155' : '#fff',
+            background: lineItems.length === 0 || quoteStatus !== 'draft' ? '#1a2a3a' : '#0d7ea3',
+            color: lineItems.length === 0 || quoteStatus !== 'draft' ? '#334155' : '#fff',
             fontWeight: 700, fontSize: 13,
           }}
         >
           {sending ? 'Sending…' : 'Send Quote'}
         </button>
+        {quoteStatus === 'sent' && (
+          <button
+            onClick={handleAccept}
+            disabled={accepting}
+            style={{
+              padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              background: '#16a34a', color: '#fff', fontWeight: 700, fontSize: 13,
+            }}
+          >
+            {accepting ? 'Accepting…' : '✓ Accept Quote'}
+          </button>
+        )}
+        {quoteStatus === 'accepted' && (
+          <div style={{ padding: '8px 14px', borderRadius: 8, background: '#14532d', color: '#86efac', fontWeight: 700, fontSize: 13 }}>
+            ✓ Accepted
+          </div>
+        )}
       </div>
+
+      {showAgreement && (
+        <RentalAgreementModal
+          quoteNumber={quoteNumber}
+          customerName={customerName}
+          customerAddress={serviceAddress}
+          lineItems={lineItems}
+          subtotal={subtotal}
+          total={total}
+          onClose={() => setShowAgreement(false)}
+        />
+      )}
 
       {view === 'form'
         ? <FormView
@@ -723,7 +816,7 @@ function PreviewView({
 
   return (
     <div style={{ padding: '0 24px 40px', overflowY: 'auto' }}>
-      <div style={previewStyle}>
+      <div id="zenith-quote-preview" style={previewStyle}>
 
         {/* ── Page 1: Header + Line Items ── */}
         <div style={{ padding: '32px 40px' }}>
@@ -937,6 +1030,211 @@ function PreviewView({
           <div style={{ fontSize: 11, color: Z.muted }}>Page 1 / 1</div>
         </div>
 
+      </div>
+    </div>
+  )
+}
+
+// ─── Rental Agreement Modal ───────────────────────────────────────────────────
+
+function RentalAgreementModal({ quoteNumber, customerName, customerAddress, lineItems, subtotal, total, onClose }: any) {
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  const mainProduct = lineItems.find((li: any) => li.item_type === 'product') || lineItems[0]
+  const monthlyAmount = lineItems
+    .filter((li: any) => li.item_type !== 'discount')
+    .reduce((s: number, li: any) => s + li.total, 0)
+
+  function downloadAgreement() {
+    if (typeof html2pdf === 'undefined') {
+      const script = document.createElement('script')
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'
+      script.onload = () => doDownloadAgreement()
+      document.head.appendChild(script)
+    } else {
+      doDownloadAgreement()
+    }
+  }
+
+  function doDownloadAgreement() {
+    const el = document.getElementById('zenith-agreement-content')
+    if (!el) return
+    html2pdf().set({
+      margin: 10,
+      filename: `Rental_Agreement_${customerName.replace(/\s+/g,'-')}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    }).from(el).save()
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
+      zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      overflowY: 'auto', padding: '24px 16px',
+    }}>
+      <div style={{ background: '#162232', borderRadius: 12, width: '100%', maxWidth: 800, boxShadow: '0 20px 60px rgba(0,0,0,0.7)' }}>
+        {/* Modal header */}
+        <div style={{ padding: '20px 28px', borderBottom: '1px solid #1e3a4f', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 18 }}>Rental Agreement Generated</div>
+            <div style={{ color: '#64748b', fontSize: 13, marginTop: 2 }}>
+              Auto-generated from accepted quote {quoteNumber}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={downloadAgreement} style={{
+              padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 13,
+            }}>
+              ⬇ Download PDF
+            </button>
+            <button onClick={onClose} style={{
+              padding: '8px 18px', borderRadius: 8, border: '1px solid #334155', cursor: 'pointer',
+              background: 'transparent', color: '#94a3b8', fontWeight: 600, fontSize: 13,
+            }}>
+              Close
+            </button>
+          </div>
+        </div>
+
+        {/* Agreement content */}
+        <div style={{ padding: 28, overflowY: 'auto', maxHeight: '75vh' }}>
+          <div id="zenith-agreement-content" style={{
+            background: '#fff', color: '#1a2a3a', fontFamily: "'DM Sans', Arial, sans-serif",
+            fontSize: 12, lineHeight: 1.6, padding: '40px 48px', borderRadius: 4,
+          }}>
+            {/* Header */}
+            <div style={{ textAlign: 'center', marginBottom: 28, borderBottom: '2px solid #0c1e35', paddingBottom: 20 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 8 }}>
+                <div style={{ width: 40, height: 40, background: '#0c1e35', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ color: '#0d7ea3', fontWeight: 900, fontSize: 16 }}>ZE</span>
+                </div>
+                <div>
+                  <div style={{ fontWeight: 900, fontSize: 16, color: '#0c1e35' }}>ZENITH PURE SOLUTIONS LLC</div>
+                  <div style={{ fontSize: 10, color: '#64748b' }}>6951 E 30th, Suite B • Indianapolis, IN 46219</div>
+                </div>
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 18, color: '#0c1e35', letterSpacing: 1, marginTop: 12 }}>
+                RESIDENTIAL EQUIPMENT RENTAL AGREEMENT
+              </div>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                Generated: {today} • Ref: {quoteNumber}
+              </div>
+            </div>
+
+            {/* Parties */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 20 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 11, textTransform: 'uppercase' as const, color: '#64748b', marginBottom: 6 }}>Company (Lessor)</div>
+                <div style={{ fontWeight: 600 }}>Zenith Pure Solutions LLC</div>
+                <div>6951 E 30th, Suite B</div>
+                <div>Indianapolis, IN 46219</div>
+                <div>Phone: +1 (317) 690-4172</div>
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 11, textTransform: 'uppercase' as const, color: '#64748b', marginBottom: 6 }}>Customer (Lessee)</div>
+                <div style={{ fontWeight: 600 }}>{customerName}</div>
+                {customerAddress && <div>{customerAddress}</div>}
+              </div>
+            </div>
+
+            {/* Equipment */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#0c1e35', borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 10 }}>
+                APPENDIX A — EQUIPMENT SCHEDULE
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' as const }}>
+                <thead>
+                  <tr style={{ background: '#f0f4f8' }}>
+                    {['Description','Monthly Rate','Term'].map(h => (
+                      <th key={h} style={{ border: '1px solid #e2e8f0', padding: '8px 12px', textAlign: 'left' as const, fontSize: 11, fontWeight: 700 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {lineItems.map((li: any, i: number) => (
+                    <tr key={i}>
+                      <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px' }}>{li.description}</td>
+                      <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px' }}>${li.total.toFixed(2)}/mo</td>
+                      <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px' }}>36 months</td>
+                    </tr>
+                  ))}
+                  <tr style={{ fontWeight: 700, background: '#f8fafc' }}>
+                    <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px' }}>Total Monthly Payment</td>
+                    <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px', color: '#0c1e35' }}>${monthlyAmount.toFixed(2)}/mo</td>
+                    <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px' }}></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Key Terms */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#0c1e35', borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 10 }}>
+                KEY TERMS & CONDITIONS
+              </div>
+              {[
+                ['Initial Term', '36 months from installation date. Automatically renews month-to-month after initial term.'],
+                ['Monthly Payment', `$${monthlyAmount.toFixed(2)}/month, due on the same day each month. Autopay via ACH or card on file.`],
+                ['Setup / Installation Fee', '$300.00 (credited 100% toward equipment buyout).'],
+                ['Buyout Option', 'Current Retail Price minus 50% of payments made minus installation fee. Exercisable at any time after month 6.'],
+                ['Late Fee', '1.75% per month (21% APR) on balances past due. NSF fee: $25.00.'],
+                ['Annual Price Increase', 'Up to CPI-U + 3% annually, with 30-day written notice.'],
+                ['Cancellation', 'Customer may cancel with 30 days written notice. Early termination fee applies if within initial 36-month term.'],
+                ['Right of Rescission', 'Indiana Home Solicitation Sales Act — 3 business day cancellation right from date of signing.'],
+                ['Equipment Ownership', 'Equipment remains property of Zenith Pure Solutions LLC until buyout is exercised and confirmed in writing.'],
+                ['Dispute Resolution', 'Binding arbitration under AAA rules in Indianapolis, IN. Class action waiver applies.'],
+              ].map(([term, detail]) => (
+                <div key={term} style={{ marginBottom: 8, display: 'grid', gridTemplateColumns: '180px 1fr', gap: 12 }}>
+                  <div style={{ fontWeight: 600, fontSize: 11 }}>{term}:</div>
+                  <div style={{ fontSize: 11 }}>{detail}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* ACH */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#0c1e35', borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 10 }}>
+                PAYMENT — ACH DETAILS
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' as const, maxWidth: 400 }}>
+                {[
+                  ['Bank Name', 'Old National Bank'],
+                  ['ABA / Routing', '086300012'],
+                  ['Account Number', '0127726846'],
+                  ['Account Name', 'ZENITH PURE SOLUTIONS LLC'],
+                ].map(([k, v]) => (
+                  <tr key={k}>
+                    <td style={{ border: '1px solid #e2e8f0', padding: '7px 12px', fontWeight: 600, background: '#f0f4f8', width: '40%' }}>{k}:</td>
+                    <td style={{ border: '1px solid #e2e8f0', padding: '7px 12px' }}>{v}</td>
+                  </tr>
+                ))}
+              </table>
+            </div>
+
+            {/* Signatures */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40, marginTop: 32 }}>
+              {[
+                ['Customer Signature', customerName, 'Date'],
+                ['Authorized by Zenith', 'Kuldeep Singh, Zenith Pure Solutions LLC', 'Date'],
+              ].map(([label, name, dateLabel]) => (
+                <div key={label}>
+                  <div style={{ borderBottom: '1px solid #1a2a3a', marginBottom: 4, height: 40 }}></div>
+                  <div style={{ fontSize: 11, fontWeight: 600 }}>{label}</div>
+                  <div style={{ fontSize: 10, color: '#64748b' }}>{name}</div>
+                  <div style={{ borderBottom: '1px solid #1a2a3a', marginBottom: 4, height: 28, marginTop: 16 }}></div>
+                  <div style={{ fontSize: 11, fontWeight: 600 }}>{dateLabel}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginTop: 28, paddingTop: 16, borderTop: '1px solid #e2e8f0', fontSize: 10, color: '#94a3b8', textAlign: 'center' as const }}>
+              Zenith Pure Solutions LLC • 6951 E 30th, Suite B, Indianapolis IN 46219 • +1 (317) 690-4172 • zenithpuresolutions.com
+              <br/>Terms & Conditions: zenithpuresolutions.com/terms • Version v1.0 • {today}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )
