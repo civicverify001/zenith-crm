@@ -5,6 +5,7 @@ import { LoginPage } from '../modules/auth/LoginPage'
 import { LoadingScreen } from '../shared/ui/LoadingScreen'
 import ProductCatalog from '../services/ProductCatalog'
 import { FollowUpsPage } from '../modules/followups/FollowUpsPage'
+import { QuoteReviewPage } from '../modules/public/QuoteReviewPage'
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
@@ -168,15 +169,26 @@ export function AppRouter() {
   const { session, role, loading } = useAuth()
 
   if (loading) return <LoadingScreen />
-  if (!session) return <LoginPage />
 
+  // Public routes — no auth required
+  return (
+    <Routes>
+      {/* Public quote review page — customer clicks link to accept/decline */}
+      <Route path="/q/:token" element={<QuoteReviewPage />} />
+
+      {/* Everything else requires auth */}
+      <Route path="/*" element={
+        !session ? <LoginPage /> : <AuthenticatedRoutes role={role} />
+      } />
+    </Routes>
+  )
+}
+
+// ─── Authenticated Routes (inside AppLayout) ─────────────────────
+function AuthenticatedRoutes({ role }: { role: string | null }) {
   const cs = COMING_SOON_PAGES
 
   return (
-    import { QuoteReviewPage } from '../modules/public/QuoteReviewPage'
-
-// Inside your router, BEFORE the AppLayout routes:
-<Route path="/q/:token" element={<QuoteReviewPage />} />
     <AppLayout>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
