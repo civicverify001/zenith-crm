@@ -331,7 +331,6 @@ export function QuoteBuilder({
     if (!qId) return
 
     setSending(true)
-    let emailTo = ''
     try {
       const res = await fetch('/api/email/send-quote', {
         method: 'POST',
@@ -343,30 +342,33 @@ export function QuoteBuilder({
         }),
       })
       const data = await res.json()
-      if (res.ok) emailTo = data.to
-    } catch (_) {
-      // email failed — still mark sent and move lead
-    }
+      if (!res.ok) throw new Error(data.error || 'Send failed')
 
-    try {
+      // Mark quote as sent in DB
       await sendQuote(qId)
+
+      // ← FIXED: fetch updated quote and call onSaved
+      // This is what triggers LeadDetailPanel → moves lead to quote_sent → shows link banner
       const { data: updatedQuote } = await supabase
-        .from('quotes').select('*').eq('id', qId).single()
+        .from('quotes')
+        .select('*')
+        .eq('id', qId)
+        .single()
+
       if (updatedQuote) {
         setQuoteStatus(updatedQuote.status || 'sent')
         if (onSaved) onSaved(updatedQuote)
       } else {
         setQuoteStatus('sent')
       }
-      alert(emailTo
-        ? `✓ Quote emailed to ${emailTo}`
-        : '✓ Quote marked as sent (email pending — verify domain at resend.com)'
-      )
+
+      alert(`✓ Quote emailed to ${data.to}`)
     } catch (e: any) {
       alert(e.message || 'Send failed')
     } finally {
       setSending(false)
     }
+  }
 
   async function handleAccept() {
     if (!savedQuoteId) { alert('Save the quote first.'); return }
