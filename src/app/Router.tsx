@@ -15,6 +15,7 @@ import { InstallationDetailPage } from '../modules/installations/InstallationDet
 import { CustomersListPage } from '../modules/customers/CustomersListPage'
 import { CustomerDetailPage } from '../modules/customers/CustomerDetailPage'
 import { QuotesPage } from '../modules/quotes/QuotesPage'
+import { AccountingPage } from '../modules/accounting/AccountingPage'
 
 // ─── Phase-aware ComingSoon placeholder ─────────────────────────
 interface ComingSoonProps {
@@ -202,6 +203,7 @@ export function AppRouter() {
         <Route path="/quotes" element={<QuotesPage />} />
 
         {/* Coming Soon — Phase-aware placeholders */}
+        <Route path="/accounting" element={<AccountingPage />} />
         <Route path="/invoices"   element={<ComingSoon {...cs.accounting} />} />
         <Route path="/inventory"  element={<ComingSoon {...cs.inventory} />} />
         <Route path="/services"   element={<ComingSoon {...cs.services} />} />
