@@ -22,6 +22,7 @@ interface Props {
   lead: Lead
   onClose: () => void
   onLeadUpdated?: (lead: Lead) => void
+  onLeadDeleted?: (leadId: string) => void
 }
 
 function formatDate(str: string) {
@@ -38,16 +39,18 @@ function daysSince(str: string | null | undefined) {
 
 type Tab = 'overview' | 'activity' | 'calls'
 
-export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: Props) {
+export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onLeadDeleted }: Props) {
   const { role, user, profile } = useAuth()
   const { can } = usePermission(role)
   const queryClient = useQueryClient()
+  const isAdmin = profile?.role === 'admin'
 
   const [lead, setLead] = useState<Lead>(initialLead)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [showCallModal, setShowCallModal] = useState(false)
   const [callOutcome, setCallOutcome] = useState('answered')
   const [callNotes, setCallNotes] = useState('')
+  const [deleting, setDeleting] = useState(false)
 
   // ── Quote builder state ──────────────────────────────────────
   const [showQuoteBuilder, setShowQuoteBuilder] = useState(false)
@@ -88,12 +91,42 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
     queryClient.invalidateQueries({ queryKey: ['lead_activity_log', updated.id] })
   }, [onLeadUpdated, queryClient])
 
-  // ── Open quote builder: create/reuse a pending customer record ──
+  // ── Delete lead (admin only) ─────────────────────────────────
+  async function handleDeleteLead() {
+    if (!confirm(`Delete lead "${lead.full_name}"?\n\nThis will also delete linked quotes, agreements, and activity. Cannot be undone.`)) return
+    setDeleting(true)
+    try {
+      // 1. Delete agreements linked to this lead's quotes
+      const { data: quotes } = await supabase.from('quotes').select('id').eq('lead_id', lead.id)
+      if (quotes?.length) {
+        const quoteIds = quotes.map(q => q.id)
+        await supabase.from('agreements').delete().in('quote_id', quoteIds)
+        await supabase.from('quotes').delete().in('id', quoteIds)
+      }
+      // 2. Delete activity + calls
+      await supabase.from('lead_activity_log').delete().eq('lead_id', lead.id)
+      await supabase.from('call_attempts').delete().eq('lead_id', lead.id)
+      // 3. Nullify customer FK reference
+      await supabase.from('customers').update({ lead_id: null }).eq('lead_id', lead.id)
+      // 4. Delete the lead
+      const { error } = await supabase.from('leads').delete().eq('id', lead.id)
+      if (error) throw error
+
+      queryClient.invalidateQueries({ queryKey: LEAD_KEYS.kanban() })
+      queryClient.invalidateQueries({ queryKey: LEAD_KEYS.counts })
+      onLeadDeleted?.(lead.id)
+      onClose()
+    } catch (err: any) {
+      alert('Delete failed: ' + (err.message || err))
+      setDeleting(false)
+    }
+  }
+
+  // ── Open quote builder ───────────────────────────────────────
   async function handleCreateQuote() {
     if (!user) return
     setPreparingQuote(true)
     try {
-      // Check if a customer already exists for this lead
       const { data: existing } = await supabase
         .from('customers')
         .select('id')
@@ -103,10 +136,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
       let customerId = existing?.id
 
       if (!customerId) {
-        // Create a pending customer from lead data.
-        // lifecycle_status = 'lead' means they haven't signed yet.
-        // On signing via /q/:token, QuoteReviewPage upgrades this to 'customer'.
-        const fullAddress = [lead.address, lead.city, lead.state, lead.zip_code].filter(Boolean).join(', ')
         const { data: newCust, error } = await supabase
           .from('customers')
           .insert({
@@ -130,7 +159,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
       setPendingCustomerId(customerId)
       setShowQuoteBuilder(true)
 
-      // Auto-move lead to proposal_in_progress if still earlier
       const stagesBeforeProposal = ['new_lead', 'qualifying', 'qualified', 'site_visit_scheduled']
       if (stagesBeforeProposal.includes(lead.stage)) {
         const actor = { actor_id: user.id, actor_name: profile?.full_name }
@@ -146,14 +174,10 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
     }
   }
 
-  // ── After QuoteBuilder saves / sends ─────────────────────────
   async function handleQuoteSaved(quote: any) {
-    // Store the customer-facing quote link
     if (quote.public_token) {
       setQuoteLink(`${window.location.origin}/q/${quote.public_token}`)
     }
-
-    // If quote was sent, move lead to quote_sent stage
     if (['sent', 'send', 'pending'].includes(quote.status) && lead.stage !== 'quote_sent' && user) {
       try {
         const actor = { actor_id: user.id, actor_name: profile?.full_name }
@@ -163,7 +187,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
         console.error('Stage move failed:', e)
       }
     }
-
     setShowQuoteBuilder(false)
   }
 
@@ -181,7 +204,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
 
   return (
     <>
-      {/* ── Slide-over panel ─────────────────────────────────────── */}
       <div className="fixed inset-0 z-40 flex justify-end">
         <div className="absolute inset-0 bg-black/40" onClick={onClose} />
 
@@ -202,7 +224,20 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
                 {lead.email && <div className="text-xs text-muted">{lead.email}</div>}
               </div>
             </div>
-            <button onClick={onClose} className="text-muted hover:text-white text-xl leading-none">✕</button>
+            <div className="flex items-center gap-2">
+              {isAdmin && (
+                <button
+                  onClick={handleDeleteLead}
+                  disabled={deleting}
+                  title="Delete lead"
+                  className="text-red-500/50 hover:text-red-400 hover:bg-red-500/10 rounded-lg p-1.5 transition-colors disabled:opacity-40"
+                  style={{ fontSize: 15, lineHeight: 1 }}
+                >
+                  {deleting ? '…' : '🗑'}
+                </button>
+              )}
+              <button onClick={onClose} className="text-muted hover:text-white text-xl leading-none">✕</button>
+            </div>
           </div>
 
           {/* Stage badge + actions */}
@@ -254,7 +289,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
             {activeTab === 'overview' && (
               <div className="space-y-4">
 
-                {/* ── Quote link banner (shown after quote is sent) ── */}
                 {lead.stage === 'quote_sent' && quoteLink && (
                   <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
                     <div className="text-xs font-bold text-blue-400 uppercase tracking-wide mb-1">
@@ -285,10 +319,8 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
                   </div>
                 )}
 
-                {/* Agreement panel */}
                 {lead.stage === 'agreement_signed' && <AgreementSignedPanel lead={lead} />}
 
-                {/* Site survey */}
                 <SiteSurveyCapture
                   context="lead"
                   opportunityId={lead.id}
@@ -296,7 +328,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
                   defaultCollapsed={true}
                 />
 
-                {/* Lost reason */}
                 {lead.stage === 'lost' && lead.lost_reason && (
                   <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3">
                     <div className="text-xs text-red-400 font-semibold mb-1">Lost Reason</div>
@@ -305,7 +336,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
                   </div>
                 )}
 
-                {/* Follow-up */}
                 {lead.stage === 'future_follow_up' && lead.followup_date && (
                   <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-3">
                     <div className="text-xs text-purple-400 font-semibold mb-1">Scheduled Follow-Up</div>
@@ -316,7 +346,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
                   </div>
                 )}
 
-                {/* DND */}
                 {lead.stage === 'dnd' && (
                   <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
                     <div className="text-xs text-amber-400 font-semibold mb-1">Do Not Disturb</div>
@@ -333,7 +362,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
                 <InfoRow label="Days in Stage" value={`${daysInStage} day${daysInStage !== 1 ? 's' : ''}`} />
                 <InfoRow label="Created" value={formatDate(lead.created_at)} />
 
-                {/* Assigned rep */}
                 <div>
                   <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Assigned Rep</div>
                   {can('leads', 'assign_rep') && reps ? (
@@ -425,7 +453,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
         </div>
       </div>
 
-      {/* ── Full-screen QuoteBuilder overlay ─────────────────────── */}
+      {/* Full-screen QuoteBuilder overlay */}
       {showQuoteBuilder && pendingCustomerId && (
         <div className="fixed inset-0 z-50 bg-surface overflow-y-auto">
           <QuoteBuilder
