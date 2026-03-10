@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import type { Lead } from './leads.types'
 import { useTechnicians } from '../dispatch/useJobs'
 import { SYSTEM_TYPE_LABELS } from '../dispatch/dispatch.types'
@@ -55,7 +55,7 @@ function systemTypeFromAgreement(agreementType: string | null, lineItems: any[])
     if (desc.includes('ro') || desc.includes('reverse osmosis')) return 'ro_install'
     if (desc.includes('softener')) return 'softener_only'
   }
-  // Fall back to agreement type
+  // Fall back to agreement/quote type string
   if (agreementType) {
     const t = agreementType.toLowerCase()
     if (t.includes('combo')) return 'combo_whole_home_ro'
@@ -63,6 +63,7 @@ function systemTypeFromAgreement(agreementType: string | null, lineItems: any[])
     if (t.includes('advanced')) return 'advanced_softener'
     if (t.includes('pure')) return 'pure_start_softener'
     if (t.includes('ro')) return 'ro_install'
+    if (t.includes('softener')) return 'softener_only'
   }
   return 'softener_only'
 }
@@ -102,11 +103,12 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
 
   const jobAlreadyCreated = !!lead.job_created
 
-  // Auto-detect system type from agreement when modal opens
+  // Auto-detect system type — checks agreement first, then quote, then water concern
   async function loadAgreementSystemType() {
     if (agreementFetched) return
     setLoadingAgreement(true)
     try {
+      // 1. Try agreement line items + type
       const { data: agreement } = await supabase
         .from('agreements')
         .select('agreement_type, line_items_snapshot, commercial_type')
@@ -125,15 +127,50 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
           agreement.agreement_type || agreement.commercial_type || null,
           lineItems
         )
-        setSystemType(detected)
-        // RO types may need faucet hole
-        if (detected === 'ro_install' || detected === 'combo_whole_home_ro') {
-          setNeedsFaucetHole(true)
+        // Use if we got a real signal (not just the default fallback with no data)
+        if (detected !== 'softener_only' || lineItems.length > 0) {
+          setSystemType(detected)
+          if (detected === 'ro_install' || detected === 'combo_whole_home_ro') setNeedsFaucetHole(true)
+          setAgreementFetched(true)
+          return
         }
       }
+
+      // 2. Fall back to quote line items + type
+      const { data: quote } = await supabase
+        .from('quotes')
+        .select('line_items_snapshot, commercial_type, quote_type')
+        .eq('lead_id', lead.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (quote) {
+        const lineItems = quote.line_items_snapshot
+          ? (typeof quote.line_items_snapshot === 'string'
+            ? JSON.parse(quote.line_items_snapshot)
+            : quote.line_items_snapshot)
+          : []
+        const detected = systemTypeFromAgreement(
+          quote.commercial_type || quote.quote_type || null,
+          lineItems
+        )
+        setSystemType(detected)
+        if (detected === 'ro_install' || detected === 'combo_whole_home_ro') setNeedsFaucetHole(true)
+        setAgreementFetched(true)
+        return
+      }
+
+      // 3. Last resort — water concern on lead
+      if (lead.water_concern) {
+        const wc = lead.water_concern.toLowerCase()
+        if (wc.includes('ro') || wc.includes('reverse')) setSystemType('ro_install')
+        else if (wc.includes('combo')) setSystemType('combo_whole_home_ro')
+      }
+
       setAgreementFetched(true)
     } catch (e) {
-      console.error('Could not fetch agreement for system type detection:', e)
+      console.error('Could not fetch system type:', e)
     } finally {
       setLoadingAgreement(false)
     }
@@ -287,7 +324,9 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
             </p>
 
             {loadingAgreement && (
-              <div className="text-xs text-accent animate-pulse mb-4">Detecting system type from agreement…</div>
+              <div className="text-xs text-accent animate-pulse mb-4">
+                Detecting system type from quote / agreement…
+              </div>
             )}
 
             <div className="space-y-4">
@@ -296,7 +335,9 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">
                   System Type <span className="text-red-400">*</span>
-                  <span className="ml-2 text-accent font-normal normal-case">auto-detected from agreement</span>
+                  <span className="ml-2 text-accent font-normal normal-case">
+                    auto-detected from quote / agreement
+                  </span>
                 </label>
                 <select
                   value={systemType}
@@ -382,7 +423,8 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
               {/* Customer summary */}
               <div className="bg-surface rounded-lg p-3 text-xs text-muted space-y-1">
                 <div><span className="text-slate-400 font-semibold">Customer: </span>{lead.full_name}</div>
-                <div><span className="text-slate-400 font-semibold">Address: </span>
+                <div>
+                  <span className="text-slate-400 font-semibold">Address: </span>
                   {[lead.address, lead.city, lead.state, lead.zip_code].filter(Boolean).join(', ') || '—'}
                 </div>
                 <div><span className="text-slate-400 font-semibold">Phone: </span>{lead.phone}</div>
