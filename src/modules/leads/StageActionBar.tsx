@@ -66,15 +66,8 @@ const STAGE_ACTIONS: Partial<Record<LeadStage, ActionDef[]>> = {
     { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost' },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
   ],
-  agreement_signed: [
-    {
-      label: 'Create Install Job',
-      action: 'install_job',
-      variant: 'primary',
-      modal: 'install_job',
-      disabled: (lead) => !!lead.job_created,
-      disabledLabel: 'Job Created ✓',
-    },
+  // REPLACE WITH:
+agreement_signed: [
     { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost' },
   ],
   lost: [
