@@ -1,5 +1,4 @@
 // api/quotes/review.js
-// Public endpoint — no auth required. Uses service role key.
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -16,7 +15,6 @@ export default async function handler(req, res) {
   const token = req.query.token || req.body?.token
   if (!token) return res.status(400).json({ error: 'Missing token' })
 
-  // ─── GET: Fetch quote for public display ──────────────────
   if (req.method === 'GET') {
     try {
       const { data: quote, error } = await supabase
@@ -27,36 +25,45 @@ export default async function handler(req, res) {
 
       if (error || !quote) return res.status(404).json({ error: 'Quote not found' })
 
-      // Fetch customer name (limited info for public page)
       const { data: customer } = await supabase
         .from('customers')
-        .select('id, full_name, email, phone, service_address')
+        .select('id, full_name, email, phone, address, city, state, zip')
         .eq('id', quote.customer_id)
         .single()
 
-      // Fetch line items
       const { data: lineItems } = await supabase
         .from('quote_line_items')
         .select('*')
         .eq('quote_id', quote.id)
         .order('sort_order')
 
-      // Mark as viewed if still "sent"
-      if (quote.status === 'sent') {
-        await supabase
-          .from('quotes')
-          .update({ status: 'viewed', viewed_at: new Date().toISOString() })
-          .eq('id', quote.id)
-
-        await supabase.from('document_audit_log').insert({
-          entity_type: 'quote',
-          entity_id: quote.id,
-          event: 'viewed',
-          actor_type: 'customer',
-        })
+      // Enrich line items with product SKU if product_id exists
+      let enrichedItems = quote.line_items_snapshot || lineItems || []
+      if (enrichedItems.length > 0) {
+        const productIds = enrichedItems.map(li => li.product_id).filter(Boolean)
+        if (productIds.length > 0) {
+          const { data: products } = await supabase
+            .from('products')
+            .select('id, sku')
+            .in('id', productIds)
+          const skuMap = {}
+          for (const p of products || []) skuMap[p.id] = p.sku
+          enrichedItems = enrichedItems.map(li => ({
+            ...li,
+            sku: li.sku || skuMap[li.product_id] || null,
+          }))
+        }
       }
 
-      // Return safe public data (no internal IDs exposed beyond what's needed)
+      if (quote.status === 'sent') {
+        await supabase.from('quotes').update({ status: 'viewed', viewed_at: new Date().toISOString() }).eq('id', quote.id)
+        await supabase.from('document_audit_log').insert({ entity_type: 'quote', entity_id: quote.id, event: 'viewed', actor_type: 'customer' })
+      }
+
+      // Build address string
+      const addrParts = [customer?.address, customer?.city, customer?.state, customer?.zip].filter(Boolean)
+      const fullAddress = addrParts.length > 0 ? addrParts.join(', ') : ''
+
       return res.status(200).json({
         id: quote.id,
         quote_number: quote.quote_number,
@@ -71,10 +78,11 @@ export default async function handler(req, res) {
         accepted_at: quote.accepted_at,
         declined_at: quote.declined_at,
         created_at: quote.created_at,
-        line_items: quote.line_items_snapshot || lineItems || [],
+        line_items: enrichedItems,
         customer_name: customer?.full_name || '',
         customer_email: customer?.email || '',
-        customer_address: customer?.service_address || '',
+        customer_phone: customer?.phone || '',
+        customer_address: fullAddress,
       })
     } catch (err) {
       console.error('Quote review GET error:', err)
@@ -82,15 +90,13 @@ export default async function handler(req, res) {
     }
   }
 
-  // ─── POST: Accept or decline ──────────────────────────────
   if (req.method === 'POST') {
-    const { action, decline_reason } = req.body
+    const { action, decline_reason, signature } = req.body
     if (!['accept', 'decline'].includes(action)) {
-      return res.status(400).json({ error: 'Invalid action. Use "accept" or "decline".' })
+      return res.status(400).json({ error: 'Invalid action' })
     }
 
     try {
-      // Fetch current quote
       const { data: quote, error: fetchErr } = await supabase
         .from('quotes')
         .select('*')
@@ -99,15 +105,10 @@ export default async function handler(req, res) {
 
       if (fetchErr || !quote) return res.status(404).json({ error: 'Quote not found' })
 
-      // Only allow action on sent/viewed quotes
       if (!['sent', 'viewed'].includes(quote.status)) {
-        return res.status(400).json({
-          error: `This quote has already been ${quote.status}. No further action is possible.`,
-          status: quote.status,
-        })
+        return res.status(400).json({ error: `This quote has already been ${quote.status}.`, status: quote.status })
       }
 
-      // Check expiry
       if (quote.valid_until && new Date(quote.valid_until) < new Date()) {
         await supabase.from('quotes').update({ status: 'expired' }).eq('id', quote.id)
         return res.status(400).json({ error: 'This quote has expired.', status: 'expired' })
@@ -116,30 +117,13 @@ export default async function handler(req, res) {
       const now = new Date().toISOString()
 
       if (action === 'accept') {
-        // Update quote
-        const { error: updateErr } = await supabase
-          .from('quotes')
-          .update({ status: 'accepted', accepted_at: now })
-          .eq('id', quote.id)
-
-        if (updateErr) throw updateErr
-
-        // Audit log
+        await supabase.from('quotes').update({ status: 'accepted', accepted_at: now }).eq('id', quote.id)
         await supabase.from('document_audit_log').insert({
-          entity_type: 'quote',
-          entity_id: quote.id,
-          event: 'accepted',
-          actor_type: 'customer',
+          entity_type: 'quote', entity_id: quote.id, event: 'accepted', actor_type: 'customer',
+          metadata: signature ? { signature, signed_at: now } : {},
         })
 
-        // If rental — auto-create agreement stub in contracts table
         if (quote.commercial_type === 'rental') {
-          const { data: customer } = await supabase
-            .from('customers')
-            .select('id, full_name')
-            .eq('id', quote.customer_id)
-            .single()
-
           await supabase.from('contracts').insert({
             customer_id: quote.customer_id,
             quote_id: quote.id,
@@ -150,34 +134,16 @@ export default async function handler(req, res) {
             terms_snapshot: quote.terms_snapshot || {},
             line_items_snapshot: quote.line_items_snapshot || [],
             notes: `Auto-generated from accepted quote ${quote.quote_number}`,
-          }).then(({ error }) => {
-            if (error) console.error('Contract creation error:', error)
-          })
+          }).then(({ error }) => { if (error) console.error('Contract creation error:', error) })
         }
 
         return res.status(200).json({ success: true, status: 'accepted', message: 'Quote accepted!' })
-
       } else {
-        // Decline
-        const { error: updateErr } = await supabase
-          .from('quotes')
-          .update({
-            status: 'declined',
-            declined_at: now,
-            decline_reason: decline_reason || null,
-          })
-          .eq('id', quote.id)
-
-        if (updateErr) throw updateErr
-
+        await supabase.from('quotes').update({ status: 'declined', declined_at: now, decline_reason: decline_reason || null }).eq('id', quote.id)
         await supabase.from('document_audit_log').insert({
-          entity_type: 'quote',
-          entity_id: quote.id,
-          event: 'declined',
-          actor_type: 'customer',
+          entity_type: 'quote', entity_id: quote.id, event: 'declined', actor_type: 'customer',
           metadata: decline_reason ? { reason: decline_reason } : {},
         })
-
         return res.status(200).json({ success: true, status: 'declined', message: 'Quote declined.' })
       }
     } catch (err) {
