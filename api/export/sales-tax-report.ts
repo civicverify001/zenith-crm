@@ -161,7 +161,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ['Gross Sales (Total Collected)', usd(tot.total),   'Taxable Sales (Pre-Tax)', usd(tot.taxable)],
       ['Sales Tax Due @ 7.00%',         usd(tot.tax),     'Non-Taxable Revenue',     usd(tot.install)],
       ['Tax Period',                    label,             'Filing Due Date',         `${dueMonth} 20, ${dueYear}`],
-      ['Filing Portal',                 'intime.dor.in.gov','Form',                  'ST-103 Monthly Sales Tax Return'],
+      ['Filing Portal',                 'intime.dor.in.gov','Form',                  'ST-103 Monthly Return'],
     ]
 
     summaryData.forEach(([l1,v1,l2,v2], i) => {
