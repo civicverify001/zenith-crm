@@ -19,8 +19,6 @@ const supabase = createClient(
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-12-18.acacia' })
 
 export default async function handler(req, res) {
-  // Verify this is a cron call (Vercel sends this header)
-  // Or allow manual trigger with a secret
   const authHeader = req.headers.authorization
   const cronSecret = process.env.CRON_SECRET
   const isCron = req.headers['x-vercel-cron'] === '1'
@@ -42,12 +40,6 @@ export default async function handler(req, res) {
     const today = new Date().toISOString().slice(0, 10)
     const dayOfMonth = new Date().getDate()
 
-    // ─── 1. Find active rental contracts due for billing ───
-    // A contract is due if:
-    // - status = 'active'
-    // - type = 'rental'
-    // - has a monthly_amount > 0
-    // We check if there's already a successful payment this month to avoid double-charging
     const { data: contracts, error: contractErr } = await supabase
       .from('contracts')
       .select(`
@@ -67,19 +59,16 @@ export default async function handler(req, res) {
       return res.status(200).json({ message: 'No active rental contracts found', ...results })
     }
 
-    // ─── 2. Process each contract ───────────────────────────
     for (const contract of contracts) {
       results.processed++
 
       try {
-        // Determine billing day (default to 1st of month if not set)
         const billingDay = contract.billing_day || 1
         if (dayOfMonth !== billingDay) {
           results.skipped++
           continue
         }
 
-        // Check if already charged this month
         const monthStart = new Date()
         monthStart.setDate(1)
         monthStart.setHours(0, 0, 0, 0)
@@ -95,10 +84,9 @@ export default async function handler(req, res) {
 
         if (existingTx && existingTx.length > 0) {
           results.skipped++
-          continue // Already charged this month
+          continue
         }
 
-        // Get customer with Stripe ID
         const { data: customer } = await supabase
           .from('customers')
           .select('id, full_name, phone, email, stripe_customer_id')
@@ -115,7 +103,6 @@ export default async function handler(req, res) {
           continue
         }
 
-        // Get default payment method
         const { data: paymentMethod } = await supabase
           .from('payment_methods')
           .select('id, external_id, type, last_four')
@@ -132,8 +119,7 @@ export default async function handler(req, res) {
             customer_name: customer.full_name,
           })
 
-          // Create a follow-up task for missing payment method
-          await supabase.from('follow_ups').insert({
+          await supabase.from('follow_up_tasks').insert({
             entity_type: 'customer',
             entity_id: customer.id,
             title: `Missing payment method — ${customer.full_name}`,
@@ -145,7 +131,6 @@ export default async function handler(req, res) {
           continue
         }
 
-        // ─── 3. Charge via Stripe ─────────────────────────
         const amountCents = Math.round(contract.monthly_amount * 100)
         const description = `Monthly rental — Contract ${contract.contract_number || contract.id.slice(0, 8)}`
 
@@ -169,7 +154,6 @@ export default async function handler(req, res) {
           })
           chargeSucceeded = paymentIntent.status === 'succeeded'
         } catch (stripeErr) {
-          // Stripe charge failed
           paymentIntent = { id: stripeErr.payment_intent?.id || null }
           chargeSucceeded = false
 
@@ -181,7 +165,6 @@ export default async function handler(req, res) {
           })
         }
 
-        // ─── 4. Log transaction ─────────────────────────────
         await supabase.from('payment_transactions').insert({
           customer_id: customer.id,
           contract_id: contract.id,
@@ -199,12 +182,10 @@ export default async function handler(req, res) {
         if (chargeSucceeded) {
           results.succeeded++
 
-          // Update contract last_billed_at
           await supabase.from('contracts').update({
             last_billed_at: new Date().toISOString(),
           }).eq('id', contract.id)
 
-          // Log audit
           await supabase.from('document_audit_log').insert({
             entity_type: 'contract',
             entity_id: contract.id,
@@ -219,8 +200,7 @@ export default async function handler(req, res) {
         } else {
           results.failed++
 
-          // ─── 5. Create follow-up task for failed payment ──
-          await supabase.from('follow_ups').insert({
+          await supabase.from('follow_up_tasks').insert({
             entity_type: 'customer',
             entity_id: customer.id,
             title: `Failed payment — ${customer.full_name}`,
@@ -230,7 +210,6 @@ export default async function handler(req, res) {
             priority: 'urgent',
           })
 
-          // Log audit
           await supabase.from('document_audit_log').insert({
             entity_type: 'contract',
             entity_id: contract.id,
@@ -252,10 +231,9 @@ export default async function handler(req, res) {
       }
     }
 
-    // ─── 6. Log summary to email_log for audit ──────────────
     if (results.processed > 0) {
       await supabase.from('email_log').insert({
-        customer_id: '00000000-0000-0000-0000-000000000000', // system
+        customer_id: '00000000-0000-0000-0000-000000000000',
         email_type: 'autopay_summary',
         to_address: 'system@zenithpuresolutions.com',
         subject: `Autopay Run: ${results.succeeded} succeeded, ${results.failed} failed`,
