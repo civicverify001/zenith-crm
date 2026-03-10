@@ -319,7 +319,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                   </div>
                 )}
 
-                {lead.stage === 'agreement_signed' && <AgreementSignedPanel lead={lead} />}
+                {lead.stage === 'agreement_signed' && <AgreementSignedPanel lead={lead} onLeadUpdated={handleLeadUpdated} />}
 
                 <SiteSurveyCapture
                   context="lead"
