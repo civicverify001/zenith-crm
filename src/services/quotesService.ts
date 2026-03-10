@@ -97,7 +97,7 @@ export async function fetchQuotes(customerId?: string): Promise<Quote[]> {
   // Fetch customer info separately — no FK constraint required
   const customerIds = [...new Set(quotes.map((r: any) => r.customer_id).filter(Boolean))] as string[]
   const { data: customers } = customerIds.length
-    ? await supabase.from('customers').select('id, full_name, email, phone, service_address').in('id', customerIds)
+    ? await supabase.from('customers').select('id, full_name, email, phone').in('id', customerIds)
     : { data: [] }
 
   const custMap: Record<string, any> = {}
@@ -110,7 +110,7 @@ export async function fetchQuotes(customerId?: string): Promise<Quote[]> {
       customer_name:    c.full_name || '',
       customer_email:   c.email || '',
       customer_phone:   c.phone || '',
-      customer_address: c.service_address || '',
+      customer_address: '' || '',
     }
   })
 }
@@ -129,7 +129,7 @@ export async function fetchQuote(quoteId: string): Promise<Quote | null> {
 
   const { data: cust } = await supabase
     .from('customers')
-    .select('id, full_name, email, phone, service_address')
+    .select('id, full_name, email, phone')
     .eq('id', data.customer_id)
     .single()
 
