@@ -6,6 +6,8 @@ import { LoadingScreen } from '../shared/ui/LoadingScreen'
 import ProductCatalog from '../services/ProductCatalog'
 import { FollowUpsPage } from '../modules/followups/FollowUpsPage'
 import { QuoteReviewPage } from '../modules/public/QuoteReviewPage'
+import TermsAdminPage from '../modules/admin/TermsAdminPage'
+import PublicTermsPage from '../modules/public/PublicTermsPage'
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
@@ -170,11 +172,11 @@ export function AppRouter() {
 
   if (loading) return <LoadingScreen />
 
-  // Public routes — no auth required
   return (
     <Routes>
-      {/* Public quote review page — customer clicks link to accept/decline */}
+      {/* Public routes — no auth required */}
       <Route path="/q/:token" element={<QuoteReviewPage />} />
+      <Route path="/terms" element={<PublicTermsPage />} />
 
       {/* Everything else requires auth */}
       <Route path="/*" element={
@@ -220,7 +222,12 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
         {/* Quotes */}
         <Route path="/quotes" element={<QuotesPage />} />
 
-        {/* Coming Soon — Phase-aware placeholders */}
+        {/* Admin only */}
+        <Route path="/admin/terms" element={
+          role === 'admin' ? <TermsAdminPage /> : <Navigate to="/dashboard" replace />
+        } />
+
+        {/* Phase-aware pages */}
         <Route path="/accounting" element={<AccountingPage />} />
         <Route path="/invoices"   element={<InvoicesPage />} />
         <Route path="/services"   element={<ContractsPage />} />
