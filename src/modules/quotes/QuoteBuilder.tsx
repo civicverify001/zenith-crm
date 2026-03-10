@@ -317,14 +317,23 @@ export function QuoteBuilder({
   }
 
   async function handleSend() {
-    if (!savedQuoteId) {
-      await handleSave()
-    }
+    if (!savedQuoteId) await handleSave()
     if (!savedQuoteId) return
     setSending(true)
     try {
-      await sendQuote(savedQuoteId)
-      alert('Quote marked as Sent. Email integration coming in Phase 2.')
+      const res = await fetch('/api/email/send-quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quoteId: savedQuoteId,
+          senderEmail: profile?.email,
+          senderName:  profile?.full_name,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Send failed')
+      await sendQuote(savedQuoteId) // update local status
+      alert(`✓ Quote emailed to ${data.to}`)
     } catch (e: any) {
       alert(e.message || 'Send failed')
     } finally {
