@@ -111,10 +111,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ══════════════════════════════════════════════════════════════════════════
     const ws = wb.addWorksheet(label, { pageSetup: { orientation: 'landscape' } })
     ws.columns = [
-      { width: 22 }, { width: 18 }, // A-B
-      { width: 22 }, { width: 18 }, // C-D
-      { width: 22 }, { width: 18 }, // E-F  (data table: Taxable Sales / Sales Tax)
-      { width: 20 }, { width: 14 }, // G-H  (Total Collected / Transactions)
+      { width: 33 }, { width: 18 }, // A-B  (label wide enough for "Gross Sales (Total Collected)")
+      { width: 26 }, { width: 20 }, // C-D
+      { width: 18 }, { width: 16 }, // E-F
+      { width: 18 }, { width: 14 }, // G-H
     ]
 
     // ── Row 1: Title ──────────────────────────────────────────────────────────
