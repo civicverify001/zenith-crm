@@ -173,6 +173,10 @@ export function AppRouter() {
   const cs = COMING_SOON_PAGES
 
   return (
+    import { QuoteReviewPage } from '../modules/public/QuoteReviewPage'
+
+// Inside your router, BEFORE the AppLayout routes:
+<Route path="/q/:token" element={<QuoteReviewPage />} />
     <AppLayout>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
