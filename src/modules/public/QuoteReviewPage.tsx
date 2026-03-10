@@ -30,6 +30,8 @@ interface Quote {
   deposit_type: string
   notes: string
   expires_at: string
+  created_at: string
+  created_by_name: string | null
   signed_at: string | null
   finance_redirect_url: string | null
   customer_id: string
@@ -498,6 +500,14 @@ export function QuoteReviewPage() {
           .select('full_name, email, phone, address, city, state, zip').eq('id', q.customer_id).single()
         if (cust) q.customer = cust
       }
+
+      // Fetch sales rep name
+      if (q.created_by) {
+        const { data: rep } = await supabase.from('profiles')
+          .select('full_name').eq('id', q.created_by).single()
+        q.created_by_name = rep?.full_name || null
+      }
+
       setQuote(q)
 
       const { data: items } = await supabase.from('document_line_items')
@@ -743,10 +753,31 @@ export function QuoteReviewPage() {
                     <div className="text-white font-medium text-sm">{quote.expires_at ? new Date(quote.expires_at).toLocaleDateString() : '—'}</div>
                   </div>
                 </div>
+                <div className="flex gap-8 mt-4 pt-4 border-t border-blue-800">
+                  <div>
+                    <div className="text-xs text-blue-300 uppercase tracking-wide">Quotation Date</div>
+                    <div className="text-white text-sm font-medium">{quote.created_at ? new Date(quote.created_at).toLocaleDateString() : today()}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-300 uppercase tracking-wide">Expiration</div>
+                    <div className="text-white text-sm font-medium">{quote.expires_at ? new Date(quote.expires_at).toLocaleDateString() : '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blue-300 uppercase tracking-wide">Sales Consultant</div>
+                    <div className="text-white text-sm font-medium">{quote.created_by_name || 'Zenith Pure Solutions'}</div>
+                  </div>
+                </div>
               </div>
-              <div className="px-6 py-5 grid grid-cols-2 gap-4 text-sm border-b border-gray-100">
+              <div className="px-6 py-5 grid grid-cols-3 gap-4 text-sm border-b border-gray-100">
                 <div>
                   <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">Bill To</div>
+                  <div className="font-semibold text-gray-800">{customer?.full_name || '—'}</div>
+                  <div className="text-gray-500 text-xs">{customer?.address}</div>
+                  <div className="text-gray-500 text-xs">{customer?.city}, {customer?.state} {customer?.zip}</div>
+                  <div className="text-gray-500 text-xs">{customer?.phone}</div>
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">Installation Address</div>
                   <div className="font-semibold text-gray-800">{customer?.full_name || '—'}</div>
                   <div className="text-gray-500 text-xs">{customer?.address}</div>
                   <div className="text-gray-500 text-xs">{customer?.city}, {customer?.state} {customer?.zip}</div>
@@ -778,6 +809,7 @@ export function QuoteReviewPage() {
                     <th className="px-6 py-3 text-left font-semibold">Description</th>
                     <th className="px-4 py-3 text-center font-semibold">Qty</th>
                     <th className="px-4 py-3 text-right font-semibold">Price</th>
+                    <th className="px-4 py-3 text-right font-semibold">Discount</th>
                     <th className="px-6 py-3 text-right font-semibold">Total</th>
                   </tr></thead>
                   <tbody>
@@ -786,6 +818,7 @@ export function QuoteReviewPage() {
                         <td className="px-6 py-4 text-sm text-gray-800">{item.description}</td>
                         <td className="px-4 py-4 text-sm text-gray-600 text-center">{item.quantity}</td>
                         <td className="px-4 py-4 text-sm text-gray-600 text-right">{quote.quote_type === 'rental' ? `${fmt(item.unit_price)}/mo` : fmt(item.unit_price)}</td>
+                        <td className="px-4 py-4 text-sm text-gray-400 text-right">—</td>
                         <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">{quote.quote_type === 'rental' ? `${fmt(item.total)}/mo` : fmt(item.total)}</td>
                       </tr>
                     ))}
@@ -818,9 +851,34 @@ export function QuoteReviewPage() {
               </div>
             )}
 
+            {quote.quote_type === 'purchase' && (
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-6 py-3 bg-gray-50 border-b border-gray-100">
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wide">Direct Transfer / ACH Details</div>
+                </div>
+                <table className="w-full text-sm">
+                  <tbody>
+                    {[
+                      ['Bank Name', 'Old National Bank'],
+                      ['ACH ABA Number', '086300012'],
+                      ['Account Number', '0127726846'],
+                      ['Account Name', 'ZENITH PURE SOLUTIONS LLC'],
+                      ['Email', 'accounts@zenithpuresolutions.com'],
+                      ['Phone Number', '+1 (317) 690-4172'],
+                    ].map(([label, value]) => (
+                      <tr key={label} className="border-b border-gray-50">
+                        <td className="px-6 py-3 font-semibold text-gray-700 w-48">{label}</td>
+                        <td className="px-6 py-3 text-gray-600">{value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
             <div className="text-center">
               <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
-                View Terms & Conditions (v1.0, effective 01/30/2026) ↗
+                Click here to view Terms & Conditions (Version v1.0, Date 01/30/2026) ↗
               </a>
             </div>
 
