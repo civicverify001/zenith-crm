@@ -154,7 +154,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated }: P
     }
 
     // If quote was sent, move lead to quote_sent stage
-    if (quote.status === 'sent' && lead.stage !== 'quote_sent' && user) {
+    if (['sent', 'send', 'pending'].includes(quote.status) && lead.stage !== 'quote_sent' && user) {
       try {
         const actor = { actor_id: user.id, actor_name: profile?.full_name }
         const updated = await moveStage(lead.id, lead.stage, 'quote_sent', actor)
