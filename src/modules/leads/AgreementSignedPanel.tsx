@@ -1,14 +1,15 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Lead } from './leads.types'
 import { useTechnicians } from '../dispatch/useJobs'
 import { SYSTEM_TYPE_LABELS } from '../dispatch/dispatch.types'
-import type { SystemType, JobType } from '../dispatch/dispatch.types'
-import { supabase } from '../../lib/supabase'
+import type { SystemType } from '../dispatch/dispatch.types'
+import { createInstallJobFromLead } from '../../services/jobService'
 import { moveStage } from '../../services/leadMutations'
 import { useAuth } from '../../hooks/useAuth'
 import { useQueryClient } from '@tanstack/react-query'
 import { JOB_KEYS } from '../dispatch/useJobs'
 import { LEAD_KEYS } from './useLeads'
+import { supabase } from '../../lib/supabase'
 
 interface Props {
   lead: Lead
@@ -40,12 +41,29 @@ function StatusBadge({ active, activeLabel, inactiveLabel }: {
   )
 }
 
-// Map water concern → sensible default system type
-function defaultSystemType(waterConcern: string | null | undefined): SystemType {
-  if (!waterConcern) return 'softener_only'
-  if (waterConcern.includes('iron') || waterConcern.includes('rust')) return 'advanced_softener'
-  if (waterConcern.includes('ro') || waterConcern.includes('drinking')) return 'ro_install'
-  if (waterConcern.includes('combo') || waterConcern.includes('whole')) return 'combo_whole_home_ro'
+// Map agreement/product type → system type
+function systemTypeFromAgreement(agreementType: string | null, lineItems: any[]): SystemType {
+  // Try to detect from line items first (most accurate)
+  if (lineItems?.length) {
+    const desc = lineItems.map((li: any) =>
+      (li.description || li.name || '').toLowerCase()
+    ).join(' ')
+    if (desc.includes('combo') || (desc.includes('ro') && desc.includes('softener'))) return 'combo_whole_home_ro'
+    if (desc.includes('dual tank') || desc.includes('dual_tank')) return 'dual_tank'
+    if (desc.includes('advanced') && desc.includes('softener')) return 'advanced_softener'
+    if (desc.includes('pure start') || desc.includes('pure_start')) return 'pure_start_softener'
+    if (desc.includes('ro') || desc.includes('reverse osmosis')) return 'ro_install'
+    if (desc.includes('softener')) return 'softener_only'
+  }
+  // Fall back to agreement type
+  if (agreementType) {
+    const t = agreementType.toLowerCase()
+    if (t.includes('combo')) return 'combo_whole_home_ro'
+    if (t.includes('dual')) return 'dual_tank'
+    if (t.includes('advanced')) return 'advanced_softener'
+    if (t.includes('pure')) return 'pure_start_softener'
+    if (t.includes('ro')) return 'ro_install'
+  }
   return 'softener_only'
 }
 
@@ -54,14 +72,6 @@ const ALL_SYSTEM_TYPES: SystemType[] = [
   'dual_tank', 'ro_install', 'combo_whole_home_ro',
 ]
 
-const JOB_TYPE_LABELS: Record<JobType, string> = {
-  standard_install: 'Standard Install',
-  service: 'Service',
-  warranty: 'Warranty',
-  filter_change: 'Filter Change',
-  rental_setup: 'Rental Setup',
-}
-
 export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   const { user, profile } = useAuth()
   const queryClient = useQueryClient()
@@ -69,13 +79,19 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
 
   const [showModal, setShowModal] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [loadingAgreement, setLoadingAgreement] = useState(false)
 
   // Form state
-  const [scheduledDate, setScheduledDate] = useState('')
+  const [scheduledDate, setScheduledDate] = useState(
+    lead.install_preferred_date
+      ? new Date(lead.install_preferred_date).toISOString().split('T')[0]
+      : ''
+  )
   const [techId, setTechId] = useState('')
-  const [systemType, setSystemType] = useState<SystemType>(defaultSystemType(lead.water_concern))
-  const [jobType, setJobType] = useState<JobType>('standard_install')
+  const [systemType, setSystemType] = useState<SystemType>('softener_only')
+  const [needsFaucetHole, setNeedsFaucetHole] = useState(false)
   const [notes, setNotes] = useState('')
+  const [agreementFetched, setAgreementFetched] = useState(false)
 
   const installPrefLabel: Record<string, string> = {
     asap: 'ASAP', specific_date: 'Specific Date', flexible: 'Flexible',
@@ -86,59 +102,82 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
 
   const jobAlreadyCreated = !!lead.job_created
 
+  // Auto-detect system type from agreement when modal opens
+  async function loadAgreementSystemType() {
+    if (agreementFetched) return
+    setLoadingAgreement(true)
+    try {
+      const { data: agreement } = await supabase
+        .from('agreements')
+        .select('agreement_type, line_items_snapshot, commercial_type')
+        .eq('lead_id', lead.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (agreement) {
+        const lineItems = agreement.line_items_snapshot
+          ? (typeof agreement.line_items_snapshot === 'string'
+            ? JSON.parse(agreement.line_items_snapshot)
+            : agreement.line_items_snapshot)
+          : []
+        const detected = systemTypeFromAgreement(
+          agreement.agreement_type || agreement.commercial_type || null,
+          lineItems
+        )
+        setSystemType(detected)
+        // RO types may need faucet hole
+        if (detected === 'ro_install' || detected === 'combo_whole_home_ro') {
+          setNeedsFaucetHole(true)
+        }
+      }
+      setAgreementFetched(true)
+    } catch (e) {
+      console.error('Could not fetch agreement for system type detection:', e)
+    } finally {
+      setLoadingAgreement(false)
+    }
+  }
+
+  function handleOpenModal() {
+    setShowModal(true)
+    loadAgreementSystemType()
+  }
+
   async function handleScheduleInstall() {
     if (!user) return
-    if (!systemType) { alert('Select a system type'); return }
-
     setSubmitting(true)
     try {
-      const fullAddress = [lead.address, lead.city, lead.state, lead.zip_code].filter(Boolean).join(', ')
+      // Use the full jobService function — handles checklist + forms generation
+      const newJob = await createInstallJobFromLead(
+        lead,
+        systemType,
+        scheduledDate || null,
+        needsFaucetHole,
+        { actor_id: user.id, actor_name: profile?.full_name }
+      )
 
-      // 1. Create job in dispatch
-      const { data: newJob, error: jobError } = await supabase
-        .from('jobs')
-        .insert({
-          lead_id:                    lead.id,
-          status:                     'scheduled',
-          job_type:                   jobType,
-          system_type:                systemType,
-          assigned_technician_id:     techId || null,
-          scheduled_date:             scheduledDate || null,
-          customer_name_snapshot:     lead.full_name,
-          phone_snapshot:             lead.phone,
-          email_snapshot:             lead.email || null,
-          service_address_snapshot:   fullAddress,
-          quote_total_snapshot:       lead.quote_total || null,
-          payment_method_snapshot:    lead.payment_method || null,
-          notes:                      notes || null,
-          handover_signed:            false,
-          requires_new_faucet_hole:   false,
-          ready_for_customer_conversion: false,
-          created_by:                 user.id,
-        })
-        .select('id')
-        .single()
+      // Assign tech if selected (separate step)
+      if (techId) {
+        await supabase
+          .from('jobs')
+          .update({
+            assigned_technician_id: techId,
+            assigned_at: new Date().toISOString(),
+          })
+          .eq('id', newJob.id)
+      }
 
-      if (jobError) throw jobError
+      // Notes if provided
+      if (notes) {
+        await supabase.from('jobs').update({ notes }).eq('id', newJob.id)
+      }
 
-      // 2. Log job_created activity
-      await supabase.from('job_activity_log').insert({
-        job_id:     newJob.id,
-        event_type: 'job_created',
-        title:      'Job created from agreement',
-        actor_id:   user.id,
-        actor_name: profile?.full_name || 'Admin',
-        metadata:   { lead_id: lead.id, scheduled_date: scheduledDate || null },
-      }).throwOnError()
-
-      // 3. Mark job_created on lead
-      await supabase.from('leads').update({ job_created: true }).eq('id', lead.id)
-
-      // 4. Move lead to won
+      // Move lead to won
       const actor = { actor_id: user.id, actor_name: profile?.full_name }
       const updatedLead = await moveStage(lead.id, lead.stage, 'won', actor)
 
-      // 5. Refresh boards
+      // Refresh boards
       queryClient.invalidateQueries({ queryKey: JOB_KEYS.board() })
       queryClient.invalidateQueries({ queryKey: LEAD_KEYS.kanban() })
       queryClient.invalidateQueries({ queryKey: LEAD_KEYS.counts })
@@ -160,10 +199,9 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
             <span className="text-green text-sm">✅</span>
             <h4 className="text-sm font-bold text-green">Agreement Signed</h4>
           </div>
-          {/* Schedule Install button */}
           {!jobAlreadyCreated ? (
             <button
-              onClick={() => setShowModal(true)}
+              onClick={handleOpenModal}
               className="text-xs px-3 py-1.5 bg-cyan/20 hover:bg-cyan/30 text-cyan border border-cyan/30 rounded-lg font-semibold transition-colors"
             >
               📅 Schedule Install
@@ -245,15 +283,20 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
           <div className="bg-card border border-border rounded-2xl w-full max-w-md p-6 shadow-2xl">
             <h3 className="font-bold text-white text-base mb-1">Schedule Install</h3>
             <p className="text-xs text-muted mb-5">
-              Creates a job on the Dispatch board and moves this lead to Won.
+              Creates a job on the Dispatch board with checklist + forms, then moves lead to Won.
             </p>
+
+            {loadingAgreement && (
+              <div className="text-xs text-accent animate-pulse mb-4">Detecting system type from agreement…</div>
+            )}
 
             <div className="space-y-4">
 
-              {/* System type */}
+              {/* System type — auto-detected, can override */}
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">
                   System Type <span className="text-red-400">*</span>
+                  <span className="ml-2 text-accent font-normal normal-case">auto-detected from agreement</span>
                 </label>
                 <select
                   value={systemType}
@@ -266,21 +309,21 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 </select>
               </div>
 
-              {/* Job type */}
-              <div>
-                <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">
-                  Job Type
-                </label>
-                <select
-                  value={jobType}
-                  onChange={e => setJobType(e.target.value as JobType)}
-                  className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-accent"
-                >
-                  {(Object.keys(JOB_TYPE_LABELS) as JobType[]).map(t => (
-                    <option key={t} value={t}>{JOB_TYPE_LABELS[t]}</option>
-                  ))}
-                </select>
-              </div>
+              {/* RO faucet hole */}
+              {(systemType === 'ro_install' || systemType === 'combo_whole_home_ro') && (
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="faucet_hole"
+                    checked={needsFaucetHole}
+                    onChange={e => setNeedsFaucetHole(e.target.checked)}
+                    className="w-4 h-4 accent-cyan"
+                  />
+                  <label htmlFor="faucet_hole" className="text-sm text-slate-300 cursor-pointer">
+                    Requires new faucet hole (adds drilling consent form)
+                  </label>
+                </div>
+              )}
 
               {/* Install date */}
               <div>
@@ -311,21 +354,26 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                   className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-accent"
                 >
                   <option value="">— Unassigned —</option>
-                  {technicians?.map(t => (
+                  {technicians?.map((t: any) => (
                     <option key={t.id} value={t.id}>{t.full_name}</option>
                   ))}
                 </select>
+                {!techId && (
+                  <div className="text-xs text-amber mt-1">
+                    ⚠ Tech required to Start Installation on the dispatch board
+                  </div>
+                )}
               </div>
 
               {/* Notes */}
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">
-                  Notes
+                  Notes for Tech
                 </label>
                 <textarea
                   value={notes}
                   onChange={e => setNotes(e.target.value)}
-                  placeholder="Any install notes for the tech…"
+                  placeholder="Any install notes…"
                   rows={2}
                   className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-muted focus:outline-none focus:border-accent resize-none"
                 />
@@ -338,6 +386,9 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                   {[lead.address, lead.city, lead.state, lead.zip_code].filter(Boolean).join(', ') || '—'}
                 </div>
                 <div><span className="text-slate-400 font-semibold">Phone: </span>{lead.phone}</div>
+                {lead.quote_total && (
+                  <div><span className="text-slate-400 font-semibold">Quote: </span>{formatCurrency(lead.quote_total)}</div>
+                )}
               </div>
             </div>
 
