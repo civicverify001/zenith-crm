@@ -10,9 +10,9 @@ import { supabase } from '../../lib/supabase';
 interface InventoryRow {
   id: string;
   product_id: string;
-  on_hand: number;
-  reserved: number;
-  available: number;
+  quantity_on_hand: number;
+quantity_reserved: number;
+quantity_available: number;
   reorder_point: number;
   reorder_qty: number;
   products: {
