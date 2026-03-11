@@ -11,16 +11,34 @@ const PERMISSIONS: Record<string, Record<string, string[]>> = {
   technician: { leads: [], quotes: [], customers: ['view'], dispatch: ['view'], installations: ['edit', 'view'] },
 }
 
-// Page-level defaults per role
+// Page definitions with group, icon, label
 export const ALL_PAGES = [
-  '/dashboard', '/leads', '/customers', '/quotes', '/invoices',
-  '/dispatch', '/installations', '/follow-ups', '/products',
-  '/contracts', '/terms', '/service', '/reports', '/inventory',
-  '/admin/users', '/settings',
+  // Core
+  { path: '/dashboard',     group: 'Core',       icon: '🏠', label: 'Dashboard' },
+  { path: '/customers',     group: 'Core',       icon: '👥', label: 'Customers' },
+  { path: '/follow-ups',    group: 'Core',       icon: '✅', label: 'Follow-Ups' },
+  // Sales
+  { path: '/leads',         group: 'Sales',      icon: '🎯', label: 'Lead Pipeline' },
+  { path: '/quotes',        group: 'Sales',      icon: '📄', label: 'Quotes' },
+  { path: '/contracts',     group: 'Sales',      icon: '📝', label: 'Contracts' },
+  // Operations
+  { path: '/dispatch',      group: 'Operations', icon: '🗺️',  label: 'Dispatch' },
+  { path: '/installations', group: 'Operations', icon: '🔧', label: 'Installations' },
+  { path: '/service',       group: 'Operations', icon: '⚙️',  label: 'Service' },
+  { path: '/inventory',     group: 'Operations', icon: '📦', label: 'Inventory' },
+  // Finance
+  { path: '/invoices',      group: 'Finance',    icon: '💰', label: 'Invoices' },
+  // Analytics
+  { path: '/reports',       group: 'Analytics',  icon: '📊', label: 'Reports' },
+  // Admin
+  { path: '/products',      group: 'Admin',      icon: '🛒', label: 'Products' },
+  { path: '/terms',         group: 'Admin',      icon: '📋', label: 'Terms' },
+  { path: '/settings',      group: 'Admin',      icon: '⚙️',  label: 'Settings' },
+  { path: '/admin/users',   group: 'Admin',      icon: '👤', label: 'Team & Users' },
 ]
 
 export const ROLE_DEFAULT_PAGES: Record<string, string[]> = {
-  admin:      ALL_PAGES,
+  admin:      ALL_PAGES.map(p => p.path),
   frontdesk:  ['/dashboard', '/leads', '/customers', '/follow-ups', '/quotes', '/invoices'],
   salesrep:   ['/dashboard', '/leads', '/customers', '/quotes', '/follow-ups'],
   technician: ['/dashboard', '/dispatch', '/installations'],
@@ -31,17 +49,18 @@ export function usePermissions(roleOverride?: string | null) {
 
   const role = roleOverride ?? profile?.role ?? (user?.user_metadata?.role as string | undefined) ?? null
 
-  // Page-level: custom pages from user metadata, or role defaults
+  // Custom pages set by admin, or fall back to role defaults
   const customPages: string[] | null = user?.user_metadata?.pages ?? null
   const allowedPages: string[] | null = customPages ?? (role ? (ROLE_DEFAULT_PAGES[role] ?? null) : null)
 
+  // Page-level access check
   function canAccess(path: string): boolean {
     if (role === 'admin') return true
     if (!allowedPages) return false
     return allowedPages.some(p => path.startsWith(p))
   }
 
-  // Action-level (same as usePermission)
+  // Action-level access check
   function can(resource: Resource, action: Action): boolean {
     if (!role) return false
     if (role === 'admin') return true
