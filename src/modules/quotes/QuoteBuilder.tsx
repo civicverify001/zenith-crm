@@ -64,8 +64,9 @@ interface Props {
   customerAddress?: string
   customerPhone?: string
   opportunityId?: string | null
-  leadId?: string | null          // ← ADDED: links quote to lead
+  leadId?: string | null
   existingQuote?: Quote | null
+  initialView?: 'form' | 'preview'   // ← NEW: open in preview when viewing existing quote
   onSaved?: (quote: Quote) => void
   onCancel?: () => void
 }
@@ -98,10 +99,12 @@ function uid() {
 
 export function QuoteBuilder({
   customerId, customerName, customerAddress = '', customerPhone = '',
-  opportunityId = null, leadId = null, existingQuote = null, onSaved, onCancel,
+  opportunityId = null, leadId = null, existingQuote = null,
+  initialView = 'form',   // ← NEW prop with default
+  onSaved, onCancel,
 }: Props) {
   const { profile } = useAuth()
-  const [view, setView] = useState<'form' | 'preview'>('form')
+  const [view, setView] = useState<'form' | 'preview'>(initialView)  // ← uses initialView
   const [saving, setSaving] = useState(false)
   const [sending, setSending] = useState(false)
   const [accepting, setAccepting] = useState(false)
@@ -303,7 +306,7 @@ export function QuoteBuilder({
           customer_id:     customerId,
           commercial_type: commercialType,
           opportunity_id:  opportunityId,
-          lead_id:         leadId,             // ← FIXED: stores lead FK on quote
+          lead_id:         leadId,
           created_by:      profile?.id || null,
           notes:           estimation,
           valid_until:     validUntil,
@@ -323,7 +326,6 @@ export function QuoteBuilder({
 
   // ─── Send ──────────────────────────────────────────────────
   async function handleSend() {
-    // Save first if not yet saved — handleSave now returns the ID directly
     let qId = savedQuoteId
     if (!qId) {
       qId = await handleSave()
@@ -345,15 +347,12 @@ export function QuoteBuilder({
       const data = await res.json()
       if (res.ok) emailTo = data.to
     } catch (_) {
-      // email failed — still mark sent and move lead
+      // email failed — still mark sent
     }
 
     try {
-      // Mark quote as sent in DB
       await sendQuote(qId)
 
-      // Fetch updated quote and call onSaved
-      // This triggers LeadDetailPanel → moves lead to quote_sent → shows link banner
       const { data: updatedQuote } = await supabase
         .from('quotes')
         .select('*')
@@ -916,8 +915,8 @@ function PreviewView({
             </h1>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
               {[
-                { label: 'QUOTATION DATE', val: fmtDate(quoteDate) },
-                { label: 'EXPIRATION',     val: fmtDate(validUntil) },
+                { label: 'QUOTATION DATE',   val: fmtDate(quoteDate) },
+                { label: 'EXPIRATION',       val: fmtDate(validUntil) },
                 { label: 'SALES CONSULTANT', val: salesConsultant },
               ].map(col => (
                 <div key={col.label}>
