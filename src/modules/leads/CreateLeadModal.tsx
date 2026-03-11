@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useCreateLead, useReps } from './useLeads'
-import { usePermission } from '../../hooks/usePermission'
+import { usePermissions } from '../../hooks/usePermissions'
 import { useAuth } from '../../hooks/useAuth'
 import type { CreateLeadPayload } from './leads.types'
 import { LEAD_SOURCE_LABELS, WATER_CONCERN_LABELS } from '../../types/domain.types'
@@ -31,7 +31,7 @@ const CONCERNS = Object.entries(WATER_CONCERN_LABELS) as [WaterConcern, string][
 
 export function CreateLeadModal({ onClose, onCreated }: Props) {
   const { role } = useAuth()
-  const { can } = usePermission(role)
+  const { can } = usePermissions(role)
   const { mutateAsync: createLead, isPending } = useCreateLead()
   const { data: reps } = useReps()
 
