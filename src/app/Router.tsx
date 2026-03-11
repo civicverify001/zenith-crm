@@ -8,6 +8,7 @@ import { FollowUpsPage } from '../modules/followups/FollowUpsPage'
 import { QuoteReviewPage } from '../modules/public/QuoteReviewPage'
 import TermsAdminPage from '../modules/admin/TermsAdminPage'
 import PublicTermsPage from '../modules/public/PublicTermsPage'
+import InventoryPage from '../pages/inventory/InventoryPage'
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
@@ -231,7 +232,7 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
         <Route path="/accounting" element={<AccountingPage />} />
         <Route path="/invoices"   element={<InvoicesPage />} />
         <Route path="/services"   element={<ContractsPage />} />
-        <Route path="/inventory"  element={<ComingSoon {...cs.inventory} />} />
+        <Route path="/inventory"  element={<InventoryPage />} />
         <Route path="/marketing"  element={<ComingSoon {...cs.marketing} />} />
         <Route path="/reports"    element={<ComingSoon {...cs.reports} />} />
 
