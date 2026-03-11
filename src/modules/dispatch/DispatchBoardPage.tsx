@@ -8,7 +8,6 @@ import { moveStage } from '../../services/leadMutations'
 import { useAuth } from '../../hooks/useAuth'
 import { useQueryClient } from '@tanstack/react-query'
 import { JOB_KEYS } from '../dispatch/useJobs'
-import { LEAD_KEYS } from './useLeads'
 import { supabase } from '../../lib/supabase'
 
 interface Props {
