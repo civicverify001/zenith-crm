@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { usePermissions } from '../hooks/usePermissions'
 import { supabase } from '../lib/supabase'
 import type { UserRole } from '../types/domain.types'
 
@@ -18,8 +19,8 @@ const NAV_ITEMS = [
   { path: '/services',      label: 'Contracts',       icon: '📝', hex: '#818cf8', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
   { path: '/admin/terms',   label: 'Terms & Docs',    icon: '⚖️', hex: '#8b5cf6', soon: false, roles: ['admin'] as UserRole[] },
   { path: '/accounting',    label: 'Accounting',      icon: '💰', hex: '#facc15', soon: false, roles: ['admin'] as UserRole[] },
-  { path: '/inventory', label: 'Inventory', icon: '📦', hex: '#2dd4bf', soon: false, roles: ['admin'] as UserRole[] },
-  { path: '/admin/users', label: 'Team & Users', icon: '👤', hex: '#f87171', soon: false, roles: ['admin'] as UserRole[] },
+  { path: '/inventory',     label: 'Inventory',       icon: '📦', hex: '#2dd4bf', soon: false, roles: ['admin'] as UserRole[] },
+  { path: '/admin/users',   label: 'Team & Users',    icon: '👤', hex: '#f87171', soon: false, roles: ['admin'] as UserRole[] },
   { path: '/marketing',     label: 'Marketing ROI',   icon: '📊', hex: '#fb7185', soon: true,  roles: ['admin'] as UserRole[] },
   { path: '/reports',       label: 'Reports',         icon: '📈', hex: '#38bdf8', soon: true,  roles: ['admin'] as UserRole[] },
 ]
@@ -54,10 +55,18 @@ function Avatar({ name, size = 8 }: { name: string; size?: number }) {
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { profile, role } = useAuth()
+  const { canAccess } = usePermissions()
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
-  const visibleNav = NAV_ITEMS.filter(item => role && item.roles.includes(role))
+  // Admin: show all nav items that match role (unchanged behaviour)
+  // Other roles: show items that match BOTH role AND custom page permissions
+  const visibleNav = NAV_ITEMS.filter(item => {
+    if (!role) return false
+    if (role === 'admin') return item.roles.includes(role)
+    return item.roles.includes(role) && canAccess(item.path)
+  })
+
   const liveItems = visibleNav.filter(i => !i.soon)
   const soonItems = visibleNav.filter(i => i.soon)
 
