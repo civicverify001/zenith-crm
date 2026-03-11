@@ -22,40 +22,50 @@ const COLUMNS: {
   { key: 'inactive',     label: 'Inactive',     icon: '○', color: '#94a3b8', bg: 'rgba(148,163,184,0.05)', border: 'rgba(148,163,184,0.15)', headerBg: 'rgba(148,163,184,0.1)' },
 ]
 
-function CustomerCard({ c, onClick, accentColor }: { c: Customer; onClick: () => void; accentColor: string }) {
+function CustomerCard({ c, onClick, accentColor, borderColor }: { c: Customer; onClick: () => void; accentColor: string; borderColor: string }) {
   return (
     <div
       onClick={onClick}
       style={{
-        background: '#0f1923',
-        border: '1px solid #1e3a4f',
+        background: `linear-gradient(135deg, #0f1923 0%, #111e2e 100%)`,
+        border: `1px solid ${borderColor}`,
+        borderLeft: `3px solid ${accentColor}`,
         borderRadius: 10,
-        padding: '12px 14px',
+        padding: '12px 12px 10px',
         cursor: 'pointer',
-        transition: 'border-color 0.15s, transform 0.1s',
+        transition: 'all 0.15s',
         marginBottom: 8,
       }}
       onMouseEnter={e => {
-        (e.currentTarget as HTMLDivElement).style.borderColor = accentColor
-        ;(e.currentTarget as HTMLDivElement).style.transform = 'translateY(-1px)'
+        const el = e.currentTarget as HTMLDivElement
+        el.style.background = `linear-gradient(135deg, ${accentColor}0d 0%, #0f1923 100%)`
+        el.style.transform = 'translateY(-1px)'
+        el.style.boxShadow = `0 4px 16px ${accentColor}20`
       }}
       onMouseLeave={e => {
-        (e.currentTarget as HTMLDivElement).style.borderColor = '#1e3a4f'
-        ;(e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)'
+        const el = e.currentTarget as HTMLDivElement
+        el.style.background = 'linear-gradient(135deg, #0f1923 0%, #111e2e 100%)'
+        el.style.transform = 'translateY(0)'
+        el.style.boxShadow = 'none'
       }}
     >
-      {/* Avatar + name */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+      {/* Avatar + name row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{
-          width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
-          background: accentColor + '22', border: `1px solid ${accentColor}44`,
+          width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+          background: `${accentColor}20`,
+          border: `2px solid ${accentColor}55`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: accentColor, fontWeight: 700, fontSize: 13,
+          color: accentColor, fontWeight: 800, fontSize: 14,
+          textTransform: 'uppercase',
         }}>
-          {c.full_name?.charAt(0)?.toUpperCase() || '?'}
+          {c.full_name?.charAt(0) || '?'}
         </div>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{
+            color: '#f1f5f9', fontWeight: 700, fontSize: 13,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
             {c.full_name}
           </div>
           {c.phone && (
@@ -64,24 +74,25 @@ function CustomerCard({ c, onClick, accentColor }: { c: Customer; onClick: () =>
         </div>
       </div>
 
-      {/* Address */}
-      {c.service_address && (
-        <div style={{
-          color: '#475569', fontSize: 11, lineHeight: 1.4,
-          borderTop: '1px solid #1e3a4f', paddingTop: 8, marginTop: 4,
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        }}>
-          📍 {c.service_address}
-        </div>
-      )}
-
-      {/* Email */}
-      {c.email && (
-        <div style={{
-          color: '#475569', fontSize: 11, marginTop: 4,
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        }}>
-          ✉ {c.email}
+      {/* Details */}
+      {(c.service_address || c.email) && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${accentColor}18` }}>
+          {c.service_address && (
+            <div style={{
+              color: '#475569', fontSize: 11,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: c.email ? 3 : 0,
+            }}>
+              📍 {c.service_address}
+            </div>
+          )}
+          {c.email && (
+            <div style={{
+              color: '#475569', fontSize: 11,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              ✉ {c.email}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -164,38 +175,7 @@ export function CustomersListPage() {
         />
       </div>
 
-      {/* ── Summary strip ── */}
-      <div style={{
-        flexShrink: 0,
-        display: 'flex',
-        gap: 8,
-        overflowX: 'auto',
-        paddingBottom: 12,
-        scrollbarWidth: 'none',
-      }}>
-        {COLUMNS.map(col => {
-          const count = byStatus[col.key]?.length || 0
-          return (
-            <div
-              key={col.key}
-              onClick={() => setMobileTab(col.key)}
-              style={{
-                flexShrink: 0,
-                background: col.bg,
-                border: `1px solid ${col.border}`,
-                borderRadius: 10,
-                padding: '8px 14px',
-                cursor: 'pointer',
-                minWidth: 100,
-                textAlign: 'center',
-              }}
-            >
-              <div style={{ color: col.color, fontWeight: 800, fontSize: 18 }}>{count}</div>
-              <div style={{ color: col.color, fontSize: 11, fontWeight: 600, marginTop: 2, opacity: 0.85 }}>{col.label}</div>
-            </div>
-          )
-        })}
-      </div>
+
 
       {/* ── Kanban columns ── */}
       <div style={{
@@ -224,24 +204,28 @@ export function CustomersListPage() {
               {/* Column header */}
               <div style={{
                 background: col.headerBg,
-                padding: '10px 14px',
+                padding: '12px 14px',
                 borderBottom: `1px solid ${col.border}`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 flexShrink: 0,
+                borderTop: `3px solid ${col.color}`,
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 14 }}>{col.icon}</span>
-                  <span style={{ color: col.color, fontWeight: 700, fontSize: 13 }}>{col.label}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <span style={{ fontSize: 16 }}>{col.icon}</span>
+                  <span style={{ color: col.color, fontWeight: 800, fontSize: 14, letterSpacing: '0.01em' }}>{col.label}</span>
                 </div>
                 <div style={{
-                  background: col.color + '22',
+                  background: col.color + '25',
                   color: col.color,
+                  border: `1px solid ${col.color}40`,
                   borderRadius: 20,
-                  padding: '2px 8px',
-                  fontSize: 11,
-                  fontWeight: 700,
+                  padding: '3px 10px',
+                  fontSize: 12,
+                  fontWeight: 800,
+                  minWidth: 26,
+                  textAlign: 'center',
                 }}>
                   {cards.length}
                 </div>
@@ -268,6 +252,7 @@ export function CustomersListPage() {
                       key={c.id}
                       c={c}
                       accentColor={col.color}
+                      borderColor={col.border}
                       onClick={() => navigate(`/customers/${c.id}`)}
                     />
                   ))
