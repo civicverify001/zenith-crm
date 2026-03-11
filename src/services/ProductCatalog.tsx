@@ -70,6 +70,7 @@ export default function ProductCatalog() {
   const [error, setError] = useState<string | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [showInactive, setShowInactive] = useState(false);
+  const [search, setSearch] = useState('');
 
   useEffect(() => { loadProducts(); }, [filterCategory, showInactive]);
 
@@ -127,6 +128,15 @@ export default function ProductCatalog() {
   const activeCount = products.filter(p => p.is_active).length;
   const categories = [...new Set(products.map(p => p.category))].length;
 
+  // Search filter
+  const filteredProducts = products.filter(p => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return p.name.toLowerCase().includes(q) ||
+      (p.sku && p.sku.toLowerCase().includes(q)) ||
+      (p.description && p.description.toLowerCase().includes(q));
+  });
+
   // ============================================================
   // RENDER
   // ============================================================
@@ -141,9 +151,21 @@ export default function ProductCatalog() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 800, fontSize: 20, color: '#e2e8f0', lineHeight: 1.2 }}>Product Catalog</div>
           <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>
-            Manage systems, filters, and services. Prices feed quotes, contracts, and billing.
+            {products.length} product{products.length !== 1 ? 's' : ''} · Prices feed quotes, contracts, and billing.
           </div>
         </div>
+
+        {/* Search */}
+        <input
+          placeholder="Search name or SKU…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{
+            background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8,
+            color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none',
+            width: 220, flexShrink: 0,
+          }}
+        />
 
         {/* Show inactive toggle */}
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexShrink: 0 }}>
@@ -245,7 +267,7 @@ export default function ProductCatalog() {
         borderBottom: '1px solid #1e3a4f', background: '#0f1923', flexShrink: 0, overflowX: 'auto',
       }}>
         {[
-          { label: 'Products', val: String(products.length), color: '#94a3b8' },
+          { label: 'Showing', val: String(filteredProducts.length), color: '#94a3b8' },
           { label: 'Active',   val: String(activeCount),     color: '#4ade80' },
           { label: 'Categories', val: String(categories),    color: '#a78bfa' },
         ].map(s => (
@@ -275,16 +297,20 @@ export default function ProductCatalog() {
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
         {loading ? (
           <div style={{ textAlign: 'center', padding: 60, color: '#64748b' }}>Loading products…</div>
-        ) : products.length === 0 ? (
+        ) : filteredProducts.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 60 }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>📦</div>
-            <div style={{ color: '#64748b', fontSize: 15 }}>No products found</div>
-            <button onClick={openAddForm} style={{
-              marginTop: 16, padding: '10px 24px', borderRadius: 8, border: 'none',
-              cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700,
-            }}>
-              Add First Product
-            </button>
+            <div style={{ color: '#64748b', fontSize: 15 }}>
+              {search ? 'No products matching your search' : 'No products found'}
+            </div>
+            {!search && (
+              <button onClick={openAddForm} style={{
+                marginTop: 16, padding: '10px 24px', borderRadius: 8, border: 'none',
+                cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700,
+              }}>
+                Add First Product
+              </button>
+            )}
           </div>
         ) : (
           <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12, overflow: 'hidden' }}>
@@ -312,7 +338,7 @@ export default function ProductCatalog() {
                 </tr>
               </thead>
               <tbody>
-                {products.map(product => {
+                {filteredProducts.map(product => {
                   const catColor = CATEGORY_COLORS[product.category] || DEFAULT_CAT_COLOR;
                   return (
                     <tr
