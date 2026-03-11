@@ -16,6 +16,12 @@ interface Props {
   onLeadUpdated?: (lead: Lead) => void
 }
 
+interface DetectedProduct {
+  name: string
+  category: string
+  quantity: number
+}
+
 function formatCurrency(val: number | null | undefined): string {
   if (!val) return '—'
   return `$${Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -41,8 +47,6 @@ function StatusBadge({ active, activeLabel, inactiveLabel }: {
   )
 }
 
-// ── Primary detection: product categories from products table
-// categories = ['ro', 'softener', 'whole_home_filter', etc.]
 function systemTypeFromCategories(categories: string[]): SystemType {
   const has = (cat: string) => categories.includes(cat)
   const hasRO        = has('ro')
@@ -56,7 +60,6 @@ function systemTypeFromCategories(categories: string[]): SystemType {
   return 'softener_only'
 }
 
-// ── Fallback detection: parse free-text descriptions
 function systemTypeFromText(agreementType: string | null, lineItems: any[]): SystemType {
   if (lineItems?.length) {
     const desc = lineItems.map((li: any) =>
@@ -86,6 +89,15 @@ const ALL_SYSTEM_TYPES: SystemType[] = [
   'dual_tank', 'ro_install', 'combo_whole_home_ro',
 ]
 
+const CATEGORY_LABELS: Record<string, string> = {
+  ro: 'Reverse Osmosis',
+  softener: 'Water Softener',
+  whole_home_filter: 'Whole Home Filter',
+  replacement_filter: 'Replacement Filter',
+  accessory: 'Accessory',
+  service: 'Service',
+}
+
 export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   const { user, profile } = useAuth()
   const queryClient = useQueryClient()
@@ -105,6 +117,8 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   const [needsFaucetHole, setNeedsFaucetHole] = useState(false)
   const [notes, setNotes] = useState('')
   const [agreementFetched, setAgreementFetched] = useState(false)
+  const [detectedProducts, setDetectedProducts] = useState<DetectedProduct[]>([])
+  const [detectionSource, setDetectionSource] = useState<'invoice' | 'quote' | 'fallback' | null>(null)
 
   const installPrefLabel: Record<string, string> = {
     asap: 'ASAP', specific_date: 'Specific Date', flexible: 'Flexible',
@@ -122,22 +136,34 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     }
   }
 
-  async function resolveProductIds(lineItems: any[]): Promise<string[]> {
+  async function resolveLineItemProducts(lineItems: any[]): Promise<DetectedProduct[]> {
     const ids = lineItems.map((li: any) => li.product_id).filter(Boolean)
     if (!ids.length) return []
+
     const { data } = await supabase
       .from('products')
-      .select('id, category')
+      .select('id, name, category')
       .in('id', ids)
-    return (data || []).map((p: any) => p.category).filter(Boolean)
+
+    const productMap = new Map((data || []).map((p: any) => [p.id, p]))
+
+    return lineItems
+      .filter((li: any) => li.product_id && productMap.has(li.product_id))
+      .map((li: any) => {
+        const p = productMap.get(li.product_id)
+        return {
+          name: p.name,
+          category: p.category,
+          quantity: li.quantity || 1,
+        }
+      })
   }
 
   async function loadAgreementSystemType() {
     if (agreementFetched) return
     setLoadingAgreement(true)
     try {
-
-      // ── 1. Agreement line items → product_id → category ───────
+      // ── 1. Agreement line items → product_id → name + category ──
       const { data: agreement } = await supabase
         .from('agreements')
         .select('agreement_type, line_items_snapshot, commercial_type')
@@ -151,26 +177,38 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
           ? JSON.parse(agreement.line_items_snapshot)
           : agreement.line_items_snapshot
 
-        const categories = await resolveProductIds(lineItems)
-        if (categories.length > 0) {
-          applySystemType(systemTypeFromCategories(categories))
+        const products = await resolveLineItemProducts(lineItems)
+        if (products.length > 0) {
+          setDetectedProducts(products)
+          setDetectionSource('invoice')
+          applySystemType(systemTypeFromCategories(products.map(p => p.category)))
           setAgreementFetched(true)
           return
         }
 
-        // No product_ids — text fallback on agreement
+        // No product_ids — text fallback
         const textDetected = systemTypeFromText(
           agreement.agreement_type || agreement.commercial_type || null,
           lineItems
         )
         if (textDetected !== 'softener_only' || lineItems.length > 0) {
+          // Show descriptions as fallback product list
+          const fallbackProducts: DetectedProduct[] = lineItems
+            .filter((li: any) => li.description || li.name)
+            .map((li: any) => ({
+              name: li.description || li.name,
+              category: '',
+              quantity: li.quantity || 1,
+            }))
+          setDetectedProducts(fallbackProducts)
+          setDetectionSource('invoice')
           applySystemType(textDetected)
           setAgreementFetched(true)
           return
         }
       }
 
-      // ── 2. Quote line items → product_id → category ───────────
+      // ── 2. Quote line items → product_id → name + category ──────
       const { data: quote } = await supabase
         .from('quotes')
         .select('line_items_snapshot, commercial_type, quote_type')
@@ -184,24 +222,35 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
           ? JSON.parse(quote.line_items_snapshot)
           : quote.line_items_snapshot
 
-        const categories = await resolveProductIds(lineItems)
-        if (categories.length > 0) {
-          applySystemType(systemTypeFromCategories(categories))
+        const products = await resolveLineItemProducts(lineItems)
+        if (products.length > 0) {
+          setDetectedProducts(products)
+          setDetectionSource('quote')
+          applySystemType(systemTypeFromCategories(products.map(p => p.category)))
           setAgreementFetched(true)
           return
         }
 
-        // No product_ids — text fallback on quote
         const textDetected = systemTypeFromText(
           quote.commercial_type || quote.quote_type || null,
           lineItems
         )
+        const fallbackProducts: DetectedProduct[] = lineItems
+          .filter((li: any) => li.description || li.name)
+          .map((li: any) => ({
+            name: li.description || li.name,
+            category: '',
+            quantity: li.quantity || 1,
+          }))
+        setDetectedProducts(fallbackProducts)
+        setDetectionSource('quote')
         applySystemType(textDetected)
         setAgreementFetched(true)
         return
       }
 
       // ── 3. Last resort — water concern on lead ─────────────────
+      setDetectionSource('fallback')
       if (lead.water_concern) {
         const wc = lead.water_concern.toLowerCase()
         if (wc.includes('ro') || wc.includes('reverse')) applySystemType('ro_install')
@@ -358,19 +407,62 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
               Creates a job on the Dispatch board with checklist + forms, then moves lead to Won.
             </p>
 
-            {loadingAgreement && (
-              <div className="text-xs text-accent animate-pulse mb-4">
-                Detecting system type from products…
-              </div>
-            )}
-
             <div className="space-y-4">
+
+              {/* ── Products from invoice/quote ── */}
+              <div>
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">
+                  {loadingAgreement ? (
+                    <span className="text-accent animate-pulse">Loading products from agreement…</span>
+                  ) : detectedProducts.length > 0 ? (
+                    <>
+                      Products Being Installed
+                      <span className="ml-2 font-normal normal-case text-green">
+                        ✓ from {detectionSource === 'invoice' ? 'signed agreement' : 'quote'}
+                      </span>
+                    </>
+                  ) : (
+                    'Products Being Installed'
+                  )}
+                </label>
+
+                {loadingAgreement ? (
+                  <div className="bg-surface border border-border rounded-lg p-3 space-y-2">
+                    <div className="h-4 bg-muted/20 rounded animate-pulse w-3/4" />
+                    <div className="h-4 bg-muted/20 rounded animate-pulse w-1/2" />
+                  </div>
+                ) : detectedProducts.length > 0 ? (
+                  <div className="bg-surface border border-border rounded-lg divide-y divide-border">
+                    {detectedProducts.map((p, i) => (
+                      <div key={i} className="flex items-center justify-between px-3 py-2.5">
+                        <div>
+                          <div className="text-sm font-medium text-slate-200">{p.name}</div>
+                          {p.category && (
+                            <div className="text-xs text-muted mt-0.5">
+                              {CATEGORY_LABELS[p.category] || p.category}
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-xs text-slate-400 font-semibold ml-3">
+                          × {p.quantity}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="bg-surface border border-border rounded-lg px-3 py-3 text-xs text-muted">
+                    No products found on agreement — select system type manually below.
+                  </div>
+                )}
+              </div>
+
+              {/* ── System Type — pre-filled, still editable ── */}
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">
-                  System Type <span className="text-red-400">*</span>
-                  <span className="ml-2 text-accent font-normal normal-case">
-                    auto-detected from products
-                  </span>
+                  Install Type <span className="text-red-400">*</span>
+                  {detectedProducts.length > 0 && !loadingAgreement && (
+                    <span className="ml-2 text-accent font-normal normal-case">auto-detected</span>
+                  )}
                 </label>
                 <select
                   value={systemType}
@@ -381,6 +473,9 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                     <option key={t} value={t}>{SYSTEM_TYPE_LABELS[t]}</option>
                   ))}
                 </select>
+                <div className="text-xs text-muted mt-1">
+                  Override if needed — this controls the install checklist.
+                </div>
               </div>
 
               {(systemType === 'ro_install' || systemType === 'combo_whole_home_ro') && (
@@ -449,6 +544,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 />
               </div>
 
+              {/* Customer summary */}
               <div className="bg-surface rounded-lg p-3 text-xs text-muted space-y-1">
                 <div><span className="text-slate-400 font-semibold">Customer: </span>{lead.full_name}</div>
                 <div>
@@ -457,7 +553,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 </div>
                 <div><span className="text-slate-400 font-semibold">Phone: </span>{lead.phone}</div>
                 {lead.quote_total && (
-                  <div><span className="text-slate-400 font-semibold">Quote: </span>{formatCurrency(lead.quote_total)}</div>
+                  <div><span className="text-slate-400 font-semibold">Quote Total: </span>{formatCurrency(lead.quote_total)}</div>
                 )}
               </div>
             </div>
@@ -472,7 +568,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
               </button>
               <button
                 onClick={handleScheduleInstall}
-                disabled={submitting}
+                disabled={submitting || loadingAgreement}
                 className="flex-1 py-2.5 bg-cyan hover:bg-cyan/80 disabled:opacity-50 text-white font-bold rounded-lg text-sm transition-colors"
               >
                 {submitting ? 'Creating Job…' : '📅 Create Job & Schedule'}
