@@ -137,7 +137,6 @@ interface Product {
   sku: string
   category: string
   is_active: boolean
-  product_categories?: { name: string }
 }
 
 interface MergedRow {
@@ -160,17 +159,21 @@ function StockLevelsTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    // Load all active products
-    const { data: products } = await supabase
+
+    // Simple products query — no joins that could fail silently
+    const { data: products, error: prodErr } = await supabase
       .from('products')
-      .select('id, name, sku, category, is_active, product_categories(name)')
-      .eq('is_active', true)
+      .select('id, name, sku, category, is_active')
       .order('name')
 
+    if (prodErr) console.error('Products query error:', prodErr)
+
     // Load all inventory rows
-    const { data: invRows } = await supabase
+    const { data: invRows, error: invErr } = await supabase
       .from('inventory')
-      .select('*, products(name, sku, category, vendor_sku, vendor_cost, product_categories(name), product_vendors(name))')
+      .select('*')
+
+    if (invErr) console.error('Inventory query error:', invErr)
 
     // Build lookup map: product_id → inventory row
     const invMap: Record<string, InventoryRow> = {}
@@ -178,7 +181,7 @@ function StockLevelsTab() {
       invMap[row.product_id] = row
     }
 
-    // Merge: every product gets a row, inv may be null if not yet tracked
+    // Merge: every product (active or not) gets a row
     const result: MergedRow[] = (products || []).map(p => ({
       product: p as Product,
       inv: invMap[p.id] || null,
@@ -399,7 +402,7 @@ function StockLevelsTab() {
                 <td className="px-4 py-3 font-medium text-white">{m.product.name}</td>
                 <td className="px-4 py-3 font-mono text-xs text-slate-400">{m.product.sku}</td>
                 <td className="px-4 py-3 text-slate-400 capitalize text-xs">
-                  {m.product.product_categories?.name || m.product.category || '—'}
+                  {m.product.category || '—'}
                 </td>
                 {m.inv ? (
                   <>
