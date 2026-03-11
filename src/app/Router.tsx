@@ -9,7 +9,7 @@ import { QuoteReviewPage } from '../modules/public/QuoteReviewPage'
 import TermsAdminPage from '../modules/admin/TermsAdminPage'
 import PublicTermsPage from '../modules/public/PublicTermsPage'
 import InventoryPage from '../pages/inventory/InventoryPage'
-import UserManagementPage from './pages/admin/UserManagementPage';
+import UserManagementPage from '../modules/admin/UserManagementPage'
 
 
 // ─── Module pages ────────────────────────────────────────────────
@@ -228,6 +228,9 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
         {/* Admin only */}
         <Route path="/admin/terms" element={
           role === 'admin' ? <TermsAdminPage /> : <Navigate to="/dashboard" replace />
+        } />
+        <Route path="/admin/users" element={
+          role === 'admin' ? <UserManagementPage /> : <Navigate to="/dashboard" replace />
         } />
 
         {/* Phase-aware pages */}
