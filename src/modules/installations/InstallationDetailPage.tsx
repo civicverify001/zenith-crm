@@ -17,6 +17,7 @@ import { CustomerHandoverTab } from './tabs/CustomerHandoverTab'
 import { ConsentsTab } from './tabs/ConsentsTab'
 import { JobActivityTab } from '../dispatch/tabs/JobActivityTab'
 import SiteSurveyCapture from '../leads/SiteSurveyCapture'
+import MarkCompleteButton from './MarkCompleteButton'
 
 type InstallTab = 'checklist' | 'photos' | 'handover' | 'consents' | 'activity'
 
@@ -68,6 +69,31 @@ export function InstallationDetailPage() {
     enabled: !!currentJob?.id && currentJob?.status === 'complete',
   })
 
+  // ── Install fee: fetch from accepted quote linked to this job's opportunity ──
+  const { data: installFeeData } = useQuery({
+    queryKey: ['job_install_fee', currentJob?.id],
+    queryFn: async () => {
+      if (!currentJob?.lead_id) return { installFee: 0, customerName: currentJob?.customer_name_snapshot || 'Customer' }
+
+      // Get accepted quote for this opportunity
+      const { data: quote } = await supabase
+        .from('quotes')
+        .select('install_fee, customer_name')
+        .eq('opportunity_id', currentJob.lead_id)
+        .eq('status', 'accepted')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      return {
+        installFee: quote?.install_fee ? parseFloat(quote.install_fee) : 0,
+        customerName: quote?.customer_name || currentJob?.customer_name_snapshot || 'Customer',
+      }
+    },
+    enabled: !!currentJob?.id && (currentJob?.status === 'in_progress' || currentJob?.status === 'scheduled'),
+    staleTime: 30_000,
+  })
+
   const canComplete = completionStatus?.ready === true
 
   const handleJobUpdated = useCallback((updated: Job) => {
@@ -85,6 +111,25 @@ export function InstallationDetailPage() {
       handleJobUpdated(updated)
     } catch (e: any) {
       setStatusError(e.message)
+    }
+  }
+
+  // Called when MarkCompleteButton finishes the complete + charge flow
+  function handleInstallCompleted(result: any) {
+    // Refresh all relevant queries
+    qc.invalidateQueries({ queryKey: JOB_KEYS.detail(currentJob!.id) })
+    qc.invalidateQueries({ queryKey: JOB_KEYS.board() })
+    qc.invalidateQueries({ queryKey: JOB_KEYS.activity(currentJob!.id) })
+    qc.invalidateQueries({ queryKey: ['job_completion', currentJob!.id] })
+    qc.invalidateQueries({ queryKey: ['job_customer', currentJob!.id] })
+
+    // Optimistic local update so UI reflects complete immediately
+    if (currentJob) {
+      setJob({
+        ...currentJob,
+        status: 'complete' as JobStatus,
+        completed_at: new Date().toISOString(),
+      })
     }
   }
 
@@ -107,6 +152,9 @@ export function InstallationDetailPage() {
       </div>
     )
   }
+
+  const userRole = profile?.role
+  const canMarkComplete = userRole === 'admin' || userRole === 'tech'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -177,7 +225,41 @@ export function InstallationDetailPage() {
           </button>
         )}
 
-        {currentJob.status === 'in_progress' && (
+        {currentJob.status === 'in_progress' && canMarkComplete && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {canComplete ? (
+              <MarkCompleteButton
+                jobId={currentJob.id}
+                jobStatus={currentJob.status}
+                installFee={installFeeData?.installFee ?? null}
+                customerName={installFeeData?.customerName || currentJob.customer_name_snapshot || 'Customer'}
+                completedBy={user?.id}
+                onCompleted={handleInstallCompleted}
+              />
+            ) : (
+              <>
+                <button
+                  disabled
+                  style={{
+                    fontSize: 13, padding: '9px 18px', borderRadius: 8, fontWeight: 600,
+                    backgroundColor: 'rgba(148,163,184,0.1)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.2)',
+                    cursor: 'not-allowed', opacity: 0.7, whiteSpace: 'nowrap',
+                  }}
+                  title="Complete all requirements first"
+                >
+                  ✅ Mark Complete
+                </button>
+                {completionStatus && (
+                  <span style={{ color: '#fbbf24', fontSize: 12 }}>
+                    {completionStatus.issues.length} blocking issue{completionStatus.issues.length !== 1 ? 's' : ''}
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {currentJob.status === 'in_progress' && !canMarkComplete && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <button
               onClick={() => handleStatusChange('complete')}
@@ -208,6 +290,34 @@ export function InstallationDetailPage() {
             <div style={{ color: '#4ade80', fontSize: 13, fontWeight: 600 }}>
               ✅ Complete — {formatDate(currentJob.completed_at)}
             </div>
+            {/* Show charge status if available */}
+            {(currentJob as any).install_fee_charged && (
+              <span style={{
+                fontSize: 11, padding: '3px 8px', borderRadius: 6,
+                backgroundColor: 'rgba(34,197,94,0.12)', color: '#4ade80',
+                border: '1px solid rgba(34,197,94,0.25)',
+              }}>
+                💳 Install fee charged
+              </span>
+            )}
+            {(currentJob as any).install_fee_charge_status === 'failed' && (
+              <span style={{
+                fontSize: 11, padding: '3px 8px', borderRadius: 6,
+                backgroundColor: 'rgba(239,68,68,0.12)', color: '#f87171',
+                border: '1px solid rgba(239,68,68,0.25)',
+              }}>
+                ⚠️ Install fee charge failed
+              </span>
+            )}
+            {(currentJob as any).install_fee_charge_status === 'skipped' && (
+              <span style={{
+                fontSize: 11, padding: '3px 8px', borderRadius: 6,
+                backgroundColor: 'rgba(251,191,36,0.12)', color: '#fbbf24',
+                border: '1px solid rgba(251,191,36,0.25)',
+              }}>
+                No card — fee not charged
+              </span>
+            )}
             {linkedCustomer && (
               <button
                 onClick={() => navigate(`/customers/${linkedCustomer.id}`)}
