@@ -1,6 +1,7 @@
 // api/stripe/webhook.js
 // Handles Stripe webhook events after checkout completes
 // Wires: payment_methods, payment_transactions, contracts (active), invoices (paid)
+// NEW: Step 6 — inventory commitment (creates job + reserves stock)
 
 import { createClient } from '@supabase/supabase-js'
 import Stripe from 'stripe'
@@ -96,6 +97,23 @@ export default async function handler(req, res) {
           })
         } catch (_) {}
       }
+    }
+
+    // For setup mode (rental card save), get the setup intent PM
+    if (session.setup_intent && !stripePaymentMethodId) {
+      try {
+        const si = await stripe.setupIntents.retrieve(session.setup_intent, {
+          expand: ['payment_method'],
+        })
+        if (si.payment_method && typeof si.payment_method === 'object') {
+          const pm = si.payment_method
+          stripePaymentMethodId = pm.id
+          last4 = pm.card?.last4 || null
+          expMonth = pm.card?.exp_month || null
+          expYear = pm.card?.exp_year || null
+          brand = pm.card?.brand || null
+        }
+      } catch (_) {}
     }
 
     // ── 2. Save payment method to payment_methods table ───────────
@@ -236,6 +254,103 @@ export default async function handler(req, res) {
       }
     }
 
+    // ── 6. INVENTORY: Create/find job + commit for fulfillment ────
+    // This is the fulfillment trigger point.
+    // Conditions already met by reaching here:
+    //   - Rental: agreement signed + card saved (setup mode completed)
+    //   - Purchase: payment confirmed (payment mode completed)
+    //
+    // We create a job with source_quote_id frozen to the exact quote,
+    // then run inventory commitment (reserve stock or create demand).
+    // ──────────────────────────────────────────────────────────────
+
+    if (quote_id && customer_id) {
+      try {
+        // Check if a job already exists for this quote
+        let jobId = null
+
+        const { data: existingJob } = await supabase
+          .from('jobs')
+          .select('id')
+          .eq('source_quote_id', quote_id)
+          .limit(1)
+          .maybeSingle()
+
+        if (existingJob) {
+          jobId = existingJob.id
+        } else {
+          // Load quote for job creation data
+          const { data: quote } = await supabase
+            .from('quotes')
+            .select('id, customer_name, system_type, opportunity_id')
+            .eq('id', quote_id)
+            .single()
+
+          if (quote) {
+            // Load customer address for service_address_snapshot
+            const { data: custData } = await supabase
+              .from('customers')
+              .select('full_name, phone, email, address, city, state, zip')
+              .eq('id', customer_id)
+              .single()
+
+            const serviceAddress = custData
+              ? [custData.address, custData.city, custData.state, custData.zip].filter(Boolean).join(', ')
+              : ''
+
+            // Create job with source_quote_id — the frozen link
+            const { data: newJob, error: jobErr } = await supabase
+              .from('jobs')
+              .insert({
+                lead_id: quote.opportunity_id || null,
+                customer_name_snapshot: custData?.full_name || quote.customer_name || 'Customer',
+                service_address_snapshot: serviceAddress,
+                phone_snapshot: custData?.phone || null,
+                email_snapshot: custData?.email || null,
+                system_type: quote.system_type || null,
+                source_quote_id: quote_id,
+                status: 'scheduled',
+                inventory_status: 'pending_check',
+                created_at: now,
+              })
+              .select('id')
+              .single()
+
+            if (jobErr) {
+              console.error('Job creation failed:', jobErr.message)
+            } else {
+              jobId = newJob.id
+            }
+
+            // Log audit
+            await supabase.from('document_audit_log').insert({
+              entity_type: 'job',
+              entity_id: jobId,
+              event: 'job_created_from_fulfillment',
+              actor_type: 'system',
+              metadata: {
+                trigger: 'stripe_webhook',
+                quote_id,
+                quote_type,
+                session_id: session.id,
+              },
+            }).then(() => {}).catch(() => {})
+          }
+        }
+
+        // Run inventory commitment (idempotent — safe to call on retry)
+        if (jobId) {
+          const invResult = await commitForFulfillmentWebhook(supabase, jobId)
+          console.log('Inventory commitment:', { jobId, ...invResult })
+        }
+
+      } catch (invErr) {
+        // Inventory errors must NOT block the webhook response.
+        // The deal is committed regardless — inventory is operational, not transactional.
+        console.error('Inventory commitment error (non-blocking):', invErr.message)
+      }
+    }
+
     console.log('Webhook processed:', {
       quote_type, quote_id, customer_id, agreement_id, invoice_id,
       amount: amountDollars, pm_saved: !!savedPmId,
@@ -248,4 +363,146 @@ export default async function handler(req, res) {
     // Return 200 so Stripe doesn't retry — log the error
     return res.status(200).json({ received: true, warning: err.message })
   }
+}
+
+
+// ────────────────────────────────────────────────────────────
+// INVENTORY COMMITMENT — Webhook-side version
+//
+// This is a self-contained version of commitForFulfillment
+// that uses the server-side supabase client (service role).
+// The frontend inventoryService.ts uses the browser client.
+// Same logic, same RPCs, same idempotency.
+// ────────────────────────────────────────────────────────────
+
+async function commitForFulfillmentWebhook(supa, jobId) {
+  // 1. Load job
+  const { data: job, error: jobErr } = await supa
+    .from('jobs')
+    .select('id, source_quote_id, inventory_status')
+    .eq('id', jobId)
+    .single()
+
+  if (jobErr || !job || !job.source_quote_id) {
+    return { status: 'skipped', reason: 'No source_quote_id' }
+  }
+
+  // 2. Load line items from frozen source quote
+  const { data: lineItems } = await supa
+    .from('document_line_items')
+    .select('product_id, quantity')
+    .eq('document_id', job.source_quote_id)
+    .not('product_id', 'is', null)
+
+  if (!lineItems || lineItems.length === 0) {
+    await supa.from('jobs').update({
+      inventory_status: 'not_required',
+      inventory_checked_at: new Date().toISOString(),
+    }).eq('id', jobId)
+    return { status: 'not_required', reason: 'No line items with products' }
+  }
+
+  // 3. Load products — only track_inventory = true
+  const productIds = [...new Set(lineItems.map(li => li.product_id).filter(Boolean))]
+
+  const { data: products } = await supa
+    .from('products')
+    .select('id, name, track_inventory, vendor_id, vendor_sku')
+    .in('id', productIds)
+
+  const productMap = new Map((products || []).map(p => [p.id, p]))
+
+  const trackedItems = lineItems.filter(li => {
+    const prod = productMap.get(li.product_id)
+    return prod?.track_inventory === true
+  })
+
+  if (trackedItems.length === 0) {
+    await supa.from('jobs').update({
+      inventory_status: 'not_required',
+      inventory_checked_at: new Date().toISOString(),
+    }).eq('id', jobId)
+    return { status: 'not_required', reason: 'No tracked products' }
+  }
+
+  // 4. Reserve each tracked product
+  let anyShort = false
+  const results = []
+
+  for (const li of trackedItems) {
+    const prod = productMap.get(li.product_id)
+    const qty = li.quantity || 1
+    const reservationKey = `${jobId}:${li.product_id}:fulfillment_committed`
+
+    // Call atomic RPC
+    const { data: rpcResult, error: rpcErr } = await supa
+      .rpc('rpc_reserve_stock', {
+        p_product_id: li.product_id,
+        p_job_id: jobId,
+        p_quantity: qty,
+        p_reservation_key: reservationKey,
+      })
+
+    if (rpcErr) {
+      console.error(`Reserve RPC error for ${prod?.name}:`, rpcErr)
+      anyShort = true
+      results.push({ product: prod?.name, result: 'error' })
+      continue
+    }
+
+    results.push({ product: prod?.name, result: rpcResult })
+
+    if (rpcResult === 'short') {
+      anyShort = true
+
+      // Get vendor name snapshot
+      let vendorName = null
+      if (prod?.vendor_id) {
+        const { data: vendor } = await supa
+          .from('product_vendors')
+          .select('name')
+          .eq('id', prod.vendor_id)
+          .single()
+        vendorName = vendor?.name || null
+      }
+
+      // Calculate shortage
+      const { data: inv } = await supa
+        .from('inventory')
+        .select('quantity_available')
+        .eq('product_id', li.product_id)
+        .single()
+
+      const available = inv?.quantity_available || 0
+      const shortfall = qty - Math.max(0, available)
+
+      // Create reorder request (idempotent via unique index)
+      await supa.from('reorder_requests').upsert({
+        product_id: li.product_id,
+        job_id: jobId,
+        request_type: 'job_shortage',
+        quantity_needed: shortfall > 0 ? shortfall : qty,
+        vendor_name: vendorName,
+        vendor_sku: prod?.vendor_sku || null,
+        vendor_id: prod?.vendor_id || null,
+        status: 'open',
+      }, {
+        onConflict: 'job_id,product_id',
+        ignoreDuplicates: true,
+      }).then(() => {}).catch(err => {
+        console.error('Reorder request error:', err.message)
+      })
+    }
+  }
+
+  // 5. Update job status
+  const finalStatus = anyShort ? 'short' : 'reserved'
+
+  await supa.from('jobs').update({
+    inventory_status: finalStatus,
+    inventory_checked_at: new Date().toISOString(),
+    inventory_reservation_key: `${jobId}:fulfillment_committed`,
+  }).eq('id', jobId)
+
+  return { status: finalStatus, results }
 }
