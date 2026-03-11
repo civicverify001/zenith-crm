@@ -108,7 +108,13 @@ module.exports = async function handler(req, res) {
         .insert({
           customer_id: customerId,
           system_type: job.system_type || product?.category || 'unknown',
-          name_snapshot: product?.name || job.customer_name_snapshot || 'Installed System',
+          name_snapshot: product?.name || ({
+            softener_only: 'Water Softener',
+            ro_only: 'Reverse Osmosis System',
+            softener_ro: 'Water Softener + RO System',
+            whole_home_filter: 'Whole Home Filter',
+            iron_filter: 'Iron Filter',
+          }[job.system_type] || 'Installed System'),
           sku_snapshot: product?.sku || null,
           ownership_type: ownershipType,
           install_date: today,
@@ -191,6 +197,20 @@ module.exports = async function handler(req, res) {
       },
       actor_id: completed_by || job_id,
     }); } catch(e) { console.error('[BEST-EFFORT] activity log:', e.message); }
+
+    // ── 8b. Customer activity log ─────────────────────────────────────
+    if (customerId) {
+      try {
+        await supabase.from('customer_activity_log').insert({
+          customer_id: customerId,
+          event_type: 'installation_completed',
+          title: 'Installation completed',
+          description: `System installed and job marked complete`,
+          metadata: { job_id, installed_system_id: installedSystemId, install_fee: installFee },
+          created_by: completed_by || null,
+        });
+      } catch(e) { console.error('[BEST-EFFORT] customer_activity_log:', e.message); }
+    }
 
     // ── 9. Skip charge if no customer or no fee ───────────────────────
     if (!customerId || installFee <= 0) {
