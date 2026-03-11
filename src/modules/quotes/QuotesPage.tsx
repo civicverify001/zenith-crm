@@ -213,8 +213,6 @@ export function QuotesPage() {
         padding: '12px 24px',
         display: 'flex',
         gap: 8,
-        overflowX: 'auto',
-        scrollbarWidth: 'none',
         flexShrink: 0,
       }}>
         {STATUS_FILTERS.map(f => {
@@ -225,20 +223,21 @@ export function QuotesPage() {
               key={f.key}
               onClick={() => setFilter(f.key)}
               style={{
-                flexShrink: 0,
+                flex: 1,
                 display: 'flex',
                 alignItems: 'center',
+                justifyContent: 'center',
                 gap: 7,
-                padding: '9px 16px',
+                padding: '11px 8px',
                 borderRadius: 10,
                 border: `1px solid ${isActive ? f.color + '60' : f.border}`,
-                background: isActive ? f.bg : 'transparent',
+                background: isActive ? f.bg : 'rgba(255,255,255,0.02)',
                 color: isActive ? f.color : '#475569',
                 cursor: 'pointer',
                 fontSize: 13,
                 fontWeight: isActive ? 700 : 500,
                 transition: 'all 0.12s',
-                boxShadow: isActive ? `0 0 12px ${f.color}18` : 'none',
+                boxShadow: isActive ? `0 0 14px ${f.color}20` : 'none',
               }}
               onMouseEnter={e => {
                 if (!isActive) {
