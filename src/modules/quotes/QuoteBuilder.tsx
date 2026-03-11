@@ -136,6 +136,24 @@ export function QuoteBuilder({
   const [savedQuoteId, setSavedQuoteId] = useState<string | null>(existingQuote?.id || null)
   const [serviceAddress, setServiceAddress] = useState(customerAddress || existingQuote?.customer_address || '')
 
+  // Fetch line items if existingQuote was passed without them (e.g. from list view)
+  useEffect(() => {
+    if (!existingQuote?.id) return
+    if (existingQuote.line_items && existingQuote.line_items.length > 0) return
+    import('../../services/quotesService').then(({ fetchQuote }) => {
+      fetchQuote(existingQuote.id).then(q => {
+        if (q?.line_items && q.line_items.length > 0) {
+          setLineItems(q.line_items.map((li: any) => ({
+            ...li,
+            _key: uid(),
+            discount_pct: 0,
+            original_unit_price: li.unit_price,
+          })))
+        }
+      }).catch(console.error)
+    })
+  }, [existingQuote?.id])
+
   // Auto-fetch address from leads via customer.lead_id
   useEffect(() => {
     if (serviceAddress || !customerId) return
