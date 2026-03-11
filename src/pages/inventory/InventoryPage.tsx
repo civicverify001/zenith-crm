@@ -151,7 +151,7 @@ function StockLevelsTab() {
   const [merged, setMerged] = useState<MergedRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeFilter, setActiveFilter] = useState<'all' | 'low' | 'short' | 'untracked'>('all')
+  const [activeFilter, setActiveFilter] = useState<'all' | 'low' | 'short' | 'untracked'>('untracked')
   const [adjustModal, setAdjustModal] = useState<MergedRow | null>(null)
   const [adjustQty, setAdjustQty] = useState('')
   const [adjustNote, setAdjustNote] = useState('')
@@ -380,8 +380,9 @@ function StockLevelsTab() {
               <tr>
                 <td colSpan={9} className="text-center py-16">
                   <div className="text-4xl mb-3">📦</div>
-                  <div className="text-slate-400 font-medium">No inventory rows found</div>
-                  <div className="text-slate-600 text-xs mt-1">Run the SQL seed query to populate stock rows</div>
+                  <div className="text-slate-400 font-medium">
+                    {activeFilter === 'all' ? 'No tracked products yet — click "Not Tracked" to connect your products' : 'No products found'}
+                  </div>
                 </td>
               </tr>
             ) : filtered.map((m, i) => (
