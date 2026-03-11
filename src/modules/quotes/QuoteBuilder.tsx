@@ -25,7 +25,7 @@ const Z = {
   muted:   '#64748b',
 }
 
-// ─── ACH details (from PDF) ───────────────────────────────────
+// ─── ACH details ─────────────────────────────────────────────
 const ACH = {
   bankName:    'Old National Bank',
   abaNumber:   '086300012',
@@ -66,7 +66,7 @@ interface Props {
   opportunityId?: string | null
   leadId?: string | null
   existingQuote?: Quote | null
-  initialView?: 'form' | 'preview'   // ← NEW: open in preview when viewing existing quote
+  initialView?: 'form' | 'preview'
   onSaved?: (quote: Quote) => void
   onCancel?: () => void
 }
@@ -100,11 +100,11 @@ function uid() {
 export function QuoteBuilder({
   customerId, customerName, customerAddress = '', customerPhone = '',
   opportunityId = null, leadId = null, existingQuote = null,
-  initialView = 'form',   // ← NEW prop with default
+  initialView = 'form',
   onSaved, onCancel,
 }: Props) {
   const { profile } = useAuth()
-  const [view, setView] = useState<'form' | 'preview'>(initialView)  // ← uses initialView
+  const [view, setView] = useState<'form' | 'preview'>(initialView)
   const [saving, setSaving] = useState(false)
   const [sending, setSending] = useState(false)
   const [accepting, setAccepting] = useState(false)
@@ -125,7 +125,7 @@ export function QuoteBuilder({
     existingQuote?.valid_until || expiryStr(30)
   )
   const [lineItems, setLineItems] = useState<DraftLineItem[]>(
-    existingQuote?.line_items?.map((li, i) => ({
+    existingQuote?.line_items?.map((li) => ({
       ...li,
       _key: uid(),
       discount_pct: 0,
@@ -179,7 +179,7 @@ export function QuoteBuilder({
       ? (product.rental_price_monthly ?? product.retail_price ?? 0)
       : (product.retail_price ?? 0)
 
-    const newItem: DraftLineItem = {
+    const productItem: DraftLineItem = {
       _key: uid(),
       product_id: product.id,
       sku: product.sku || '',
@@ -189,27 +189,30 @@ export function QuoteBuilder({
       original_unit_price: unitPrice,
       total: unitPrice,
       item_type: 'product',
-      sort_order: lineItems.length,
+      sort_order: 0,
       discount_pct: 0,
     }
-    setLineItems(prev => [...prev, newItem])
 
-    // Auto-add install fee for non-rental if product has one
-    if (commercialType !== 'rental' && product.install_fee && product.install_fee > 0) {
-      setLineItems(prev => [...prev, newItem, {
+    // ── FIX: always add install fee for ALL quote types (rental and purchase) ──
+    // Removed the `commercialType !== 'rental'` guard — install fee is one-time
+    // regardless of deal type. Also fixed double-add bug (was calling setLineItems twice).
+    if (product.install_fee && product.install_fee > 0) {
+      const installItem: DraftLineItem = {
         _key: uid(),
         product_id: product.id,
         sku: '',
         description: `Installation Fee — ${product.name}`,
         quantity: 1,
-        unit_price: product.install_fee!,
-        original_unit_price: product.install_fee!,
-        total: product.install_fee!,
+        unit_price: product.install_fee,
+        original_unit_price: product.install_fee,
+        total: product.install_fee,
         item_type: 'install_fee',
-        sort_order: prev.length + 1,
+        sort_order: 1,
         discount_pct: 0,
-      }])
-      return
+      }
+      setLineItems(prev => [...prev, productItem, installItem])
+    } else {
+      setLineItems(prev => [...prev, productItem])
     }
   }
 
@@ -271,6 +274,13 @@ export function QuoteBuilder({
   }
 
   // ─── Totals ────────────────────────────────────────────────
+  // Split recurring vs one-time for rental display
+  const recurringItems  = lineItems.filter(li => li.item_type !== 'install_fee')
+  const installFeeItems = lineItems.filter(li => li.item_type === 'install_fee')
+  const monthlySubtotal = recurringItems.reduce((s, li) => s + li.total, 0)
+  const installFeeTotal = installFeeItems.reduce((s, li) => s + li.total, 0)
+
+  // Purchase totals (all items)
   const subtotal  = lineItems.reduce((s, li) => s + li.total, 0)
   const taxAmount = parseFloat((subtotal * 0.07).toFixed(2))
   const total     = parseFloat((subtotal + taxAmount).toFixed(2))
@@ -327,9 +337,7 @@ export function QuoteBuilder({
   // ─── Send ──────────────────────────────────────────────────
   async function handleSend() {
     let qId = savedQuoteId
-    if (!qId) {
-      qId = await handleSave()
-    }
+    if (!qId) qId = await handleSave()
     if (!qId) return
 
     setSending(true)
@@ -346,26 +354,17 @@ export function QuoteBuilder({
       })
       const data = await res.json()
       if (res.ok) emailTo = data.to
-    } catch (_) {
-      // email failed — still mark sent
-    }
+    } catch (_) {}
 
     try {
       await sendQuote(qId)
-
-      const { data: updatedQuote } = await supabase
-        .from('quotes')
-        .select('*')
-        .eq('id', qId)
-        .single()
-
+      const { data: updatedQuote } = await supabase.from('quotes').select('*').eq('id', qId).single()
       if (updatedQuote) {
         setQuoteStatus(updatedQuote.status || 'sent')
         if (onSaved) onSaved(updatedQuote)
       } else {
         setQuoteStatus('sent')
       }
-
       alert(emailTo
         ? `✓ Quote emailed to ${emailTo}`
         : '✓ Quote marked as sent (verify domain at resend.com to enable email delivery)'
@@ -425,7 +424,7 @@ export function QuoteBuilder({
   // ─── Render ────────────────────────────────────────────────
   return (
     <div style={{ background: '#0f1923', minHeight: '100vh', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-      {/* ── Header ── */}
+      {/* Header */}
       <div style={{
         background: '#162232', borderBottom: '1px solid #1e3a4f',
         padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 12,
@@ -439,66 +438,42 @@ export function QuoteBuilder({
           </div>
           <div style={{ color: '#64748b', fontSize: 12 }}>{customerName}</div>
         </div>
-        {/* View toggle */}
         <div style={{ display: 'flex', background: '#0f1923', borderRadius: 8, padding: 2, gap: 2 }}>
           {(['form', 'preview'] as const).map(v => (
-            <button
-              key={v}
-              onClick={() => setView(v)}
-              style={{
-                padding: '6px 16px', borderRadius: 6, border: 'none', cursor: 'pointer',
-                fontSize: 13, fontWeight: 600, transition: 'all 0.15s',
-                background: view === v ? '#1e3a5f' : 'transparent',
-                color: view === v ? '#60a5fa' : '#64748b',
-              }}
-            >
+            <button key={v} onClick={() => setView(v)} style={{
+              padding: '6px 16px', borderRadius: 6, border: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: 600, transition: 'all 0.15s',
+              background: view === v ? '#1e3a5f' : 'transparent',
+              color: view === v ? '#60a5fa' : '#64748b',
+            }}>
               {v === 'form' ? '⚙ Build' : '👁 Preview'}
             </button>
           ))}
         </div>
-        {/* Actions */}
-        <button
-          onClick={handleDownloadPDF}
-          title="Download PDF"
-          style={{
-            padding: '8px 14px', borderRadius: 8, border: '1px solid #1e3a4f', cursor: 'pointer',
-            background: 'transparent', color: '#64748b', fontWeight: 600, fontSize: 13,
-          }}
-        >
-          ⬇ PDF
-        </button>
-        <button
-          onClick={handleSave}
-          disabled={saving || quoteStatus !== 'draft'}
-          style={{
-            padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
-            background: '#1e3a5f', color: '#60a5fa', fontWeight: 600, fontSize: 13,
-            opacity: quoteStatus !== 'draft' ? 0.4 : 1,
-          }}
-        >
+        <button onClick={handleDownloadPDF} style={{
+          padding: '8px 14px', borderRadius: 8, border: '1px solid #1e3a4f', cursor: 'pointer',
+          background: 'transparent', color: '#64748b', fontWeight: 600, fontSize: 13,
+        }}>⬇ PDF</button>
+        <button onClick={handleSave} disabled={saving || quoteStatus !== 'draft'} style={{
+          padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
+          background: '#1e3a5f', color: '#60a5fa', fontWeight: 600, fontSize: 13,
+          opacity: quoteStatus !== 'draft' ? 0.4 : 1,
+        }}>
           {saving ? 'Saving…' : 'Save Draft'}
         </button>
-        <button
-          onClick={handleSend}
-          disabled={sending || lineItems.length === 0 || quoteStatus !== 'draft'}
-          style={{
-            padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
-            background: lineItems.length === 0 || quoteStatus !== 'draft' ? '#1a2a3a' : '#0d7ea3',
-            color: lineItems.length === 0 || quoteStatus !== 'draft' ? '#334155' : '#fff',
-            fontWeight: 700, fontSize: 13,
-          }}
-        >
+        <button onClick={handleSend} disabled={sending || lineItems.length === 0 || quoteStatus !== 'draft'} style={{
+          padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
+          background: lineItems.length === 0 || quoteStatus !== 'draft' ? '#1a2a3a' : '#0d7ea3',
+          color: lineItems.length === 0 || quoteStatus !== 'draft' ? '#334155' : '#fff',
+          fontWeight: 700, fontSize: 13,
+        }}>
           {sending ? 'Sending…' : 'Send Quote'}
         </button>
         {quoteStatus === 'sent' && (
-          <button
-            onClick={handleAccept}
-            disabled={accepting}
-            style={{
-              padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
-              background: '#16a34a', color: '#fff', fontWeight: 700, fontSize: 13,
-            }}
-          >
+          <button onClick={handleAccept} disabled={accepting} style={{
+            padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
+            background: '#16a34a', color: '#fff', fontWeight: 700, fontSize: 13,
+          }}>
             {accepting ? 'Accepting…' : '✓ Accept Quote'}
           </button>
         )}
@@ -515,8 +490,8 @@ export function QuoteBuilder({
           customerName={customerName}
           customerAddress={serviceAddress}
           lineItems={lineItems}
-          subtotal={subtotal}
-          total={total}
+          monthlySubtotal={monthlySubtotal}
+          installFeeTotal={installFeeTotal}
           onClose={() => setShowAgreement(false)}
         />
       )}
@@ -542,6 +517,8 @@ export function QuoteBuilder({
             subtotal={subtotal}
             taxAmount={taxAmount}
             total={total}
+            monthlySubtotal={monthlySubtotal}
+            installFeeTotal={installFeeTotal}
           />
         : <PreviewView
             quoteNumber={savedQuoteId ? quoteNumber : 'Q-DRAFT'}
@@ -556,6 +533,8 @@ export function QuoteBuilder({
             subtotal={subtotal}
             taxAmount={taxAmount}
             total={total}
+            monthlySubtotal={monthlySubtotal}
+            installFeeTotal={installFeeTotal}
             commercialType={commercialType}
           />
       }
@@ -572,10 +551,11 @@ function FormView({
   validUntil, setValidUntil,
   lineItems, products, loadingProducts,
   onAddProduct, onAddCustom, onUpdateLine, onRemoveLine, onMoveLine,
-  subtotal, taxAmount, total,
+  subtotal, taxAmount, total, monthlySubtotal, installFeeTotal,
 }: any) {
   const [productSearch, setProductSearch] = useState('')
   const [showProductPicker, setShowProductPicker] = useState(false)
+  const isRental = commercialType === 'rental'
 
   const filtered = products.filter((p: Product) =>
     !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase())
@@ -583,15 +563,9 @@ function FormView({
   )
 
   const S = {
-    section: {
-      background: '#162232', borderRadius: 12, border: '1px solid #1e3a4f',
-      padding: 20, marginBottom: 16,
-    } as React.CSSProperties,
+    section: { background: '#162232', borderRadius: 12, border: '1px solid #1e3a4f', padding: 20, marginBottom: 16 } as React.CSSProperties,
     label: { color: '#94a3b8', fontSize: 12, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.08em', marginBottom: 6 },
-    input: {
-      background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8,
-      color: '#e2e8f0', padding: '9px 12px', width: '100%', fontSize: 13, outline: 'none',
-    } as React.CSSProperties,
+    input: { background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '9px 12px', width: '100%', fontSize: 13, outline: 'none' } as React.CSSProperties,
     th: { color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase' as const, padding: '8px 10px', textAlign: 'left' as const },
     td: { padding: '8px 6px', borderTop: '1px solid #1a2e42', verticalAlign: 'top' as const },
   }
@@ -599,52 +573,34 @@ function FormView({
   return (
     <div style={{ padding: 24, maxWidth: 920, margin: '0 auto' }}>
 
-      {/* Commercial Type */}
       <div style={S.section}>
         <div style={S.label}>Quote Type</div>
         <div style={{ display: 'flex', gap: 8 }}>
           {(['rental', 'purchase', 'financed'] as CommercialType[]).map(t => (
-            <button
-              key={t}
-              onClick={() => setCommercialType(t)}
-              style={{
-                padding: '8px 20px', borderRadius: 8, border: '2px solid',
-                cursor: 'pointer', fontWeight: 700, fontSize: 13, transition: 'all 0.15s',
-                borderColor: commercialType === t ? '#0d7ea3' : '#1e3a4f',
-                background: commercialType === t ? '#0a2a3a' : 'transparent',
-                color: commercialType === t ? '#22d3ee' : '#64748b',
-              }}
-            >
+            <button key={t} onClick={() => setCommercialType(t)} style={{
+              padding: '8px 20px', borderRadius: 8, border: '2px solid', cursor: 'pointer', fontWeight: 700, fontSize: 13,
+              borderColor: commercialType === t ? '#0d7ea3' : '#1e3a4f',
+              background: commercialType === t ? '#0a2a3a' : 'transparent',
+              color: commercialType === t ? '#22d3ee' : '#64748b',
+            }}>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Service Address */}
       <div style={S.section}>
         <div style={S.label}>Service / Installation Address</div>
-        <input
-          type="text"
-          value={serviceAddress}
-          onChange={e => setServiceAddress(e.target.value)}
-          placeholder="e.g. 123 Main St, Indianapolis, IN 46201"
-          style={{ ...S.input }}
-        />
+        <input type="text" value={serviceAddress} onChange={e => setServiceAddress(e.target.value)}
+          placeholder="e.g. 123 Main St, Indianapolis, IN 46201" style={{ ...S.input }} />
       </div>
 
-      {/* Estimation Details */}
       <div style={S.section}>
         <div style={S.label}>Estimation Details (shown on quote)</div>
-        <textarea
-          value={estimation}
-          onChange={e => setEstimation(e.target.value)}
-          rows={4}
-          style={{ ...S.input, resize: 'vertical', lineHeight: 1.6 }}
-        />
+        <textarea value={estimation} onChange={e => setEstimation(e.target.value)} rows={4}
+          style={{ ...S.input, resize: 'vertical', lineHeight: 1.6 }} />
       </div>
 
-      {/* Validity */}
       <div style={{ ...S.section, display: 'flex', gap: 16, alignItems: 'flex-end' }}>
         <div style={{ flex: 1 }}>
           <div style={S.label}>Valid Until</div>
@@ -652,44 +608,27 @@ function FormView({
         </div>
       </div>
 
-      {/* Line Items */}
       <div style={S.section}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <div style={S.label}>Line Items</div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              onClick={() => setShowProductPicker(v => !v)}
-              style={{
-                padding: '7px 14px', borderRadius: 8, border: '1px solid #0d7ea3',
-                background: showProductPicker ? '#0a2a3a' : 'transparent',
-                color: '#22d3ee', cursor: 'pointer', fontSize: 13, fontWeight: 600,
-              }}
-            >
-              + From Catalog
-            </button>
-            <button
-              onClick={onAddCustom}
-              style={{
-                padding: '7px 14px', borderRadius: 8, border: '1px solid #1e3a4f',
-                background: 'transparent', color: '#94a3b8', cursor: 'pointer', fontSize: 13,
-              }}
-            >
-              + Custom Line
-            </button>
+            <button onClick={() => setShowProductPicker(v => !v)} style={{
+              padding: '7px 14px', borderRadius: 8, border: '1px solid #0d7ea3',
+              background: showProductPicker ? '#0a2a3a' : 'transparent',
+              color: '#22d3ee', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+            }}>+ From Catalog</button>
+            <button onClick={onAddCustom} style={{
+              padding: '7px 14px', borderRadius: 8, border: '1px solid #1e3a4f',
+              background: 'transparent', color: '#94a3b8', cursor: 'pointer', fontSize: 13,
+            }}>+ Custom Line</button>
           </div>
         </div>
 
-        {/* Product picker */}
         {showProductPicker && (
           <div style={{ background: '#0f1923', borderRadius: 10, border: '1px solid #1e3a4f', marginBottom: 12, overflow: 'hidden' }}>
             <div style={{ padding: '10px 12px', borderBottom: '1px solid #1e3a4f' }}>
-              <input
-                placeholder="Search products…"
-                value={productSearch}
-                onChange={e => setProductSearch(e.target.value)}
-                style={{ ...S.input, padding: '7px 10px' }}
-                autoFocus
-              />
+              <input placeholder="Search products…" value={productSearch} onChange={e => setProductSearch(e.target.value)}
+                style={{ ...S.input, padding: '7px 10px' }} autoFocus />
             </div>
             <div style={{ maxHeight: 260, overflowY: 'auto' }}>
               {loadingProducts
@@ -697,15 +636,9 @@ function FormView({
                 : filtered.length === 0
                   ? <div style={{ padding: 16, color: '#64748b', fontSize: 13 }}>No products found</div>
                   : filtered.map((p: Product) => (
-                    <button
-                      key={p.id}
+                    <button key={p.id}
                       onClick={() => { onAddProduct(p); setShowProductPicker(false); setProductSearch('') }}
-                      style={{
-                        display: 'flex', width: '100%', padding: '10px 14px', gap: 12,
-                        background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
-                        borderBottom: '1px solid #1a2a3a',
-                        transition: 'background 0.1s',
-                      }}
+                      style={{ display: 'flex', width: '100%', padding: '10px 14px', gap: 12, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderBottom: '1px solid #1a2a3a' }}
                       onMouseEnter={e => (e.currentTarget.style.background = '#162232')}
                       onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                     >
@@ -714,15 +647,14 @@ function FormView({
                         {p.sku && <div style={{ color: '#64748b', fontSize: 11 }}>{p.sku}</div>}
                       </div>
                       <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                        {commercialType === 'rental' && p.rental_price_monthly != null && (
-                          <div style={{ color: '#22d3ee', fontSize: 12, fontWeight: 700 }}>
-                            {fmt(p.rental_price_monthly)}/mo
-                          </div>
+                        {isRental && p.rental_price_monthly != null && (
+                          <div style={{ color: '#22d3ee', fontSize: 12, fontWeight: 700 }}>{fmt(p.rental_price_monthly)}/mo</div>
                         )}
                         {p.retail_price != null && (
-                          <div style={{ color: '#94a3b8', fontSize: 12 }}>
-                            {fmt(p.retail_price)} retail
-                          </div>
+                          <div style={{ color: '#94a3b8', fontSize: 12 }}>{fmt(p.retail_price)} retail</div>
+                        )}
+                        {p.install_fee != null && p.install_fee > 0 && (
+                          <div style={{ color: '#f59e0b', fontSize: 11 }}>+{fmt(p.install_fee)} install</div>
                         )}
                       </div>
                     </button>
@@ -732,7 +664,6 @@ function FormView({
           </div>
         )}
 
-        {/* Line items table */}
         {lineItems.length === 0
           ? <div style={{ textAlign: 'center', padding: '32px 0', color: '#334155', fontSize: 13 }}>
               No line items yet. Add from catalog or create a custom line.
@@ -763,18 +694,16 @@ function FormView({
                     </td>
                     <td style={S.td}>
                       {li.sku && <div style={{ color: '#0d7ea3', fontSize: 11, fontWeight: 700, marginBottom: 3 }}>{li.sku}</div>}
-                      <textarea
-                        value={li.description}
-                        onChange={e => onUpdateLine(li._key, 'description', e.target.value)}
-                        rows={3}
-                        style={{ ...S.input, width: '100%', resize: 'vertical', fontSize: 12, padding: '6px 8px' }}
-                      />
+                      {li.item_type === 'install_fee' && (
+                        <div style={{ color: '#f59e0b', fontSize: 10, fontWeight: 700, marginBottom: 3, textTransform: 'uppercase' }}>
+                          One-time — charged after installation
+                        </div>
+                      )}
+                      <textarea value={li.description} onChange={e => onUpdateLine(li._key, 'description', e.target.value)}
+                        rows={3} style={{ ...S.input, width: '100%', resize: 'vertical', fontSize: 12, padding: '6px 8px' }} />
                       <div style={{ marginTop: 4 }}>
-                        <select
-                          value={li.item_type}
-                          onChange={e => onUpdateLine(li._key, 'item_type', e.target.value)}
-                          style={{ ...S.input, fontSize: 11, padding: '4px 8px', width: 'auto' }}
-                        >
+                        <select value={li.item_type} onChange={e => onUpdateLine(li._key, 'item_type', e.target.value)}
+                          style={{ ...S.input, fontSize: 11, padding: '4px 8px', width: 'auto' }}>
                           {['product','install_fee','maintenance','discount','custom'].map(t => (
                             <option key={t} value={t}>{t}</option>
                           ))}
@@ -782,33 +711,26 @@ function FormView({
                       </div>
                     </td>
                     <td style={{ ...S.td, textAlign: 'center' as const }}>
-                      <input
-                        type="number" min={1} value={li.quantity}
+                      <input type="number" min={1} value={li.quantity}
                         onChange={e => onUpdateLine(li._key, 'quantity', Number(e.target.value))}
-                        style={{ ...S.input, textAlign: 'center', width: 56 }}
-                      />
+                        style={{ ...S.input, textAlign: 'center', width: 56 }} />
                     </td>
                     <td style={{ ...S.td, textAlign: 'right' as const }}>
-                      <input
-                        type="number" step="0.01" min={0} value={li.unit_price}
+                      <input type="number" step="0.01" min={0} value={li.unit_price}
                         onChange={e => onUpdateLine(li._key, 'unit_price', parseFloat(e.target.value) || 0)}
-                        style={{ ...S.input, textAlign: 'right', width: 96 }}
-                      />
+                        style={{ ...S.input, textAlign: 'right', width: 96 }} />
                     </td>
                     <td style={{ ...S.td, textAlign: 'center' as const }}>
-                      <input
-                        type="number" min={0} max={100} step={0.5} value={li.discount_pct}
+                      <input type="number" min={0} max={100} step={0.5} value={li.discount_pct}
                         onChange={e => onUpdateLine(li._key, 'discount_pct', parseFloat(e.target.value) || 0)}
-                        style={{ ...S.input, textAlign: 'center', width: 60 }}
-                      />
+                        style={{ ...S.input, textAlign: 'center', width: 60 }} />
                     </td>
                     <td style={{ ...S.td, textAlign: 'right' as const, color: '#e2e8f0', fontWeight: 700, fontSize: 13 }}>
                       {fmt(li.total)}
                     </td>
                     <td style={S.td}>
                       <button onClick={() => onRemoveLine(li._key)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', fontSize: 16, padding: 2 }}
-                        title="Remove">×</button>
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', fontSize: 16, padding: 2 }}>×</button>
                     </td>
                   </tr>
                 ))}
@@ -817,20 +739,42 @@ function FormView({
           )
         }
 
-        {/* Totals */}
         {lineItems.length > 0 && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-            <div style={{ minWidth: 240 }}>
-              {[
-                { label: 'Subtotal', val: subtotal, color: '#94a3b8' },
-                { label: 'Tax (7%)',  val: taxAmount, color: '#64748b' },
-                { label: 'Total',    val: total,     color: '#e2e8f0', bold: true },
-              ].map(row => (
-                <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: row.label === 'Total' ? '1px solid #1e3a4f' : 'none' }}>
-                  <span style={{ color: '#64748b', fontSize: 13 }}>{row.label}</span>
-                  <span style={{ color: row.color, fontSize: 13, fontWeight: row.bold ? 700 : 400 }}>{fmt(row.val)}</span>
-                </div>
-              ))}
+            <div style={{ minWidth: 280 }}>
+              {isRental ? (
+                <>
+                  <div style={{ color: '#22d3ee', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+                    Monthly Recurring
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', marginBottom: 10 }}>
+                    <span style={{ color: '#64748b', fontSize: 13 }}>Monthly subtotal</span>
+                    <span style={{ color: '#22d3ee', fontSize: 13, fontWeight: 700 }}>{fmt(monthlySubtotal)}/mo</span>
+                  </div>
+                  {installFeeTotal > 0 && (
+                    <>
+                      <div style={{ color: '#f59e0b', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6, paddingTop: 10, borderTop: '1px solid #1e3a4f' }}>
+                        One-time (after installation)
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0' }}>
+                        <span style={{ color: '#64748b', fontSize: 13 }}>Installation fee</span>
+                        <span style={{ color: '#fbbf24', fontSize: 13, fontWeight: 700 }}>{fmt(installFeeTotal)}</span>
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : (
+                [
+                  { label: 'Subtotal', val: subtotal, color: '#94a3b8' },
+                  { label: 'Tax (7%)',  val: taxAmount, color: '#64748b' },
+                  { label: 'Total',    val: total,     color: '#e2e8f0', bold: true },
+                ].map(row => (
+                  <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: row.label === 'Total' ? '1px solid #1e3a4f' : 'none' }}>
+                    <span style={{ color: '#64748b', fontSize: 13 }}>{row.label}</span>
+                    <span style={{ color: row.color, fontSize: 13, fontWeight: row.bold ? 700 : 400 }}>{fmt(row.val)}</span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}
@@ -843,35 +787,24 @@ function FormView({
 
 function PreviewView({
   quoteNumber, quoteDate, validUntil, customerName, customerAddress = '', customerPhone,
-  salesConsultant, estimation, lineItems, subtotal, taxAmount, total, commercialType,
+  salesConsultant, estimation, lineItems, subtotal, taxAmount, total,
+  monthlySubtotal, installFeeTotal, commercialType,
 }: any) {
   const isRental = commercialType === 'rental'
 
-  const previewStyle: React.CSSProperties = {
-    background: '#fff',
-    maxWidth: 860,
-    margin: '24px auto',
-    borderRadius: 4,
-    boxShadow: '0 4px 40px rgba(0,0,0,0.5)',
-    fontFamily: "'DM Sans', Arial, sans-serif",
-    color: Z.text,
-    fontSize: 13,
-  }
-
   return (
     <div style={{ padding: '0 24px 40px', overflowY: 'auto' }}>
-      <div id="zenith-quote-preview" style={previewStyle}>
-
-        {/* ── Page 1: Header + Line Items ── */}
+      <div id="zenith-quote-preview" style={{
+        background: '#fff', maxWidth: 860, margin: '24px auto', borderRadius: 4,
+        boxShadow: '0 4px 40px rgba(0,0,0,0.5)', fontFamily: "'DM Sans', Arial, sans-serif",
+        color: Z.text, fontSize: 13,
+      }}>
         <div style={{ padding: '32px 40px' }}>
 
-          {/* Header row */}
+          {/* Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{
-                width: 48, height: 48, borderRadius: 4,
-                background: Z.navy, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
+              <div style={{ width: 48, height: 48, borderRadius: 4, background: Z.navy, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <span style={{ color: Z.teal, fontWeight: 900, fontSize: 18 }}>ZE</span>
               </div>
               <div>
@@ -881,13 +814,11 @@ function PreviewView({
             </div>
             <div style={{ textAlign: 'right', fontSize: 12, color: Z.muted, lineHeight: 1.7 }}>
               <div style={{ fontWeight: 600, color: Z.text }}>{COMPANY.name}</div>
-              <div>{COMPANY.address}</div>
-              <div>{COMPANY.city}</div>
-              <div>{COMPANY.country}</div>
+              <div>{COMPANY.address}</div><div>{COMPANY.city}</div><div>{COMPANY.country}</div>
             </div>
           </div>
 
-          {/* Bill To / Installation Address */}
+          {/* Bill To / Install */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 28 }}>
             <div>
               <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 6 }}>BILL TO:</div>
@@ -910,9 +841,7 @@ function PreviewView({
 
           {/* Quote title */}
           <div style={{ marginBottom: 20 }}>
-            <h1 style={{ fontSize: 28, fontWeight: 900, color: Z.navy, margin: '0 0 14px' }}>
-              QUOTATION # {quoteNumber}
-            </h1>
+            <h1 style={{ fontSize: 28, fontWeight: 900, color: Z.navy, margin: '0 0 14px' }}>QUOTATION # {quoteNumber}</h1>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
               {[
                 { label: 'QUOTATION DATE',   val: fmtDate(quoteDate) },
@@ -927,7 +856,6 @@ function PreviewView({
             </div>
           </div>
 
-          {/* Estimation Details */}
           {estimation && (
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>ESTIMATION DETAILS</div>
@@ -935,15 +863,12 @@ function PreviewView({
             </div>
           )}
 
-          {/* Line items table */}
+          {/* Line items */}
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
             <thead>
               <tr style={{ borderBottom: '2px solid ' + Z.navy }}>
                 {['Code', 'Name and Description', 'Qty', 'Unit Price', 'Discount', 'Total'].map((h, i) => (
-                  <th key={h} style={{
-                    padding: '8px 8px', fontSize: 12, fontWeight: 700, color: Z.navy,
-                    textAlign: i >= 2 ? 'right' : 'left',
-                  }}>{h}</th>
+                  <th key={h} style={{ padding: '8px 8px', fontSize: 12, fontWeight: 700, color: Z.navy, textAlign: i >= 2 ? 'right' : 'left' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -951,22 +876,27 @@ function PreviewView({
               {lineItems.map((li: DraftLineItem) => {
                 const discAmt = li.discount_pct > 0 ? parseFloat((li.unit_price * li.discount_pct / 100).toFixed(2)) : 0
                 const lines = li.description.split('\n')
-                const mainDesc = lines[0]
-                const subDesc = lines.slice(1).join('\n')
+                const isInstallFee = li.item_type === 'install_fee'
                 return (
-                  <tr key={li._key} style={{ borderBottom: '1px solid ' + Z.border }}>
+                  <tr key={li._key} style={{ borderBottom: '1px solid ' + Z.border, background: isInstallFee ? '#fffbf0' : 'transparent' }}>
                     <td style={{ padding: '10px 8px', fontSize: 11, color: Z.muted, verticalAlign: 'top', whiteSpace: 'nowrap' }}>{li.sku || ''}</td>
                     <td style={{ padding: '10px 8px', verticalAlign: 'top', maxWidth: 340 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>{mainDesc}</div>
-                      {subDesc && (
+                      {isInstallFee && (
+                        <div style={{ fontSize: 10, fontWeight: 700, color: '#b45309', marginBottom: 2, textTransform: 'uppercase' }}>
+                          One-time · Charged after installation
+                        </div>
+                      )}
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{lines[0]}</div>
+                      {lines.slice(1).join('\n') && (
                         <div style={{ fontSize: 11, color: Z.muted, marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-                          {subDesc}
+                          {lines.slice(1).join('\n')}
                         </div>
                       )}
                     </td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top' }}>{li.quantity}.0</td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top' }}>
-                      $ {li.unit_price.toFixed(2)}{isRental && li.item_type === 'product' ? <span style={{fontSize:10,color:Z.teal,fontWeight:700}}>/mo</span> : ''}
+                      $ {li.unit_price.toFixed(2)}
+                      {isRental && li.item_type === 'product' && <span style={{ fontSize: 10, color: Z.teal, fontWeight: 700 }}>/mo</span>}
                     </td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top', color: Z.muted }}>
                       {discAmt > 0 ? `$ ${discAmt.toFixed(2)}` : '—'}
@@ -982,20 +912,34 @@ function PreviewView({
 
           {/* Totals */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 28 }}>
-            <div style={{ minWidth: 220 }}>
-              {[
-                { label: 'Subtotal', val: subtotal },
-                { label: 'Taxes',    val: taxAmount },
-              ].map(r => (
-                <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13 }}>
-                  <span style={{ color: Z.muted }}>{r.label}</span>
-                  <span>$ {r.val.toFixed(2)}</span>
-                </div>
-              ))}
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '2px solid ' + Z.navy, fontSize: 14, fontWeight: 900 }}>
-                <span>{isRental ? 'Monthly Total' : 'Total'}</span>
-                <span>$ {total.toFixed(2)}{isRental ? <span style={{fontSize:11,fontWeight:400,color:Z.teal}}> /mo</span> : ''}</span>
-              </div>
+            <div style={{ minWidth: 280 }}>
+              {isRental ? (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '2px solid ' + Z.navy, fontSize: 14, fontWeight: 900 }}>
+                    <span>Monthly Total</span>
+                    <span>$ {monthlySubtotal.toFixed(2)} <span style={{ fontSize: 11, fontWeight: 400, color: Z.teal }}>/mo</span></span>
+                  </div>
+                  {installFeeTotal > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px dashed #d4a843', marginTop: 4, fontSize: 13, fontWeight: 700, color: '#b45309' }}>
+                      <span>Installation Fee <span style={{ fontSize: 10, fontWeight: 400, color: Z.muted }}>(one-time, after install)</span></span>
+                      <span>$ {installFeeTotal.toFixed(2)}</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {[{ label: 'Subtotal', val: subtotal }, { label: 'Taxes', val: taxAmount }].map(r => (
+                    <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13 }}>
+                      <span style={{ color: Z.muted }}>{r.label}</span>
+                      <span>$ {r.val.toFixed(2)}</span>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '2px solid ' + Z.navy, fontSize: 14, fontWeight: 900 }}>
+                    <span>Total</span>
+                    <span>$ {total.toFixed(2)}</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -1010,30 +954,28 @@ function PreviewView({
             </div>
           </div>
 
-          {/* Rental-only callout */}
           {isRental && (
-            <div style={{
-              background: '#f0f8ff', border: '1px solid #b3d9ed', borderRadius: 6,
-              padding: '12px 16px', marginBottom: 20, fontSize: 12,
-            }}>
+            <div style={{ background: '#f0f8ff', border: '1px solid #b3d9ed', borderRadius: 6, padding: '12px 16px', marginBottom: 20, fontSize: 12 }}>
               <strong>Rental Agreement:</strong> Accepting this quote initiates a 36-month Residential Equipment Rental Agreement.
               Monthly payments of the rental amount apply. Equipment remains property of Zenith Pure Solutions LLC.
               50% of payments made apply toward buyout at any time.
+              {installFeeTotal > 0 && (
+                <div style={{ marginTop: 6, color: '#b45309', fontWeight: 600 }}>
+                  Installation fee of ${installFeeTotal.toFixed(2)} is a one-time charge collected after installation is complete.
+                </div>
+              )}
             </div>
           )}
 
-          {/* ACH / Payment Details */}
+          {/* ACH */}
           <div style={{ borderTop: '1px solid ' + Z.border, paddingTop: 20, marginBottom: 20 }}>
             <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>DIRECT TRANSFER / ACH DETAILS</div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <tbody>
                 {[
-                  ['Bank Name',        ACH.bankName],
-                  ['ACH ABA Number',   ACH.abaNumber],
-                  ['Account Number',   ACH.accountNum],
-                  ['Account Name',     ACH.accountName],
-                  ['Email',            ACH.email],
-                  ['Phone Number',     ACH.phone],
+                  ['Bank Name', ACH.bankName], ['ACH ABA Number', ACH.abaNumber],
+                  ['Account Number', ACH.accountNum], ['Account Name', ACH.accountName],
+                  ['Email', ACH.email], ['Phone Number', ACH.phone],
                 ].map(([k, v]) => (
                   <tr key={k}>
                     <td style={{ border: '1px solid ' + Z.border, padding: '7px 12px', fontWeight: 600, width: '40%', background: Z.light }}>{k}:</td>
@@ -1047,31 +989,22 @@ function PreviewView({
             </div>
           </div>
 
-          {/* Signature line */}
+          {/* Signature */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40, paddingTop: 8 }}>
-            <div>
-              <div style={{ borderBottom: '1px solid ' + Z.text, marginBottom: 4, height: 36 }}></div>
-              <div style={{ fontSize: 12, fontWeight: 600 }}>Sign here</div>
-            </div>
-            <div>
-              <div style={{ borderBottom: '1px solid ' + Z.text, marginBottom: 4, height: 36 }}></div>
-              <div style={{ fontSize: 12, fontWeight: 600 }}>Date</div>
-            </div>
+            {['Sign here', 'Date'].map(label => (
+              <div key={label}>
+                <div style={{ borderBottom: '1px solid ' + Z.text, marginBottom: 4, height: 36 }}></div>
+                <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+              </div>
+            ))}
           </div>
 
         </div>
 
-        {/* ── Footer ── */}
-        <div style={{
-          borderTop: '1px solid ' + Z.border, padding: '12px 40px',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        }}>
-          <div style={{ fontSize: 11, color: Z.muted, fontStyle: 'italic' }}>
-            Engineered for purity. Installed with care. Backed by Zenith Pure Solutions.
-          </div>
+        <div style={{ borderTop: '1px solid ' + Z.border, padding: '12px 40px', display: 'flex', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 11, color: Z.muted, fontStyle: 'italic' }}>Engineered for purity. Installed with care. Backed by Zenith Pure Solutions.</div>
           <div style={{ fontSize: 11, color: Z.muted }}>Page 1 / 1</div>
         </div>
-
       </div>
     </div>
   )
@@ -1079,12 +1012,10 @@ function PreviewView({
 
 // ─── Rental Agreement Modal ───────────────────────────────────
 
-function RentalAgreementModal({ quoteNumber, customerName, customerAddress, lineItems, subtotal, total, onClose }: any) {
+function RentalAgreementModal({ quoteNumber, customerName, customerAddress, lineItems, monthlySubtotal, installFeeTotal, onClose }: any) {
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-  const mainProduct = lineItems.find((li: any) => li.item_type === 'product') || lineItems[0]
-  const monthlyAmount = lineItems
-    .filter((li: any) => li.item_type !== 'discount')
-    .reduce((s: number, li: any) => s + li.total, 0)
+  // Only show recurring items in equipment schedule (not install_fee)
+  const recurringItems = lineItems.filter((li: any) => li.item_type !== 'install_fee')
 
   function downloadAgreement() {
     if (typeof html2pdf === 'undefined') {
@@ -1110,43 +1041,22 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
   }
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
-      zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-      overflowY: 'auto', padding: '24px 16px',
-    }}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '24px 16px' }}>
       <div style={{ background: '#162232', borderRadius: 12, width: '100%', maxWidth: 800, boxShadow: '0 20px 60px rgba(0,0,0,0.7)' }}>
-        {/* Modal header */}
         <div style={{ padding: '20px 28px', borderBottom: '1px solid #1e3a4f', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 18 }}>Rental Agreement Generated</div>
-            <div style={{ color: '#64748b', fontSize: 13, marginTop: 2 }}>
-              Auto-generated from accepted quote {quoteNumber}
-            </div>
+            <div style={{ color: '#64748b', fontSize: 13, marginTop: 2 }}>Auto-generated from accepted quote {quoteNumber}</div>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={downloadAgreement} style={{
-              padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
-              background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 13,
-            }}>
-              ⬇ Download PDF
-            </button>
-            <button onClick={onClose} style={{
-              padding: '8px 18px', borderRadius: 8, border: '1px solid #334155', cursor: 'pointer',
-              background: 'transparent', color: '#94a3b8', fontWeight: 600, fontSize: 13,
-            }}>
-              Close
-            </button>
+            <button onClick={downloadAgreement} style={{ padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 13 }}>⬇ Download PDF</button>
+            <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #334155', cursor: 'pointer', background: 'transparent', color: '#94a3b8', fontWeight: 600, fontSize: 13 }}>Close</button>
           </div>
         </div>
 
-        {/* Agreement content */}
         <div style={{ padding: 28, overflowY: 'auto', maxHeight: '75vh' }}>
-          <div id="zenith-agreement-content" style={{
-            background: '#fff', color: '#1a2a3a', fontFamily: "'DM Sans', Arial, sans-serif",
-            fontSize: 12, lineHeight: 1.6, padding: '40px 48px', borderRadius: 4,
-          }}>
-            {/* Header */}
+          <div id="zenith-agreement-content" style={{ background: '#fff', color: '#1a2a3a', fontFamily: "'DM Sans', Arial, sans-serif", fontSize: 12, lineHeight: 1.6, padding: '40px 48px', borderRadius: 4 }}>
+
             <div style={{ textAlign: 'center', marginBottom: 28, borderBottom: '2px solid #0c1e35', paddingBottom: 20 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 8 }}>
                 <div style={{ width: 40, height: 40, background: '#0c1e35', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1160,12 +1070,9 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
               <div style={{ fontWeight: 800, fontSize: 18, color: '#0c1e35', letterSpacing: 1, marginTop: 12 }}>
                 RESIDENTIAL EQUIPMENT RENTAL AGREEMENT
               </div>
-              <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-                Generated: {today} • Ref: {quoteNumber}
-              </div>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>Generated: {today} • Ref: {quoteNumber}</div>
             </div>
 
-            {/* Parties */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 20 }}>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 11, textTransform: 'uppercase' as const, color: '#64748b', marginBottom: 6 }}>Company (Lessor)</div>
@@ -1181,7 +1088,6 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
               </div>
             </div>
 
-            {/* Equipment */}
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontWeight: 700, fontSize: 13, color: '#0c1e35', borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 10 }}>
                 APPENDIX A — EQUIPMENT SCHEDULE
@@ -1189,13 +1095,13 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
               <table style={{ width: '100%', borderCollapse: 'collapse' as const }}>
                 <thead>
                   <tr style={{ background: '#f0f4f8' }}>
-                    {['Description','Monthly Rate','Term'].map(h => (
+                    {['Description', 'Monthly Rate', 'Term'].map(h => (
                       <th key={h} style={{ border: '1px solid #e2e8f0', padding: '8px 12px', textAlign: 'left' as const, fontSize: 11, fontWeight: 700 }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {lineItems.map((li: any, i: number) => (
+                  {recurringItems.map((li: any, i: number) => (
                     <tr key={i}>
                       <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px' }}>{li.description}</td>
                       <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px' }}>${li.total.toFixed(2)}/mo</td>
@@ -1204,22 +1110,32 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
                   ))}
                   <tr style={{ fontWeight: 700, background: '#f8fafc' }}>
                     <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px' }}>Total Monthly Payment</td>
-                    <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px', color: '#0c1e35' }}>${monthlyAmount.toFixed(2)}/mo</td>
+                    <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px', color: '#0c1e35' }}>${monthlySubtotal.toFixed(2)}/mo</td>
                     <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px' }}></td>
                   </tr>
+                  {installFeeTotal > 0 && (
+                    <tr style={{ background: '#fffbf0' }}>
+                      <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px', color: '#b45309', fontWeight: 600 }}>
+                        Installation Fee <span style={{ fontSize: 10, fontWeight: 400 }}>(one-time — charged after installation is complete)</span>
+                      </td>
+                      <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px', color: '#b45309', fontWeight: 700 }}>${installFeeTotal.toFixed(2)}</td>
+                      <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px', fontSize: 11, color: '#64748b' }}>One-time</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
 
-            {/* Key Terms */}
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontWeight: 700, fontSize: 13, color: '#0c1e35', borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 10 }}>
                 KEY TERMS & CONDITIONS
               </div>
               {[
                 ['Initial Term', '36 months from installation date. Automatically renews month-to-month after initial term.'],
-                ['Monthly Payment', `$${monthlyAmount.toFixed(2)}/month, due on the same day each month. Autopay via ACH or card on file.`],
-                ['Setup / Installation Fee', '$300.00 (credited 100% toward equipment buyout).'],
+                ['Monthly Payment', `$${monthlySubtotal.toFixed(2)}/month, due on the same day each month. Autopay via ACH or card on file.`],
+                ['Installation Fee', installFeeTotal > 0
+                  ? `$${installFeeTotal.toFixed(2)} one-time fee, charged after installation is complete. Credited 100% toward equipment buyout.`
+                  : 'Included.'],
                 ['Buyout Option', 'Current Retail Price minus 50% of payments made minus installation fee. Exercisable at any time after month 6.'],
                 ['Late Fee', '1.75% per month (21% APR) on balances past due. NSF fee: $25.00.'],
                 ['Annual Price Increase', 'Up to CPI-U + 3% annually, with 30-day written notice.'],
@@ -1235,18 +1151,12 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
               ))}
             </div>
 
-            {/* ACH */}
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontWeight: 700, fontSize: 13, color: '#0c1e35', borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 10 }}>
                 PAYMENT — ACH DETAILS
               </div>
               <table style={{ width: '100%', borderCollapse: 'collapse' as const, maxWidth: 400 }}>
-                {[
-                  ['Bank Name', 'Old National Bank'],
-                  ['ABA / Routing', '086300012'],
-                  ['Account Number', '0127726846'],
-                  ['Account Name', 'ZENITH PURE SOLUTIONS LLC'],
-                ].map(([k, v]) => (
+                {[['Bank Name','Old National Bank'],['ABA / Routing','086300012'],['Account Number','0127726846'],['Account Name','ZENITH PURE SOLUTIONS LLC']].map(([k,v]) => (
                   <tr key={k}>
                     <td style={{ border: '1px solid #e2e8f0', padding: '7px 12px', fontWeight: 600, background: '#f0f4f8', width: '40%' }}>{k}:</td>
                     <td style={{ border: '1px solid #e2e8f0', padding: '7px 12px' }}>{v}</td>
@@ -1255,7 +1165,6 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
               </table>
             </div>
 
-            {/* Signatures */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40, marginTop: 32 }}>
               {[
                 ['Customer Signature', customerName, 'Date'],
