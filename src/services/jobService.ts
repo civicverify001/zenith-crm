@@ -48,7 +48,6 @@ export async function createInstallJobFromLead(
   actor: ActorInfo
 ): Promise<Job> {
   // ── Validation ──
-  if (!lead.signed_at) throw new Error('Lead must have a signed agreement')
   if (!lead.full_name) throw new Error('Lead must have a name')
   if (!lead.phone) throw new Error('Lead must have a phone number')
 
