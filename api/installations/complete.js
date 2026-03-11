@@ -120,7 +120,7 @@ module.exports = async function handler(req, res) {
           const laborEnd = new Date();
           laborEnd.setFullYear(laborEnd.getFullYear() + 1);
 
-          await supabase.from('warranty_records').insert({
+          const _wr = try { await supabase.from('warranty_records').insert({
             installed_system_id: installedSystemId,
             customer_id: customerId,
             warranty_status: 'valid',
@@ -128,7 +128,7 @@ module.exports = async function handler(req, res) {
             parts_end_date: warrantyEnd.toISOString().split('T')[0],
             labor_duration_years: 1,
             labor_end_date: laborEnd.toISOString().split('T')[0],
-          }).catch(e => console.error('[BEST-EFFORT] warranty_records:', e.message));
+          }); } catch(e) { console.error('[BEST-EFFORT] warranty_records:', e.message); }
         }
       } else {
         console.error('[installed_systems insert error]', sysError?.message);
@@ -155,19 +155,21 @@ module.exports = async function handler(req, res) {
             .maybeSingle();
 
           if (!existing) {
-            await supabase.from('document_links').insert({
-              document_id: doc.id,
-              entity_type: 'customer',
-              entity_id: customerId,
-              relationship: doc.status === 'signed' ? 'signed_agreement' : 'reference',
-            }).catch(e => console.error('[BEST-EFFORT] document_links:', e.message));
+            try {
+              await supabase.from('document_links').insert({
+                document_id: doc.id,
+                entity_type: 'customer',
+                entity_id: customerId,
+                relationship: doc.status === 'signed' ? 'signed_agreement' : 'reference',
+              });
+            } catch(e) { console.error('[BEST-EFFORT] document_links:', e.message); }
           }
         }
       }
     }
 
     // ── 8. Log activity ───────────────────────────────────────────────
-    await supabase.from('job_activity_log').insert({
+    try { await supabase.from('job_activity_log').insert({
       job_id,
       event_type: 'job_completed',
       title: 'Job marked complete',
@@ -178,7 +180,7 @@ module.exports = async function handler(req, res) {
         customer_id: customerId,
       },
       actor_id: completed_by || job_id,
-    }).catch(e => console.error('[BEST-EFFORT] activity log:', e.message));
+    }); } catch(e) { console.error('[BEST-EFFORT] activity log:', e.message); }
 
     // ── 9. Skip charge if no customer or no fee ───────────────────────
     if (!customerId || installFee <= 0) {
