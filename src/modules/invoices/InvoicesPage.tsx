@@ -18,15 +18,31 @@ const fmt = (n: number) =>
 const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
 
+// ── Colorful tab config ───────────────────────────────────────
+const FILTER_TABS: {
+  key: InvoiceStatus | 'all'
+  label: string
+  icon: string
+  color: string
+  bg: string
+  border: string
+}[] = [
+  { key: 'all',     label: 'All',     icon: '◈', color: '#e2e8f0', bg: 'rgba(226,232,240,0.1)',  border: 'rgba(226,232,240,0.2)' },
+  { key: 'draft',   label: 'Draft',   icon: '✎', color: '#94a3b8', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.25)' },
+  { key: 'sent',    label: 'Sent',    icon: '→', color: '#60a5fa', bg: 'rgba(96,165,250,0.1)',  border: 'rgba(96,165,250,0.25)' },
+  { key: 'paid',    label: 'Paid',    icon: '✓', color: '#4ade80', bg: 'rgba(74,222,128,0.1)',  border: 'rgba(74,222,128,0.25)' },
+  { key: 'overdue', label: 'Overdue', icon: '⚠', color: '#f87171', bg: 'rgba(248,113,113,0.1)', border: 'rgba(248,113,113,0.25)' },
+  { key: 'partial', label: 'Partial', icon: '◑', color: '#fbbf24', bg: 'rgba(251,191,36,0.1)',  border: 'rgba(251,191,36,0.25)' },
+  { key: 'void',    label: 'Void',    icon: '○', color: '#71717a', bg: 'rgba(113,113,122,0.1)', border: 'rgba(113,113,122,0.25)' },
+]
+
 function Badge({ status }: { status: InvoiceStatus }) {
   const color = STATUS_COLORS[status]
   return (
-    <span
-      style={{
-        display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 20,
-        fontSize: 11, fontWeight: 700, color, background: color + '22', border: `1px solid ${color}40`,
-      }}
-    >
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 20,
+      fontSize: 11, fontWeight: 700, color, background: color + '22', border: `1px solid ${color}40`,
+    }}>
       {STATUS_LABELS[status]}
     </span>
   )
@@ -89,7 +105,6 @@ function InvoiceDrawer({ invoice, onClose, onRefresh }: { invoice: Invoice; onCl
     <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex' }}>
       <div style={{ flex: 1, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }} onClick={onClose} />
       <div style={{ width: '100%', maxWidth: 480, background: '#162232', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
-        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid #1e3a4f', background: '#0f1923' }}>
           <div>
             <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Invoice</div>
@@ -100,22 +115,17 @@ function InvoiceDrawer({ invoice, onClose, onRefresh }: { invoice: Invoice; onCl
             <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 22, lineHeight: 1 }}>×</button>
           </div>
         </div>
-
-        {/* Body */}
         <div style={{ flex: 1, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Bill To */}
           <div style={{ background: '#0f1923', borderRadius: 10, padding: 16, border: '1px solid #1e3a4f' }}>
             <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Bill To</div>
             <div style={{ fontWeight: 700, color: '#e2e8f0', fontSize: 15 }}>{invoice.customer_name || '—'}</div>
             {invoice.customer_email && <div style={{ fontSize: 13, color: '#94a3b8' }}>{invoice.customer_email}</div>}
             {invoice.customer_phone && <div style={{ fontSize: 13, color: '#94a3b8' }}>{invoice.customer_phone}</div>}
-            <button
-              onClick={() => { onClose(); navigate(`/customers/${invoice.customer_id}`) }}
-              style={{ background: 'none', border: 'none', color: '#22d3ee', cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: 0, marginTop: 6 }}
-            >View Customer →</button>
+            <button onClick={() => { onClose(); navigate(`/customers/${invoice.customer_id}`) }}
+              style={{ background: 'none', border: 'none', color: '#22d3ee', cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: 0, marginTop: 6 }}>
+              View Customer →
+            </button>
           </div>
-
-          {/* Amount cards */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
             {[
               { label: 'Total', value: fmt(invoice.total), color: '#e2e8f0' },
@@ -128,8 +138,6 @@ function InvoiceDrawer({ invoice, onClose, onRefresh }: { invoice: Invoice; onCl
               </div>
             ))}
           </div>
-
-          {/* Progress */}
           {invoice.total > 0 && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748b', marginBottom: 4 }}>
@@ -140,8 +148,6 @@ function InvoiceDrawer({ invoice, onClose, onRefresh }: { invoice: Invoice; onCl
               </div>
             </div>
           )}
-
-          {/* Dates */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             {[['Created', fmtDate(invoice.created_at)], ['Due', fmtDate(invoice.due_date)], ['Sent', invoice.sent_at ? fmtDate(invoice.sent_at) : '—'], ['Paid', invoice.paid_at ? fmtDate(invoice.paid_at) : '—']].map(([l, v]) => (
               <div key={l as string}>
@@ -150,8 +156,6 @@ function InvoiceDrawer({ invoice, onClose, onRefresh }: { invoice: Invoice; onCl
               </div>
             ))}
           </div>
-
-          {/* Line Items */}
           {invoice.line_items_snapshot.length > 0 && (
             <div>
               <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Line Items</div>
@@ -192,19 +196,14 @@ function InvoiceDrawer({ invoice, onClose, onRefresh }: { invoice: Invoice; onCl
               </div>
             </div>
           )}
-
-          {/* Notes */}
           {invoice.notes && (
             <div style={{ background: '#1a2a3a', borderRadius: 10, padding: 14, border: '1px solid #1e3a4f' }}>
               <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600, marginBottom: 4 }}>Notes</div>
               <div style={{ fontSize: 13, color: '#e2e8f0' }}>{invoice.notes}</div>
             </div>
           )}
-
           {emailMsg && <div style={{ fontSize: 13, fontWeight: 600, color: emailMsg.startsWith('✓') ? '#4ade80' : '#f87171' }}>{emailMsg}</div>}
         </div>
-
-        {/* Actions */}
         {invoice.status !== 'void' && (
           <div style={{ padding: 20, borderTop: '1px solid #1e3a4f', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {isAdmin && invoice.status === 'draft' && (
@@ -220,8 +219,6 @@ function InvoiceDrawer({ invoice, onClose, onRefresh }: { invoice: Invoice; onCl
           </div>
         )}
       </div>
-
-      {/* Pay Modal */}
       {payModal && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)' }} onClick={() => setPayModal(false)} />
@@ -299,8 +296,6 @@ function CreateInvoiceModal({ onClose, onCreated }: { onClose: () => void; onCre
       <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)' }} onClick={onClose} />
       <div style={{ position: 'relative', background: '#162232', borderRadius: 14, border: '1px solid #1e3a4f', width: '100%', maxWidth: 440, padding: 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ fontWeight: 800, fontSize: 20, color: '#e2e8f0' }}>New Invoice</div>
-
-        {/* Mode toggle */}
         <div style={{ display: 'flex', gap: 4, background: '#0f1923', borderRadius: 8, padding: 3 }}>
           {(['from_quote', 'manual'] as const).map(v => (
             <button key={v} onClick={() => setMode(v)} style={{
@@ -314,8 +309,6 @@ function CreateInvoiceModal({ onClose, onCreated }: { onClose: () => void; onCre
             </button>
           ))}
         </div>
-
-        {/* Customer */}
         <div>
           <label style={{ display: 'block', fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4 }}>Customer *</label>
           <select value={selectedCustomer} onChange={e => setSelectedCustomer(e.target.value)} style={selectStyle}>
@@ -323,7 +316,6 @@ function CreateInvoiceModal({ onClose, onCreated }: { onClose: () => void; onCre
             {customers.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
           </select>
         </div>
-
         {mode === 'from_quote' ? (
           <div>
             <label style={{ display: 'block', fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4 }}>Accepted Quote *</label>
@@ -359,7 +351,6 @@ function CreateInvoiceModal({ onClose, onCreated }: { onClose: () => void; onCre
             </div>
           </div>
         )}
-
         <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
           <button onClick={onClose} style={{ flex: 1, padding: '11px 0', borderRadius: 8, border: '1px solid #1e3a4f', background: 'transparent', color: '#94a3b8', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Cancel</button>
           <button onClick={handleSubmit} disabled={busy} style={{ flex: 1, padding: '11px 0', borderRadius: 8, border: 'none', background: '#0d7ea3', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 13, opacity: busy ? 0.5 : 1 }}>
@@ -385,7 +376,6 @@ export function InvoicesPage() {
     try { await refreshOverdueInvoices(); setInvoices(await fetchInvoices()) }
     catch (e) { console.error(e) } finally { setLoading(false) }
   }
-
   useEffect(() => { load() }, [])
 
   const filtered = invoices.filter(inv => {
@@ -398,96 +388,108 @@ export function InvoicesPage() {
   const overdueCount = invoices.filter(i => i.status === 'overdue').length
   const now = new Date().toISOString().slice(0, 7)
   const paidMtd = invoices.filter(i => i.status === 'paid' && i.paid_at?.startsWith(now)).reduce((a, i) => a + i.amount_paid, 0)
-
-  const FILTERS: [string, InvoiceStatus | 'all'][] = [
-    ['All', 'all'], ['Draft', 'draft'], ['Sent', 'sent'], ['Paid', 'paid'], ['Overdue', 'overdue'], ['Partial', 'partial'], ['Void', 'void'],
-  ]
-
-  const S = {
-    page: { background: '#0f1923', minHeight: '100vh', color: '#e2e8f0' } as React.CSSProperties,
-    header: {
-      background: '#162232', borderBottom: '1px solid #1e3a4f',
-      padding: '20px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    } as React.CSSProperties,
-    statCard: {
-      background: '#162232', border: '1px solid #1e3a4f', borderRadius: 10, padding: '14px 18px', flex: 1, minWidth: 0,
-    } as React.CSSProperties,
-  }
+  const countFor = (key: InvoiceStatus | 'all') => key === 'all' ? invoices.length : invoices.filter(i => i.status === key).length
 
   return (
-    <div style={S.page}>
-      {/* Header */}
-      <div style={S.header}>
-        <div>
-          <div style={{ fontWeight: 800, fontSize: 20, color: '#e2e8f0' }}>Invoices</div>
-          <div style={{ color: '#64748b', fontSize: 13 }}>Track billing, payments, and outstanding balances</div>
+    <div style={{ background: '#0f1923', minHeight: '100vh', color: '#e2e8f0', display: 'flex', flexDirection: 'column' }}>
+
+      {/* ── Top bar ── */}
+      <div style={{
+        background: '#162232', borderBottom: '1px solid #1e3a4f',
+        padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: 20, color: '#e2e8f0', lineHeight: 1.2 }}>Invoices</div>
+          <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>Track billing, payments, and outstanding balances</div>
         </div>
+        <input
+          placeholder="Search customer or invoice #…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{
+            background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8,
+            color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none',
+            width: 240, flexShrink: 0,
+          }}
+        />
         <button
           onClick={() => setShowCreate(true)}
-          style={{ padding: '10px 22px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 14 }}
+          style={{ padding: '10px 22px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 14, flexShrink: 0, whiteSpace: 'nowrap' }}
         >
           + New Invoice
         </button>
       </div>
 
-      <div style={{ padding: 24 }}>
-        {/* Stats row */}
-        <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
-          {[
-            { label: 'Outstanding', val: fmt(outstanding), color: '#60a5fa', sub: `${invoices.filter(i => ['sent', 'partial', 'overdue'].includes(i.status)).length} invoices` },
-            { label: 'Overdue', val: String(overdueCount), color: overdueCount > 0 ? '#f87171' : '#94a3b8', sub: 'need attention' },
-            { label: 'Paid This Month', val: fmt(paidMtd), color: '#4ade80', sub: 'collected MTD' },
-          ].map(s => (
-            <div key={s.label} style={S.statCard}>
-              <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{s.label}</div>
-              <div style={{ color: s.color, fontWeight: 800, fontSize: 22, marginTop: 4 }}>{s.val}</div>
-              <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>{s.sub}</div>
-            </div>
-          ))}
-        </div>
+      {/* ── Colorful filter tabs ── */}
+      <div style={{
+        background: '#0c1a26', borderBottom: '1px solid #1e3a4f',
+        padding: '12px 24px', display: 'flex', gap: 8, flexShrink: 0,
+      }}>
+        {FILTER_TABS.map(f => {
+          const count = countFor(f.key)
+          const isActive = filter === f.key
+          return (
+            <button
+              key={f.key}
+              onClick={() => setFilter(f.key)}
+              style={{
+                flex: 1,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: '11px 8px', borderRadius: 10,
+                border: `1px solid ${isActive ? f.color + '60' : f.border}`,
+                background: isActive ? f.bg : 'rgba(255,255,255,0.02)',
+                color: isActive ? f.color : '#475569',
+                cursor: 'pointer', fontSize: 13, fontWeight: isActive ? 700 : 500,
+                transition: 'all 0.12s',
+                boxShadow: isActive ? `0 0 14px ${f.color}20` : 'none',
+              }}
+              onMouseEnter={e => { if (!isActive) { e.currentTarget.style.background = f.bg; e.currentTarget.style.color = f.color } }}
+              onMouseLeave={e => { if (!isActive) { e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; e.currentTarget.style.color = '#475569' } }}
+            >
+              <span style={{ fontSize: 14 }}>{f.icon}</span>
+              <span>{f.label}</span>
+              {count > 0 && (
+                <span style={{
+                  background: isActive ? f.color + '30' : 'rgba(255,255,255,0.06)',
+                  color: isActive ? f.color : '#64748b',
+                  borderRadius: 20, padding: '1px 7px', fontSize: 11, fontWeight: 700,
+                }}>
+                  {count}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
 
-        {/* Search + filters */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-          <input
-            placeholder="Search customer or invoice #…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{
-              background: '#162232', border: '1px solid #1e3a4f', borderRadius: 8,
-              color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none', minWidth: 240,
-            }}
-          />
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {FILTERS.map(([label, val]) => (
-              <button
-                key={val}
-                onClick={() => setFilter(val)}
-                style={{
-                  padding: '6px 14px', borderRadius: 20, cursor: 'pointer', fontSize: 12, fontWeight: 600, transition: 'all 0.12s',
-                  border: `1px solid ${filter === val ? '#0d7ea3' : '#1e3a4f'}`,
-                  background: filter === val ? '#0a2a3a' : 'transparent',
-                  color: filter === val ? '#22d3ee' : '#64748b',
-                }}
-              >
-                {label}{val !== 'all' && <span style={{ marginLeft: 4, opacity: 0.6 }}>({invoices.filter(i => i.status === val).length})</span>}
-              </button>
-            ))}
+      {/* ── Stats strip ── */}
+      <div style={{
+        display: 'flex', gap: 12, padding: '14px 24px',
+        borderBottom: '1px solid #1e3a4f', background: '#0f1923',
+        flexShrink: 0, overflowX: 'auto',
+      }}>
+        {[
+          { label: 'Outstanding', val: fmt(outstanding), color: '#60a5fa', sub: `${invoices.filter(i => ['sent','partial','overdue'].includes(i.status)).length} invoices` },
+          { label: 'Overdue',     val: String(overdueCount), color: overdueCount > 0 ? '#f87171' : '#94a3b8', sub: 'need attention' },
+          { label: 'Paid MTD',    val: fmt(paidMtd), color: '#4ade80', sub: 'collected this month' },
+        ].map(s => (
+          <div key={s.label} style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 10, padding: '10px 18px', flexShrink: 0, minWidth: 130 }}>
+            <div style={{ color: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{s.label}</div>
+            <div style={{ color: s.color, fontWeight: 800, fontSize: 20, marginTop: 3 }}>{s.val}</div>
+            <div style={{ color: '#475569', fontSize: 11, marginTop: 2 }}>{s.sub}</div>
           </div>
-        </div>
+        ))}
+      </div>
 
-        {/* Table */}
+      {/* ── Table ── */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
         {loading ? (
           <div style={{ textAlign: 'center', padding: 60, color: '#64748b' }}>Loading invoices…</div>
         ) : filtered.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 60 }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>📄</div>
             <div style={{ color: '#64748b', fontSize: 15 }}>No invoices found</div>
-            <button
-              onClick={() => setShowCreate(true)}
-              style={{ marginTop: 16, padding: '10px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700 }}
-            >
-              Create one →
-            </button>
+            <button onClick={() => setShowCreate(true)} style={{ marginTop: 16, padding: '10px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700 }}>Create one →</button>
           </div>
         ) : (
           <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12, overflow: 'hidden' }}>
@@ -495,20 +497,14 @@ export function InvoicesPage() {
               <thead>
                 <tr style={{ background: '#0f1923', borderBottom: '1px solid #1e3a4f' }}>
                   {['Invoice #', 'Customer', 'Status', 'Total', 'Balance Due', 'Due Date', 'Created'].map((h, i) => (
-                    <th key={h} style={{
-                      padding: '10px 14px', fontSize: 11, fontWeight: 700, color: '#64748b',
-                      textTransform: 'uppercase', letterSpacing: '0.08em',
-                      textAlign: i >= 3 ? 'right' : 'left',
-                    }}>{h}</th>
+                    <th key={h} style={{ padding: '10px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em', textAlign: i >= 3 ? 'right' : 'left' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {filtered.map(inv => (
-                  <tr
-                    key={inv.id}
-                    onClick={() => setSelected(inv)}
-                    style={{ borderBottom: '1px solid #1a2a3a', transition: 'background 0.1s', cursor: 'pointer' }}
+                  <tr key={inv.id} onClick={() => setSelected(inv)}
+                    style={{ borderBottom: '1px solid #1a2a3a', cursor: 'pointer', transition: 'background 0.1s' }}
                     onMouseEnter={e => (e.currentTarget.style.background = '#1a2e42')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                   >
