@@ -42,6 +42,19 @@ const CATEGORY_COLORS: Record<string, { bg: string; text: string; border: string
 
 const DEFAULT_CAT_COLOR = { bg: 'rgba(148,163,184,0.15)', text: '#cbd5e1', border: 'rgba(148,163,184,0.3)' };
 
+// Tab config for category filter pills — matches QuotesPage pattern
+const CATEGORY_TABS: {
+  key: string; label: string; icon: string;
+  color: string; bg: string; border: string;
+}[] = [
+  { key: 'all',                label: 'All',              icon: '◈', color: '#e2e8f0', bg: 'rgba(226,232,240,0.1)',  border: 'rgba(226,232,240,0.2)' },
+  { key: 'ro',                 label: 'RO',               icon: '💧', color: '#22d3ee', bg: 'rgba(6,182,212,0.1)',   border: 'rgba(6,182,212,0.25)' },
+  { key: 'softener',           label: 'Softener',         icon: '🔵', color: '#60a5fa', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)' },
+  { key: 'whole_home_filter',  label: 'Whole Home',       icon: '🏠', color: '#a78bfa', bg: 'rgba(167,139,250,0.1)', border: 'rgba(167,139,250,0.25)' },
+  { key: 'replacement_filter', label: 'Filters',          icon: '🔄', color: '#fbbf24', bg: 'rgba(251,191,36,0.1)',  border: 'rgba(251,191,36,0.25)' },
+  { key: 'accessory',          label: 'Accessory',        icon: '🔧', color: '#94a3b8', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.25)' },
+];
+
 function fmt(val: number | null): string {
   if (val === null || val === undefined) return '—';
   return `$${Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -132,21 +145,6 @@ export default function ProductCatalog() {
           </div>
         </div>
 
-        {/* Category filter */}
-        <select
-          value={filterCategory}
-          onChange={e => setFilterCategory(e.target.value)}
-          style={{
-            background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8,
-            color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none', flexShrink: 0,
-          }}
-        >
-          <option value="all">All Categories</option>
-          {Object.entries(CATEGORY_LABELS).map(([key, label]) => (
-            <option key={key} value={key}>{label}</option>
-          ))}
-        </select>
-
         {/* Show inactive toggle */}
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexShrink: 0 }}>
           <input
@@ -167,6 +165,78 @@ export default function ProductCatalog() {
         >
           + Add Product
         </button>
+      </div>
+
+      {/* ── Category filter tabs — matches QuotesPage pill style ── */}
+      <div style={{
+        background: '#0c1a26',
+        borderBottom: '1px solid #1e3a4f',
+        padding: '12px 24px',
+        display: 'flex',
+        gap: 8,
+        flexShrink: 0,
+        overflowX: 'auto',
+      }}>
+        {CATEGORY_TABS.map(f => {
+          const count = f.key === 'all' ? products.length : products.filter(p => p.category === f.key).length;
+          const isActive = filterCategory === f.key;
+          return (
+            <button
+              key={f.key}
+              onClick={() => setFilterCategory(f.key)}
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 7,
+                padding: '11px 8px',
+                borderRadius: 10,
+                border: `1px solid ${isActive ? f.color + '60' : f.border}`,
+                background: isActive ? f.bg : 'rgba(255,255,255,0.02)',
+                color: isActive ? f.color : '#475569',
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: isActive ? 700 : 500,
+                transition: 'all 0.12s',
+                boxShadow: isActive ? `0 0 14px ${f.color}20` : 'none',
+                whiteSpace: 'nowrap',
+                minWidth: 0,
+              }}
+              onMouseEnter={e => {
+                if (!isActive) {
+                  e.currentTarget.style.background = f.bg;
+                  e.currentTarget.style.color = f.color;
+                  e.currentTarget.style.borderColor = f.border;
+                }
+              }}
+              onMouseLeave={e => {
+                if (!isActive) {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.color = '#475569';
+                  e.currentTarget.style.borderColor = f.border;
+                }
+              }}
+            >
+              <span style={{ fontSize: 14 }}>{f.icon}</span>
+              <span>{f.label}</span>
+              {count > 0 && (
+                <span style={{
+                  background: isActive ? f.color + '30' : 'rgba(255,255,255,0.06)',
+                  color: isActive ? f.color : '#64748b',
+                  borderRadius: 20,
+                  padding: '1px 7px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  minWidth: 20,
+                  textAlign: 'center' as const,
+                }}>
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* ── Stats strip ── */}
