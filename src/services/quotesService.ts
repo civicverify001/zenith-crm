@@ -173,7 +173,10 @@ export async function createQuote(params: {
   // For rental: monthly_amount = sum of product line items (pre-tax)
   // For purchase: monthly_amount = null
   const isRental = params.commercial_type === 'rental'
-  const monthly_amount = isRental ? subtotal : null
+  // monthly_amount = recurring lines only (excludes install_fee which is one-time)
+  const monthly_amount = isRental
+    ? params.line_items.filter(li => li.item_type !== 'install_fee').reduce((s, li) => s + li.total, 0)
+    : null
 
   // install_fee = sum of install_fee line items (applies to purchase)
   const install_fee = params.line_items
@@ -255,7 +258,9 @@ export async function updateQuote(quoteId: string, params: {
     const total = parseFloat((subtotal + tax_amount).toFixed(2))
 
     const isRental = params.commercial_type === 'rental'
-    const monthly_amount = isRental ? subtotal : null
+    const monthly_amount = isRental
+      ? params.line_items.filter(li => li.item_type !== 'install_fee').reduce((s, li) => s + li.total, 0)
+      : null
     const install_fee = params.line_items
       .filter(li => li.item_type === 'install_fee')
       .reduce((s, li) => s + li.total, 0) || null
