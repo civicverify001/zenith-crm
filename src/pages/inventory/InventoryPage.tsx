@@ -228,24 +228,33 @@ function StockLevelsTab() {
     if (!adjustModal?.inv || !adjustQty) return
     setSaving(true)
     const delta = parseInt(adjustQty)
-    if (delta > 0) {
-      await supabase.rpc('rpc_receive_stock', {
-        p_product_id:     adjustModal.inv.product_id,
-        p_qty:            delta,
-        p_reference_type: 'adjustment',
-        p_reference_id:   null,
-        p_notes:          adjustNote || 'Manual adjustment',
-      })
-    } else if (delta < 0) {
-      const remove = Math.abs(delta)
+
+    if (delta !== 0) {
+      const inv = adjustModal.inv
+      const newOnHand    = Math.max(0, inv.quantity_on_hand    + delta)
+      const newAvailable = Math.max(0, inv.quantity_available  + delta)
+
+      // Update inventory row directly
       await supabase
         .from('inventory')
         .update({
-          quantity_on_hand:   Math.max(0, adjustModal.inv.quantity_on_hand - remove),
-          quantity_available: Math.max(0, adjustModal.inv.quantity_available - remove),
+          quantity_on_hand:   newOnHand,
+          quantity_available: newAvailable,
         })
-        .eq('id', adjustModal.inv.id)
+        .eq('id', inv.id)
+
+      // Write transaction log manually
+      await supabase
+        .from('inventory_transactions')
+        .insert({
+          product_id:       inv.product_id,
+          transaction_type: 'adjustment',
+          qty:              delta,
+          reference_type:   'adjustment',
+          notes:            adjustNote || 'Manual adjustment',
+        })
     }
+
     setAdjustModal(null)
     setAdjustQty('')
     setAdjustNote('')
@@ -931,12 +940,27 @@ function ReceivingTab() {
     for (const item of (selected.purchase_order_items || [])) {
       const qty = parseInt(receiveQtys[item.id] || '0')
       if (qty > 0) {
-        await supabase.rpc('rpc_receive_stock', {
-          p_product_id:     item.product_id,
-          p_qty:            qty,
-          p_reference_type: 'purchase_order',
-          p_reference_id:   selected.id,
-          p_notes:          `Received against ${selected.po_number}`,
+        // Get current inventory row
+        const { data: inv } = await supabase
+          .from('inventory')
+          .select('id, quantity_on_hand, quantity_available')
+          .eq('product_id', item.product_id)
+          .single()
+
+        if (inv) {
+          await supabase.from('inventory').update({
+            quantity_on_hand:   inv.quantity_on_hand + qty,
+            quantity_available: inv.quantity_available + qty,
+          }).eq('id', inv.id)
+        }
+
+        await supabase.from('inventory_transactions').insert({
+          product_id:       item.product_id,
+          transaction_type: 'receive',
+          qty:              qty,
+          reference_type:   'purchase_order',
+          reference_id:     selected.id,
+          notes:            `Received against ${selected.po_number}`,
         })
       }
     }
