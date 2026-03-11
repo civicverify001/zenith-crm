@@ -1,99 +1,52 @@
-// src/hooks/usePermissions.ts
-// Reads allowed pages from user metadata.
-// If user has a custom 'pages' array set by admin, use it.
-// If not set, fall back to role defaults (all pages for that role).
+import { useAuth } from './useAuth'
 
-import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+type Resource = string
+type Action = string
 
-// All pages in the system grouped by category
-export const ALL_PAGES = [
-  // Core
-  { path: '/dashboard',    label: 'Dashboard',     group: 'Core',       icon: '🏠' },
-  // Sales
-  { path: '/leads',        label: 'Pipeline',       group: 'Sales',      icon: '🔵' },
-  { path: '/quotes',       label: 'Quotes',         group: 'Sales',      icon: '📋' },
-  { path: '/invoices',     label: 'Invoices',       group: 'Sales',      icon: '📄' },
-  { path: '/follow-ups',   label: 'Follow-Ups',     group: 'Sales',      icon: '❤️' },
-  // Operations
-  { path: '/customers',    label: 'Customers',      group: 'Operations', icon: '👥' },
-  { path: '/dispatch',     label: 'Dispatch',       group: 'Operations', icon: '📌' },
-  { path: '/installations',label: 'Installations',  group: 'Operations', icon: '🔧' },
-  { path: '/products',     label: 'Products',       group: 'Operations', icon: '⭐' },
-  { path: '/services',     label: 'Contracts',      group: 'Operations', icon: '📜' },
-  // Finance
-  { path: '/accounting',   label: 'Accounting',     group: 'Finance',    icon: '💰' },
-  { path: '/inventory',    label: 'Inventory',      group: 'Finance',    icon: '📦' },
-  // Analytics
-  { path: '/marketing',    label: 'Marketing ROI',  group: 'Analytics',  icon: '📊' },
-  { path: '/reports',      label: 'Reports',        group: 'Analytics',  icon: '📈' },
-  // Admin
-  { path: '/admin/terms',  label: 'Terms & Docs',   group: 'Admin',      icon: '📝' },
-  { path: '/admin/users',  label: 'Team & Users',   group: 'Admin',      icon: '👤' },
-]
-
-// Default pages per role (used when admin hasn't set custom pages)
-export const ROLE_DEFAULT_PAGES: Record<string, string[]> = {
-  admin: ALL_PAGES.map(p => p.path), // admin sees everything
-  frontdesk: [
-    '/dashboard', '/leads', '/follow-ups', '/customers',
-    '/invoices', '/dispatch',
-  ],
-  salesrep: [
-    '/dashboard', '/leads', '/quotes', '/follow-ups', '/customers',
-  ],
-  technician: [
-    '/dashboard', '/installations', '/dispatch',
-  ],
+// Action-level permission matrix
+const PERMISSIONS: Record<string, Record<string, string[]>> = {
+  admin:      { leads: ['assign_rep', 'create', 'delete', 'edit', 'view'], quotes: ['edit', 'delete', 'view'], customers: ['edit', 'delete', 'view'], dispatch: ['edit', 'view'], installations: ['edit', 'view'] },
+  frontdesk:  { leads: ['assign_rep', 'create', 'edit', 'view'], quotes: ['view'], customers: ['edit', 'view'], dispatch: ['view'], installations: ['view'] },
+  salesrep:   { leads: ['assign_rep', 'create', 'edit', 'view'], quotes: ['edit', 'view'], customers: ['view'], dispatch: [], installations: [] },
+  technician: { leads: [], quotes: [], customers: ['view'], dispatch: ['view'], installations: ['edit', 'view'] },
 }
 
-export function usePermissions() {
-  const [allowedPages, setAllowedPages] = useState<string[] | null>(null)
-  const [role, setRole] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+// Page-level defaults per role
+export const ALL_PAGES = [
+  '/dashboard', '/leads', '/customers', '/quotes', '/invoices',
+  '/dispatch', '/installations', '/follow-ups', '/products',
+  '/contracts', '/terms', '/service', '/reports', '/inventory',
+  '/admin/users', '/settings',
+]
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) { setLoading(false); return }
+export const ROLE_DEFAULT_PAGES: Record<string, string[]> = {
+  admin:      ALL_PAGES,
+  frontdesk:  ['/dashboard', '/leads', '/customers', '/follow-ups', '/quotes', '/invoices'],
+  salesrep:   ['/dashboard', '/leads', '/customers', '/quotes', '/follow-ups'],
+  technician: ['/dashboard', '/dispatch', '/installations'],
+}
 
-      const userRole = user.user_metadata?.role || user.app_metadata?.role || null
-      setRole(userRole)
+export function usePermissions(roleOverride?: string | null) {
+  const { user, profile } = useAuth()
 
-      // If admin has set custom pages, use those
-      const customPages: string[] | undefined = user.user_metadata?.pages
-      if (customPages && Array.isArray(customPages)) {
-        setAllowedPages(customPages)
-      } else {
-        // Fall back to role defaults
-        setAllowedPages(ROLE_DEFAULT_PAGES[userRole || ''] || ['/dashboard'])
-      }
-      setLoading(false)
-    })
+  const role = roleOverride ?? profile?.role ?? (user?.user_metadata?.role as string | undefined) ?? null
 
-    // Re-check on auth state change (after sign-in)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session?.user) { setAllowedPages(null); setLoading(false); return }
-      const user = session.user
-      const userRole = user.user_metadata?.role || user.app_metadata?.role || null
-      setRole(userRole)
-      const customPages: string[] | undefined = user.user_metadata?.pages
-      if (customPages && Array.isArray(customPages)) {
-        setAllowedPages(customPages)
-      } else {
-        setAllowedPages(ROLE_DEFAULT_PAGES[userRole || ''] || ['/dashboard'])
-      }
-      setLoading(false)
-    })
+  // Page-level: custom pages from user metadata, or role defaults
+  const customPages: string[] | null = user?.user_metadata?.pages ?? null
+  const allowedPages: string[] | null = customPages ?? (role ? (ROLE_DEFAULT_PAGES[role] ?? null) : null)
 
-    return () => subscription.unsubscribe()
-  }, [])
-
-  const canAccess = (path: string) => {
-    if (!allowedPages) return false
-    // Admin always has full access regardless
+  function canAccess(path: string): boolean {
     if (role === 'admin') return true
-    return allowedPages.includes(path)
+    if (!allowedPages) return false
+    return allowedPages.some(p => path.startsWith(p))
   }
 
-  return { allowedPages, role, loading, canAccess }
+  // Action-level (same as usePermission)
+  function can(resource: Resource, action: Action): boolean {
+    if (!role) return false
+    if (role === 'admin') return true
+    return PERMISSIONS[role]?.[resource]?.includes(action) ?? false
+  }
+
+  return { canAccess, allowedPages, can, role }
 }
