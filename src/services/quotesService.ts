@@ -26,8 +26,10 @@ export interface Quote {
   quote_number: string
   customer_id: string
   opportunity_id?: string | null
+  lead_id?: string | null
   created_by?: string | null
   commercial_type: CommercialType
+  quote_type?: string | null
   status: QuoteStatus
   term_set_id?: string | null
   line_items_snapshot?: any
@@ -35,6 +37,8 @@ export interface Quote {
   subtotal: number
   tax_amount: number
   total: number
+  monthly_amount?: number | null
+  install_fee?: number | null
   notes?: string | null
   valid_until?: string | null
   sent_at?: string | null
@@ -42,6 +46,7 @@ export interface Quote {
   accepted_at?: string | null
   declined_at?: string | null
   accept_token?: string | null
+  public_token?: string | null
   decline_reason?: string | null
   created_at: string
   updated_at: string
@@ -118,12 +123,19 @@ export async function fetchQuotes(customerId?: string): Promise<Quote[]> {
 export async function fetchQuote(quoteId: string): Promise<Quote | null> {
   const { data, error } = await supabase
     .from('quotes')
-    .select(`*, quote_line_items ( * )`)
+    .select('*')
     .eq('id', quoteId)
     .single()
 
   if (error) throw error
   if (!data) return null
+
+  // Read from document_line_items (authoritative table)
+  const { data: lineItems } = await supabase
+    .from('document_line_items')
+    .select('*')
+    .eq('document_id', quoteId)
+    .order('sort_order')
 
   const { data: cust } = await supabase
     .from('customers')
@@ -136,8 +148,8 @@ export async function fetchQuote(quoteId: string): Promise<Quote | null> {
     customer_name:    cust?.full_name || '',
     customer_email:   cust?.email || '',
     customer_phone:   cust?.phone || '',
-    customer_address: cust?.service_address || '',
-    line_items: (data.quote_line_items || []).sort((a: any, b: any) => a.sort_order - b.sort_order),
+    customer_address: '',
+    line_items: (lineItems || []).sort((a: any, b: any) => a.sort_order - b.sort_order),
   }
 }
 
@@ -147,6 +159,7 @@ export async function createQuote(params: {
   customer_id: string
   commercial_type: CommercialType
   opportunity_id?: string | null
+  lead_id?: string | null           // ← FIX: now accepted and saved
   created_by?: string | null
   notes?: string
   valid_until?: string
@@ -156,19 +169,34 @@ export async function createQuote(params: {
   const tax_amount = parseFloat((subtotal * 0.07).toFixed(2))
   const total = parseFloat((subtotal + tax_amount).toFixed(2))
 
+  // ── FIX: derive rental-specific fields ──────────────────────
+  // For rental: monthly_amount = sum of product line items (pre-tax)
+  // For purchase: monthly_amount = null
+  const isRental = params.commercial_type === 'rental'
+  const monthly_amount = isRental ? subtotal : null
+
+  // install_fee = sum of install_fee line items (applies to purchase)
+  const install_fee = params.line_items
+    .filter(li => li.item_type === 'install_fee')
+    .reduce((s, li) => s + li.total, 0) || null
+
   const { data: quote, error: qErr } = await supabase
     .from('quotes')
     .insert({
-      customer_id:     params.customer_id,
-      commercial_type: params.commercial_type,
-      opportunity_id:  params.opportunity_id || null,
-      created_by:      params.created_by || null,
-      notes:           params.notes || null,
-      valid_until:     params.valid_until || null,
+      customer_id:      params.customer_id,
+      commercial_type:  params.commercial_type,
+      quote_type:       params.commercial_type,   // ← FIX: keep in sync
+      opportunity_id:   params.opportunity_id || null,
+      lead_id:          params.lead_id || null,   // ← FIX: now saved
+      created_by:       params.created_by || null,
+      notes:            params.notes || null,
+      valid_until:      params.valid_until || null,
       subtotal,
       tax_amount,
       total,
-      status:          'draft',
+      monthly_amount,                              // ← FIX: rental price saved here
+      install_fee,
+      status: 'draft',
     })
     .select()
     .single()
@@ -176,8 +204,7 @@ export async function createQuote(params: {
   if (qErr) throw qErr
 
   if (params.line_items.length > 0) {
-    const lineItems = params.line_items.map((li, i) => ({
-      quote_id:    quote.id,
+    const mappedItems = params.line_items.map((li, i) => ({
       product_id:  li.product_id || null,
       description: li.description,
       quantity:    li.quantity,
@@ -185,10 +212,22 @@ export async function createQuote(params: {
       total:       li.total,
       item_type:   li.item_type,
       sort_order:  i,
+      sku:         li.sku || null,
     }))
 
-    const { error: liErr } = await supabase.from('quote_line_items').insert(lineItems)
-    if (liErr) throw liErr
+    // ── FIX: write to document_line_items (authoritative) ──────
+    // document_line_items uses document_id = quote.id
+    const { error: dliErr } = await supabase.from('document_line_items').insert(
+      mappedItems.map(li => ({ ...li, document_id: quote.id }))
+    )
+    if (dliErr) throw dliErr
+
+    // Also write to quote_line_items for backwards compatibility
+    const { error: liErr } = await supabase.from('quote_line_items').insert(
+      mappedItems.map(li => ({ ...li, quote_id: quote.id }))
+    )
+    // Non-fatal if quote_line_items doesn't exist or fails
+    if (liErr) console.warn('quote_line_items insert failed (non-fatal):', liErr.message)
   }
 
   return quote
@@ -211,15 +250,22 @@ export async function updateQuote(quoteId: string, params: {
   if (existing?.status !== 'draft') throw new Error('Cannot edit a non-draft quote')
 
   if (params.line_items !== undefined) {
-    await supabase.from('quote_line_items').delete().eq('quote_id', quoteId)
-
     const subtotal = params.line_items.reduce((s, li) => s + li.total, 0)
     const tax_amount = parseFloat((subtotal * 0.07).toFixed(2))
     const total = parseFloat((subtotal + tax_amount).toFixed(2))
 
+    const isRental = params.commercial_type === 'rental'
+    const monthly_amount = isRental ? subtotal : null
+    const install_fee = params.line_items
+      .filter(li => li.item_type === 'install_fee')
+      .reduce((s, li) => s + li.total, 0) || null
+
+    // Delete existing line items from both tables
+    await supabase.from('document_line_items').delete().eq('document_id', quoteId)
+    await supabase.from('quote_line_items').delete().eq('quote_id', quoteId)
+
     if (params.line_items.length > 0) {
-      const lineItems = params.line_items.map((li, i) => ({
-        quote_id:    quoteId,
+      const mappedItems = params.line_items.map((li, i) => ({
         product_id:  li.product_id || null,
         description: li.description,
         quantity:    li.quantity,
@@ -227,35 +273,45 @@ export async function updateQuote(quoteId: string, params: {
         total:       li.total,
         item_type:   li.item_type,
         sort_order:  i,
+        sku:         li.sku || null,
       }))
-      await supabase.from('quote_line_items').insert(lineItems)
+
+      await supabase.from('document_line_items').insert(
+        mappedItems.map(li => ({ ...li, document_id: quoteId }))
+      )
+      await supabase.from('quote_line_items').insert(
+        mappedItems.map(li => ({ ...li, quote_id: quoteId }))
+      ).then(({ error }) => { if (error) console.warn('quote_line_items update failed (non-fatal):', error.message) })
     }
 
     await supabase
       .from('quotes')
       .update({
         commercial_type: params.commercial_type,
+        quote_type:      params.commercial_type,  // ← keep in sync
         notes:           params.notes,
         valid_until:     params.valid_until,
         subtotal,
         tax_amount,
         total,
+        monthly_amount,
+        install_fee,
       })
       .eq('id', quoteId)
   }
 }
 
-// ─── Send quote (freeze snapshot + generate accept token) ────
+// ─── Send quote (freeze snapshot + generate tokens) ──────────
 
 export async function sendQuote(quoteId: string): Promise<string> {
-  // Generate a unique accept token
   const accept_token = crypto.randomUUID()
+  const public_token = accept_token   // ← FIX: public_token = accept_token, same value
 
-  // Fetch line items to snapshot
+  // Snapshot from document_line_items (authoritative)
   const { data: lineItems } = await supabase
-    .from('quote_line_items')
+    .from('document_line_items')
     .select('*')
-    .eq('quote_id', quoteId)
+    .eq('document_id', quoteId)
     .order('sort_order')
 
   const snapshot = lineItems || []
@@ -267,13 +323,13 @@ export async function sendQuote(quoteId: string): Promise<string> {
       sent_at:             new Date().toISOString(),
       line_items_snapshot: snapshot,
       accept_token,
+      public_token,        // ← FIX: now set so /q/:token works
     })
     .eq('id', quoteId)
-    .eq('status', 'draft') // guard: only send drafts
+    .eq('status', 'draft')
 
   if (error) throw error
 
-  // Log audit
   await supabase.from('document_audit_log').insert({
     entity_type: 'quote',
     entity_id:   quoteId,
@@ -281,27 +337,25 @@ export async function sendQuote(quoteId: string): Promise<string> {
     actor_type:  'staff',
   })
 
-  // Return the token so the UI can show/copy the link
   return accept_token
 }
 
 // ─── Get public review URL ───────────────────────────────────
 
-export function getQuoteReviewUrl(accept_token: string): string {
-  const base = window.location.origin
-  return `${base}/q/${accept_token}`
+export function getQuoteReviewUrl(token: string): string {
+  return `${window.location.origin}/q/${token}`
 }
 
 // ─── Status helpers ───────────────────────────────────────────
 
 export const STATUS_LABELS: Record<QuoteStatus, string> = {
-  draft:       'Draft',
-  sent:        'Sent',
-  viewed:      'Viewed',
-  accepted:    'Accepted',
-  declined:    'Declined',
-  expired:     'Expired',
-  superseded:  'Superseded',
+  draft:      'Draft',
+  sent:       'Sent',
+  viewed:     'Viewed',
+  accepted:   'Accepted',
+  declined:   'Declined',
+  expired:    'Expired',
+  superseded: 'Superseded',
 }
 
 export const STATUS_COLORS: Record<QuoteStatus, { bg: string; text: string }> = {
