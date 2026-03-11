@@ -19,6 +19,7 @@ const NAV_ITEMS = [
   { path: '/admin/terms',   label: 'Terms & Docs',    icon: '⚖️', hex: '#8b5cf6', soon: false, roles: ['admin'] as UserRole[] },
   { path: '/accounting',    label: 'Accounting',      icon: '💰', hex: '#facc15', soon: false, roles: ['admin'] as UserRole[] },
   { path: '/inventory', label: 'Inventory', icon: '📦', hex: '#2dd4bf', soon: false, roles: ['admin'] as UserRole[] },
+  { path: '/admin/users', label: 'Team & Users', icon: '👤', hex: '#f87171', soon: false, roles: ['admin'] as UserRole[] },
   { path: '/marketing',     label: 'Marketing ROI',   icon: '📊', hex: '#fb7185', soon: true,  roles: ['admin'] as UserRole[] },
   { path: '/reports',       label: 'Reports',         icon: '📈', hex: '#38bdf8', soon: true,  roles: ['admin'] as UserRole[] },
 ]
