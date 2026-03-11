@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { usePermissions } from '../hooks/usePermissions'
 import { AppLayout } from './Layout'
 import { LoginPage } from '../modules/auth/LoginPage'
 import { LoadingScreen } from '../shared/ui/LoadingScreen'
@@ -10,7 +11,6 @@ import TermsAdminPage from '../modules/admin/TermsAdminPage'
 import PublicTermsPage from '../modules/public/PublicTermsPage'
 import InventoryPage from '../pages/inventory/InventoryPage'
 import UserManagementPage from '../modules/admin/UserManagementPage'
-
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
@@ -40,28 +40,20 @@ function ComingSoon({ name, icon, phase, phaseColor, description, features, depe
   return (
     <div className="flex items-center justify-center h-full">
       <div className="max-w-md w-full mx-auto text-center px-6">
-
-        {/* Icon */}
         <div
           className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-5 text-3xl"
           style={{ backgroundColor: `${phaseColor}15`, border: `1px solid ${phaseColor}30` }}
         >
           {icon}
         </div>
-
-        {/* Phase badge */}
         <div
           className="inline-block text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-3"
           style={{ backgroundColor: `${phaseColor}15`, color: phaseColor, border: `1px solid ${phaseColor}30` }}
         >
           {phase}
         </div>
-
-        {/* Title */}
         <h2 className="text-2xl font-bold text-white mb-2">{name}</h2>
         <p className="text-sm text-slate-400 mb-6 leading-relaxed">{description}</p>
-
-        {/* Features list */}
         <div
           className="rounded-xl p-4 text-left mb-5 space-y-2"
           style={{ backgroundColor: 'rgba(148,163,184,0.05)', border: '1px solid rgba(148,163,184,0.12)' }}
@@ -74,8 +66,6 @@ function ComingSoon({ name, icon, phase, phaseColor, description, features, depe
             </div>
           ))}
         </div>
-
-        {/* Depends on */}
         {dependsOn && (
           <div
             className="text-xs rounded-lg px-3 py-2 text-slate-500"
@@ -84,7 +74,6 @@ function ComingSoon({ name, icon, phase, phaseColor, description, features, depe
             🔗 Requires <span className="text-slate-400 font-medium">{dependsOn}</span> to be complete first
           </div>
         )}
-
       </div>
     </div>
   )
@@ -92,51 +81,6 @@ function ComingSoon({ name, icon, phase, phaseColor, description, features, depe
 
 // ─── Per-module configs ──────────────────────────────────────────
 const COMING_SOON_PAGES = {
-  accounting: {
-    name: 'Accounting',
-    icon: '💰',
-    phase: 'Phase 1 — Billing & Payments',
-    phaseColor: '#facc15',
-    description: 'Revenue summaries, receivables aging, Stripe reconciliation, and export to QuickBooks or Xero. Reads from billing — never initiates charges.',
-    features: [
-      'Payment transaction log with Stripe reconciliation',
-      'Outstanding receivables & aging buckets',
-      'Monthly recurring revenue (MRR) dashboard',
-      'Failed payment tracking & retry management',
-      'CSV / QBO export for QuickBooks or Xero',
-    ],
-    dependsOn: 'Billing & Stripe integration (Phase 1)',
-  },
-  inventory: {
-    name: 'Inventory',
-    icon: '📦',
-    phase: 'Future Phase',
-    phaseColor: '#2dd4bf',
-    description: 'Track stock levels for filters, parts, and equipment. Know what\'s on hand, what\'s low, and what needs to be ordered before jobs are scheduled.',
-    features: [
-      'Stock levels per product SKU',
-      'Low stock alerts and reorder triggers',
-      'Parts consumed per installation job',
-      'Supplier order tracking',
-      'Integration with Product Catalog',
-    ],
-    dependsOn: 'Product Catalog (live) + Shipping module (Phase 3)',
-  },
-  services: {
-    name: 'Plans & Rentals',
-    icon: '🔄',
-    phase: 'Phase 2 — Contracts & Documents',
-    phaseColor: '#818cf8',
-    description: 'Manage all active rental contracts, maintenance plans, and service agreements in one place. See renewals, billing status, and plan compliance at a glance.',
-    features: [
-      'All active rental contracts with status & billing',
-      'Maintenance plan enrollment and renewal tracking',
-      'Contract renewals due in the next 30/60/90 days',
-      'Buyout pipeline — customers close to ownership',
-      'Plan compliance by customer and system type',
-    ],
-    dependsOn: 'Contracts & Terms engine (Phase 2)',
-  },
   marketing: {
     name: 'Marketing ROI',
     icon: '📊',
@@ -191,7 +135,15 @@ export function AppRouter() {
 
 // ─── Authenticated Routes (inside AppLayout) ─────────────────────
 function AuthenticatedRoutes({ role }: { role: string | null }) {
+  const { canAccess } = usePermissions()
   const cs = COMING_SOON_PAGES
+
+  // Helper — wraps a page element with a permission check
+  // Admin always bypasses the check
+  function guard(path: string, element: React.ReactElement) {
+    if (role === 'admin') return element
+    return canAccess(path) ? element : <Navigate to="/dashboard" replace />
+  }
 
   return (
     <AppLayout>
@@ -200,30 +152,48 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
         <Route path="/dashboard" element={<DashboardPage />} />
 
         {/* Pipeline */}
-        <Route path="/leads" element={<LeadPipelinePage />} />
+        <Route path="/leads" element={guard('/leads', <LeadPipelinePage />)} />
 
         {/* Dispatch */}
         <Route path="/dispatch" element={
-          role === 'technician' ? <Navigate to="/installations" replace /> : <DispatchBoardPage />
+          role === 'technician'
+            ? <Navigate to="/installations" replace />
+            : guard('/dispatch', <DispatchBoardPage />)
         } />
 
         {/* Installations */}
-        <Route path="/installations" element={<InstallationsListPage />} />
-        <Route path="/installations/:jobId" element={<InstallationDetailPage />} />
+        <Route path="/installations" element={guard('/installations', <InstallationsListPage />)} />
+        <Route path="/installations/:jobId" element={guard('/installations', <InstallationDetailPage />)} />
         <Route path="/jobs" element={<Navigate to="/installations" replace />} />
 
         {/* Customers */}
-        <Route path="/customers" element={<CustomersListPage />} />
-        <Route path="/customers/:customerId" element={<CustomerDetailPage />} />
+        <Route path="/customers" element={guard('/customers', <CustomersListPage />)} />
+        <Route path="/customers/:customerId" element={guard('/customers', <CustomerDetailPage />)} />
 
         {/* Follow-Ups */}
-        <Route path="/follow-ups" element={<FollowUpsPage />} />
+        <Route path="/follow-ups" element={guard('/follow-ups', <FollowUpsPage />)} />
 
         {/* Products */}
-        <Route path="/products" element={<ProductCatalog />} />
+        <Route path="/products" element={guard('/products', <ProductCatalog />)} />
 
         {/* Quotes */}
-        <Route path="/quotes" element={<QuotesPage />} />
+        <Route path="/quotes" element={guard('/quotes', <QuotesPage />)} />
+
+        {/* Invoices */}
+        <Route path="/invoices" element={guard('/invoices', <InvoicesPage />)} />
+
+        {/* Contracts */}
+        <Route path="/services" element={guard('/services', <ContractsPage />)} />
+
+        {/* Accounting */}
+        <Route path="/accounting" element={guard('/accounting', <AccountingPage />)} />
+
+        {/* Inventory */}
+        <Route path="/inventory" element={guard('/inventory', <InventoryPage />)} />
+
+        {/* Analytics — coming soon */}
+        <Route path="/marketing" element={guard('/marketing', <ComingSoon {...cs.marketing} />)} />
+        <Route path="/reports"   element={guard('/reports',   <ComingSoon {...cs.reports} />)} />
 
         {/* Admin only */}
         <Route path="/admin/terms" element={
@@ -232,14 +202,6 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
         <Route path="/admin/users" element={
           role === 'admin' ? <UserManagementPage /> : <Navigate to="/dashboard" replace />
         } />
-
-        {/* Phase-aware pages */}
-        <Route path="/accounting" element={<AccountingPage />} />
-        <Route path="/invoices"   element={<InvoicesPage />} />
-        <Route path="/services"   element={<ContractsPage />} />
-        <Route path="/inventory"  element={<InventoryPage />} />
-        <Route path="/marketing"  element={<ComingSoon {...cs.marketing} />} />
-        <Route path="/reports"    element={<ComingSoon {...cs.reports} />} />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
