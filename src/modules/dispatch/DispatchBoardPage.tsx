@@ -457,6 +457,3 @@ export function DispatchBoardPage() {
     </div>
   )
 }
-
-// named re-export for Router compatibility
-export { DispatchBoardPage }
