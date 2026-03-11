@@ -41,9 +41,23 @@ function StatusBadge({ active, activeLabel, inactiveLabel }: {
   )
 }
 
-// Map agreement/product type → system type
-function systemTypeFromAgreement(agreementType: string | null, lineItems: any[]): SystemType {
-  // Try to detect from line items first (most accurate)
+// ── Primary detection: product categories from products table
+// categories = ['ro', 'softener', 'whole_home_filter', etc.]
+function systemTypeFromCategories(categories: string[]): SystemType {
+  const has = (cat: string) => categories.includes(cat)
+  const hasRO        = has('ro')
+  const hasSoftener  = has('softener')
+  const hasWholeHome = has('whole_home_filter')
+
+  if ((hasRO && hasSoftener) || (hasRO && hasWholeHome)) return 'combo_whole_home_ro'
+  if (hasRO)        return 'ro_install'
+  if (hasSoftener)  return 'softener_only'
+  if (hasWholeHome) return 'ro_install'
+  return 'softener_only'
+}
+
+// ── Fallback detection: parse free-text descriptions
+function systemTypeFromText(agreementType: string | null, lineItems: any[]): SystemType {
   if (lineItems?.length) {
     const desc = lineItems.map((li: any) =>
       (li.description || li.name || '').toLowerCase()
@@ -55,7 +69,6 @@ function systemTypeFromAgreement(agreementType: string | null, lineItems: any[])
     if (desc.includes('ro') || desc.includes('reverse osmosis')) return 'ro_install'
     if (desc.includes('softener')) return 'softener_only'
   }
-  // Fall back to agreement/quote type string
   if (agreementType) {
     const t = agreementType.toLowerCase()
     if (t.includes('combo')) return 'combo_whole_home_ro'
@@ -82,7 +95,6 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   const [submitting, setSubmitting] = useState(false)
   const [loadingAgreement, setLoadingAgreement] = useState(false)
 
-  // Form state
   const [scheduledDate, setScheduledDate] = useState(
     lead.install_preferred_date
       ? new Date(lead.install_preferred_date).toISOString().split('T')[0]
@@ -103,12 +115,29 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
 
   const jobAlreadyCreated = !!lead.job_created
 
-  // Auto-detect system type — checks agreement first, then quote, then water concern
+  function applySystemType(detected: SystemType) {
+    setSystemType(detected)
+    if (detected === 'ro_install' || detected === 'combo_whole_home_ro') {
+      setNeedsFaucetHole(true)
+    }
+  }
+
+  async function resolveProductIds(lineItems: any[]): Promise<string[]> {
+    const ids = lineItems.map((li: any) => li.product_id).filter(Boolean)
+    if (!ids.length) return []
+    const { data } = await supabase
+      .from('products')
+      .select('id, category')
+      .in('id', ids)
+    return (data || []).map((p: any) => p.category).filter(Boolean)
+  }
+
   async function loadAgreementSystemType() {
     if (agreementFetched) return
     setLoadingAgreement(true)
     try {
-      // 1. Try agreement line items + type
+
+      // ── 1. Agreement line items → product_id → category ───────
       const { data: agreement } = await supabase
         .from('agreements')
         .select('agreement_type, line_items_snapshot, commercial_type')
@@ -117,26 +146,31 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
         .limit(1)
         .maybeSingle()
 
-      if (agreement) {
-        const lineItems = agreement.line_items_snapshot
-          ? (typeof agreement.line_items_snapshot === 'string'
-            ? JSON.parse(agreement.line_items_snapshot)
-            : agreement.line_items_snapshot)
-          : []
-        const detected = systemTypeFromAgreement(
+      if (agreement?.line_items_snapshot) {
+        const lineItems = typeof agreement.line_items_snapshot === 'string'
+          ? JSON.parse(agreement.line_items_snapshot)
+          : agreement.line_items_snapshot
+
+        const categories = await resolveProductIds(lineItems)
+        if (categories.length > 0) {
+          applySystemType(systemTypeFromCategories(categories))
+          setAgreementFetched(true)
+          return
+        }
+
+        // No product_ids — text fallback on agreement
+        const textDetected = systemTypeFromText(
           agreement.agreement_type || agreement.commercial_type || null,
           lineItems
         )
-        // Use if we got a real signal (not just the default fallback with no data)
-        if (detected !== 'softener_only' || lineItems.length > 0) {
-          setSystemType(detected)
-          if (detected === 'ro_install' || detected === 'combo_whole_home_ro') setNeedsFaucetHole(true)
+        if (textDetected !== 'softener_only' || lineItems.length > 0) {
+          applySystemType(textDetected)
           setAgreementFetched(true)
           return
         }
       }
 
-      // 2. Fall back to quote line items + type
+      // ── 2. Quote line items → product_id → category ───────────
       const { data: quote } = await supabase
         .from('quotes')
         .select('line_items_snapshot, commercial_type, quote_type')
@@ -145,32 +179,38 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
         .limit(1)
         .maybeSingle()
 
-      if (quote) {
-        const lineItems = quote.line_items_snapshot
-          ? (typeof quote.line_items_snapshot === 'string'
-            ? JSON.parse(quote.line_items_snapshot)
-            : quote.line_items_snapshot)
-          : []
-        const detected = systemTypeFromAgreement(
+      if (quote?.line_items_snapshot) {
+        const lineItems = typeof quote.line_items_snapshot === 'string'
+          ? JSON.parse(quote.line_items_snapshot)
+          : quote.line_items_snapshot
+
+        const categories = await resolveProductIds(lineItems)
+        if (categories.length > 0) {
+          applySystemType(systemTypeFromCategories(categories))
+          setAgreementFetched(true)
+          return
+        }
+
+        // No product_ids — text fallback on quote
+        const textDetected = systemTypeFromText(
           quote.commercial_type || quote.quote_type || null,
           lineItems
         )
-        setSystemType(detected)
-        if (detected === 'ro_install' || detected === 'combo_whole_home_ro') setNeedsFaucetHole(true)
+        applySystemType(textDetected)
         setAgreementFetched(true)
         return
       }
 
-      // 3. Last resort — water concern on lead
+      // ── 3. Last resort — water concern on lead ─────────────────
       if (lead.water_concern) {
         const wc = lead.water_concern.toLowerCase()
-        if (wc.includes('ro') || wc.includes('reverse')) setSystemType('ro_install')
-        else if (wc.includes('combo')) setSystemType('combo_whole_home_ro')
+        if (wc.includes('ro') || wc.includes('reverse')) applySystemType('ro_install')
+        else if (wc.includes('combo')) applySystemType('combo_whole_home_ro')
       }
 
       setAgreementFetched(true)
     } catch (e) {
-      console.error('Could not fetch system type:', e)
+      console.error('Could not detect system type:', e)
     } finally {
       setLoadingAgreement(false)
     }
@@ -185,7 +225,6 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     if (!user) return
     setSubmitting(true)
     try {
-      // Use the full jobService function — handles checklist + forms generation
       const newJob = await createInstallJobFromLead(
         lead,
         systemType,
@@ -194,7 +233,6 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
         { actor_id: user.id, actor_name: profile?.full_name }
       )
 
-      // Assign tech if selected (separate step)
       if (techId) {
         await supabase
           .from('jobs')
@@ -205,16 +243,13 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
           .eq('id', newJob.id)
       }
 
-      // Notes if provided
       if (notes) {
         await supabase.from('jobs').update({ notes }).eq('id', newJob.id)
       }
 
-      // Move lead to won
       const actor = { actor_id: user.id, actor_name: profile?.full_name }
       const updatedLead = await moveStage(lead.id, lead.stage, 'won', actor)
 
-      // Refresh boards
       queryClient.invalidateQueries({ queryKey: JOB_KEYS.board() })
       queryClient.invalidateQueries({ queryKey: LEAD_KEYS.kanban() })
       queryClient.invalidateQueries({ queryKey: LEAD_KEYS.counts })
@@ -325,18 +360,16 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
 
             {loadingAgreement && (
               <div className="text-xs text-accent animate-pulse mb-4">
-                Detecting system type from quote / agreement…
+                Detecting system type from products…
               </div>
             )}
 
             <div className="space-y-4">
-
-              {/* System type — auto-detected, can override */}
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">
                   System Type <span className="text-red-400">*</span>
                   <span className="ml-2 text-accent font-normal normal-case">
-                    auto-detected from quote / agreement
+                    auto-detected from products
                   </span>
                 </label>
                 <select
@@ -350,7 +383,6 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 </select>
               </div>
 
-              {/* RO faucet hole */}
               {(systemType === 'ro_install' || systemType === 'combo_whole_home_ro') && (
                 <div className="flex items-center gap-3">
                   <input
@@ -366,7 +398,6 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 </div>
               )}
 
-              {/* Install date */}
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">
                   Install Date
@@ -384,7 +415,6 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 />
               </div>
 
-              {/* Assign tech */}
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">
                   Assign Technician
@@ -406,7 +436,6 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 )}
               </div>
 
-              {/* Notes */}
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">
                   Notes for Tech
@@ -420,7 +449,6 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 />
               </div>
 
-              {/* Customer summary */}
               <div className="bg-surface rounded-lg p-3 text-xs text-muted space-y-1">
                 <div><span className="text-slate-400 font-semibold">Customer: </span>{lead.full_name}</div>
                 <div>
