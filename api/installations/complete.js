@@ -51,7 +51,7 @@ module.exports = async function handler(req, res) {
     if (job.lead_id) {
       const { data: quote } = await supabase
         .from('quotes')
-        .select('id, install_fee, monthly_amount, customer_name, product_id, quote_type')
+        .select('id, install_fee, monthly_amount, customer_name, product_id, quote_type, commercial_type')
         .eq('opportunity_id', job.lead_id)
         .eq('status', 'accepted')
         .order('created_at', { ascending: false })
@@ -99,8 +99,14 @@ module.exports = async function handler(req, res) {
     // ── 6. Create installed_systems record ────────────────────────────
     let installedSystemId = null;
     if (customerId) {
-      const qt = acceptedQuote?.quote_type;
-      const ownershipType = (qt === 'purchase' || (!qt && !acceptedQuote?.monthly_amount)) ? 'purchased' : 'rented';
+      // commercial_type is the AUTHORITATIVE field — same source of truth as QuoteReviewPage
+      // Never fall back to quote_type for ownership classification
+      const ct = acceptedQuote?.commercial_type;
+      const ownershipType = ct === 'rental' ? 'rented'
+        : ct === 'purchase' ? 'purchased'
+        : ct === 'finance' ? 'purchased'   // financed = customer owns it
+        : acceptedQuote?.monthly_amount > 0 ? 'rented'  // last-resort: if monthly exists, it's rental
+        : 'purchased';
       const today = new Date().toISOString().split('T')[0];
 
       const { data: sysRecord, error: sysError } = await supabase
@@ -199,15 +205,21 @@ module.exports = async function handler(req, res) {
     }); } catch(e) { console.error('[BEST-EFFORT] activity log:', e.message); }
 
     // ── 8b. Customer activity log ─────────────────────────────────────
+    // CustomerActivityTab reads: id, event_type, title, created_at, actor_name, metadata
     if (customerId) {
       try {
         await supabase.from('customer_activity_log').insert({
           customer_id: customerId,
-          event_type: 'installation_completed',
-          title: 'Installation completed',
-          description: `System installed and job marked complete`,
-          metadata: { job_id, installed_system_id: installedSystemId, install_fee: installFee },
-          created_by: completed_by || null,
+          event_type: 'system_installed',
+          title: 'System installed',
+          actor_name: completed_by ? 'Zenith Tech' : 'System',
+          metadata: {
+            job_id,
+            installed_system_id: installedSystemId,
+            install_fee: installFee,
+            ownership_type: ownershipType,
+            system_type: job.system_type || null,
+          },
         });
       } catch(e) { console.error('[BEST-EFFORT] customer_activity_log:', e.message); }
     }
