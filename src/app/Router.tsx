@@ -9,6 +9,8 @@ import { QuoteReviewPage } from '../modules/public/QuoteReviewPage'
 import TermsAdminPage from '../modules/admin/TermsAdminPage'
 import PublicTermsPage from '../modules/public/PublicTermsPage'
 import InventoryPage from '../pages/inventory/InventoryPage'
+import UserManagementPage from './pages/admin/UserManagementPage';
+
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
