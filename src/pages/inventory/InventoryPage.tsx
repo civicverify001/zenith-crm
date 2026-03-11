@@ -129,81 +129,119 @@ function StockStatusBadge({ available, reorderPoint }: { available: number; reor
   )
 }
 
+// ─── Types for merged product+inventory view ──────────────────────────────────
+
+interface Product {
+  id: string
+  name: string
+  sku: string
+  category: string
+  is_active: boolean
+  product_categories?: { name: string }
+}
+
+interface MergedRow {
+  product: Product
+  inv: InventoryRow | null
+}
+
 // ─── Tab: Stock Levels ────────────────────────────────────────────────────────
 
 function StockLevelsTab() {
-  const [rows, setRows] = useState<InventoryRow[]>([])
+  const [merged, setMerged] = useState<MergedRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeFilter, setActiveFilter] = useState<'all' | 'low' | 'short'>('all')
-  const [adjustModal, setAdjustModal] = useState<InventoryRow | null>(null)
+  const [activeFilter, setActiveFilter] = useState<'all' | 'low' | 'short' | 'untracked'>('all')
+  const [adjustModal, setAdjustModal] = useState<MergedRow | null>(null)
   const [adjustQty, setAdjustQty] = useState('')
   const [adjustNote, setAdjustNote] = useState('')
   const [saving, setSaving] = useState(false)
+  const [trackingAll, setTrackingAll] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase
+    // Load all active products
+    const { data: products } = await supabase
+      .from('products')
+      .select('id, name, sku, category, is_active, product_categories(name)')
+      .eq('is_active', true)
+      .order('name')
+
+    // Load all inventory rows
+    const { data: invRows } = await supabase
       .from('inventory')
-      .select(`
-        *,
-        products (
-          name, sku, category, vendor_sku, vendor_cost,
-          product_categories ( name ),
-          product_vendors ( name )
-        )
-      `)
-      .order('quantity_available', { ascending: true })
-    setRows(data || [])
+      .select('*, products(name, sku, category, vendor_sku, vendor_cost, product_categories(name), product_vendors(name))')
+
+    // Build lookup map: product_id → inventory row
+    const invMap: Record<string, InventoryRow> = {}
+    for (const row of (invRows || [])) {
+      invMap[row.product_id] = row
+    }
+
+    // Merge: every product gets a row, inv may be null if not yet tracked
+    const result: MergedRow[] = (products || []).map(p => ({
+      product: p as Product,
+      inv: invMap[p.id] || null,
+    }))
+
+    setMerged(result)
     setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  const shortRows = rows.filter(r => r.quantity_available <= 0)
-  const lowRows   = rows.filter(r => r.quantity_available > 0 && r.quantity_available <= r.reorder_point)
-  const okRows    = rows.filter(r => r.quantity_available > r.reorder_point)
+  // Create inventory row for a single product
+  async function startTracking(product: Product) {
+    await supabase.from('inventory').insert({
+      product_id:          product.id,
+      quantity_on_hand:    0,
+      quantity_reserved:   0,
+      quantity_available:  0,
+      quantity_on_order:   0,
+      reorder_point:       2,
+    })
+    load()
+  }
 
-  const FILTER_TABS = [
-    { id: 'all',   label: 'All Stock',    count: rows.length,      color: '#60a5fa' },
-    { id: 'low',   label: 'Low Stock',    count: lowRows.length,   color: '#fbbf24' },
-    { id: 'short', label: 'Out of Stock', count: shortRows.length, color: '#f87171' },
-  ] as const
-
-  const filtered = rows.filter(r => {
-    const q = search.toLowerCase()
-    const matchSearch = !search
-      || r.products?.name?.toLowerCase().includes(q)
-      || r.products?.sku?.toLowerCase().includes(q)
-    const matchFilter =
-      activeFilter === 'all'   ? true :
-      activeFilter === 'short' ? r.quantity_available <= 0 :
-      activeFilter === 'low'   ? r.quantity_available > 0 && r.quantity_available <= r.reorder_point
-      : true
-    return matchSearch && matchFilter
-  })
+  // Create inventory rows for ALL untracked products
+  async function trackAllProducts() {
+    setTrackingAll(true)
+    const untracked = merged.filter(m => !m.inv)
+    for (const m of untracked) {
+      await supabase.from('inventory').insert({
+        product_id:          m.product.id,
+        quantity_on_hand:    0,
+        quantity_reserved:   0,
+        quantity_available:  0,
+        quantity_on_order:   0,
+        reorder_point:       2,
+      })
+    }
+    setTrackingAll(false)
+    load()
+  }
 
   async function handleAdjust() {
-    if (!adjustModal || !adjustQty) return
+    if (!adjustModal?.inv || !adjustQty) return
     setSaving(true)
     const delta = parseInt(adjustQty)
     if (delta > 0) {
       await supabase.rpc('rpc_receive_stock', {
-        p_product_id:    adjustModal.product_id,
-        p_qty:           delta,
-        p_reference_type:'adjustment',
-        p_reference_id:  null,
-        p_notes:         adjustNote || 'Manual adjustment',
+        p_product_id:     adjustModal.inv.product_id,
+        p_qty:            delta,
+        p_reference_type: 'adjustment',
+        p_reference_id:   null,
+        p_notes:          adjustNote || 'Manual adjustment',
       })
     } else if (delta < 0) {
       const remove = Math.abs(delta)
       await supabase
         .from('inventory')
         .update({
-          quantity_on_hand:  Math.max(0, adjustModal.quantity_on_hand - remove),
-          quantity_available: Math.max(0, adjustModal.quantity_available - remove),
+          quantity_on_hand:   Math.max(0, adjustModal.inv.quantity_on_hand - remove),
+          quantity_available: Math.max(0, adjustModal.inv.quantity_available - remove),
         })
-        .eq('id', adjustModal.id)
+        .eq('id', adjustModal.inv.id)
     }
     setAdjustModal(null)
     setAdjustQty('')
@@ -212,9 +250,38 @@ function StockLevelsTab() {
     load()
   }
 
+  const tracked   = merged.filter(m => m.inv)
+  const untracked = merged.filter(m => !m.inv)
+  const shortRows = tracked.filter(m => m.inv!.quantity_available <= 0)
+  const lowRows   = tracked.filter(m => m.inv!.quantity_available > 0 && m.inv!.quantity_available <= m.inv!.reorder_point)
+
+  const FILTER_TABS = [
+    { id: 'all',       label: 'All Tracked',  count: tracked.length,    color: '#60a5fa' },
+    { id: 'low',       label: 'Low Stock',    count: lowRows.length,    color: '#fbbf24' },
+    { id: 'short',     label: 'Out of Stock', count: shortRows.length,  color: '#f87171' },
+    { id: 'untracked', label: 'Not Tracked',  count: untracked.length,  color: '#64748b' },
+  ] as const
+
+  const filtered = merged.filter(m => {
+    const q = search.toLowerCase()
+    const matchSearch = !search
+      || m.product.name.toLowerCase().includes(q)
+      || m.product.sku.toLowerCase().includes(q)
+
+    if (activeFilter === 'untracked') return matchSearch && !m.inv
+    if (!m.inv) return false // hide untracked when not on untracked tab
+
+    const matchFilter =
+      activeFilter === 'all'   ? true :
+      activeFilter === 'short' ? m.inv.quantity_available <= 0 :
+      activeFilter === 'low'   ? m.inv.quantity_available > 0 && m.inv.quantity_available <= m.inv.reorder_point
+      : true
+    return matchSearch && matchFilter
+  })
+
   return (
     <div>
-      {/* Full-width colorful filter tabs — matches QuotesPage / InvoicesPage */}
+      {/* Full-width colorful filter tabs */}
       <div
         className="grid mb-5"
         style={{ gridTemplateColumns: `repeat(${FILTER_TABS.length}, 1fr)`, gap: '3px' }}
@@ -235,24 +302,15 @@ function StockLevelsTab() {
               }}
             >
               <div>
-                <div
-                  className="text-xs font-semibold uppercase tracking-wider mb-1"
-                  style={{ color: isActive ? tab.color : '#64748b' }}
-                >
+                <div className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: isActive ? tab.color : '#64748b' }}>
                   {tab.label}
                 </div>
-                <div
-                  className="text-2xl font-bold"
-                  style={{ color: isActive ? tab.color : '#94a3b8' }}
-                >
+                <div className="text-2xl font-bold" style={{ color: isActive ? tab.color : '#94a3b8' }}>
                   {tab.count}
                 </div>
               </div>
               {isActive && (
-                <div
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: tab.color, boxShadow: `0 0 8px ${tab.color}` }}
-                />
+                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: tab.color, boxShadow: `0 0 8px ${tab.color}` }} />
               )}
             </button>
           )
@@ -262,32 +320,40 @@ function StockLevelsTab() {
       {/* Stats strip */}
       <div className="grid grid-cols-4 gap-3 mb-5">
         {[
-          { label: 'Total On Hand',     value: rows.reduce((s, r) => s + r.quantity_on_hand, 0),       color: '#60a5fa' },
-          { label: 'Reserved for Jobs', value: rows.reduce((s, r) => s + r.quantity_reserved, 0),      color: '#a78bfa' },
-          { label: 'Available to Sell', value: rows.reduce((s, r) => s + r.quantity_available, 0),     color: '#4ade80' },
-          { label: 'On Order',          value: rows.reduce((s, r) => s + (r.quantity_on_order || 0), 0), color: '#fbbf24' },
+          { label: 'Total On Hand',     value: tracked.reduce((s, m) => s + m.inv!.quantity_on_hand, 0),       color: '#60a5fa' },
+          { label: 'Reserved for Jobs', value: tracked.reduce((s, m) => s + m.inv!.quantity_reserved, 0),      color: '#a78bfa' },
+          { label: 'Available to Sell', value: tracked.reduce((s, m) => s + m.inv!.quantity_available, 0),     color: '#4ade80' },
+          { label: 'On Order',          value: tracked.reduce((s, m) => s + (m.inv!.quantity_on_order || 0), 0), color: '#fbbf24' },
         ].map(s => (
-          <div
-            key={s.label}
-            className="rounded-xl px-4 py-3"
-            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
-          >
+          <div key={s.label} className="rounded-xl px-4 py-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
             <div className="text-xl font-bold" style={{ color: s.color }}>{s.value}</div>
             <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
           </div>
         ))}
       </div>
 
-      {/* Search */}
-      <input
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        placeholder="Search product or SKU..."
-        className="w-full rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none mb-4"
-        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
-        onFocus={e => (e.target.style.borderColor = 'rgba(96,165,250,0.5)')}
-        onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.08)')}
-      />
+      {/* Search + Track All */}
+      <div className="flex gap-3 mb-4">
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search any product or SKU..."
+          className="flex-1 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none"
+          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+          onFocus={e => (e.target.style.borderColor = 'rgba(96,165,250,0.5)')}
+          onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.08)')}
+        />
+        {untracked.length > 0 && (
+          <button
+            onClick={trackAllProducts}
+            disabled={trackingAll}
+            className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white whitespace-nowrap disabled:opacity-50 transition-all"
+            style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}
+          >
+            {trackingAll ? 'Setting up...' : `Track All Products (${untracked.length})`}
+          </button>
+        )}
+      </div>
 
       {/* Table */}
       <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -318,9 +384,9 @@ function StockLevelsTab() {
                   <div className="text-slate-600 text-xs mt-1">Run the SQL seed query to populate stock rows</div>
                 </td>
               </tr>
-            ) : filtered.map((r, i) => (
+            ) : filtered.map((m, i) => (
               <tr
-                key={r.id}
+                key={m.product.id}
                 className="transition-colors"
                 style={{
                   borderBottom: '1px solid rgba(255,255,255,0.04)',
@@ -329,40 +395,50 @@ function StockLevelsTab() {
                 onMouseEnter={e => (e.currentTarget.style.background = 'rgba(96,165,250,0.04)')}
                 onMouseLeave={e => (e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)')}
               >
-                <td className="px-4 py-3 font-medium text-white">{r.products?.name}</td>
-                <td className="px-4 py-3 font-mono text-xs text-slate-400">{r.products?.sku}</td>
+                <td className="px-4 py-3 font-medium text-white">{m.product.name}</td>
+                <td className="px-4 py-3 font-mono text-xs text-slate-400">{m.product.sku}</td>
                 <td className="px-4 py-3 text-slate-400 capitalize text-xs">
-                  {r.products?.product_categories?.name || r.products?.category || '—'}
+                  {m.product.product_categories?.name || m.product.category || '—'}
                 </td>
-                <td className="px-4 py-3 text-right text-white font-medium">{r.quantity_on_hand}</td>
-                <td className="px-4 py-3 text-right" style={{ color: '#a78bfa' }}>{r.quantity_reserved}</td>
-                <td className="px-4 py-3 text-right font-bold text-white">{r.quantity_available}</td>
-                <td className="px-4 py-3 text-right text-slate-500">{r.reorder_point}</td>
-                <td className="px-4 py-3 text-center">
-                  <StockStatusBadge
-                    available={r.quantity_available}
-                    reorderPoint={r.reorder_point}
-                  />
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <button
-                    onClick={() => setAdjustModal(r)}
-                    className="text-xs px-3 py-1.5 rounded-lg font-medium transition-all"
-                    style={{ background: 'rgba(96,165,250,0.1)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.2)' }}
-                    onMouseEnter={e => {
-                      const b = e.currentTarget
-                      b.style.background = 'rgba(96,165,250,0.2)'
-                      b.style.borderColor = 'rgba(96,165,250,0.4)'
-                    }}
-                    onMouseLeave={e => {
-                      const b = e.currentTarget
-                      b.style.background = 'rgba(96,165,250,0.1)'
-                      b.style.borderColor = 'rgba(96,165,250,0.2)'
-                    }}
-                  >
-                    Adjust
-                  </button>
-                </td>
+                {m.inv ? (
+                  <>
+                    <td className="px-4 py-3 text-right text-white font-medium">{m.inv.quantity_on_hand}</td>
+                    <td className="px-4 py-3 text-right" style={{ color: '#a78bfa' }}>{m.inv.quantity_reserved}</td>
+                    <td className="px-4 py-3 text-right font-bold text-white">{m.inv.quantity_available}</td>
+                    <td className="px-4 py-3 text-right text-slate-500">{m.inv.reorder_point}</td>
+                    <td className="px-4 py-3 text-center">
+                      <StockStatusBadge available={m.inv.quantity_available} reorderPoint={m.inv.reorder_point} />
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => setAdjustModal(m)}
+                        className="text-xs px-3 py-1.5 rounded-lg font-medium"
+                        style={{ background: 'rgba(96,165,250,0.1)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.2)' }}
+                      >
+                        Adjust
+                      </button>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="px-4 py-3 text-right text-slate-600">—</td>
+                    <td className="px-4 py-3 text-right text-slate-600">—</td>
+                    <td className="px-4 py-3 text-right text-slate-600">—</td>
+                    <td className="px-4 py-3 text-right text-slate-600">—</td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="text-xs text-slate-600 italic">not tracked</span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => startTracking(m.product)}
+                        className="text-xs px-3 py-1.5 rounded-lg font-medium"
+                        style={{ background: 'rgba(74,222,128,0.1)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.2)' }}
+                      >
+                        + Track
+                      </button>
+                    </td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
@@ -370,7 +446,7 @@ function StockLevelsTab() {
       </div>
 
       {/* Adjust Modal */}
-      {adjustModal && (
+      {adjustModal && adjustModal.inv && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
@@ -381,9 +457,9 @@ function StockLevelsTab() {
           >
             <h3 className="text-white font-semibold text-lg mb-1">Adjust Stock</h3>
             <p className="text-slate-400 text-sm mb-4">
-              {adjustModal.products?.name}
+              {adjustModal.product.name}
               <span className="mx-2 text-slate-600">·</span>
-              Available: <span className="text-white font-bold">{adjustModal.quantity_available}</span>
+              Available: <span className="text-white font-bold">{adjustModal.inv.quantity_available}</span>
             </p>
             <label className="block text-xs text-slate-500 mb-1.5">
               Quantity change <span className="text-slate-600">(+ to add · - to remove)</span>
