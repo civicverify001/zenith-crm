@@ -130,12 +130,22 @@ export async function fetchQuote(quoteId: string): Promise<Quote | null> {
   if (error) throw error
   if (!data) return null
 
-  // Read from document_line_items (authoritative table)
-  const { data: lineItems } = await supabase
+  // Read from document_line_items (authoritative). Fall back to quote_line_items
+  // for quotes created before the migration.
+  let { data: lineItems } = await supabase
     .from('document_line_items')
     .select('*')
     .eq('document_id', quoteId)
     .order('sort_order')
+
+  if (!lineItems || lineItems.length === 0) {
+    const { data: legacy } = await supabase
+      .from('quote_line_items')
+      .select('*')
+      .eq('quote_id', quoteId)
+      .order('sort_order')
+    lineItems = legacy || []
+  }
 
   const { data: cust } = await supabase
     .from('customers')
