@@ -54,7 +54,7 @@ export function QuotesPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // For new quote — customer picker
-  const [customers, setCustomers]     = useState<any[]>([])
+  const [customers, setCustomers]       = useState<any[]>([])
   const [customerSearch, setCustSearch] = useState('')
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null)
   const [showCustPicker, setShowCustPicker] = useState(false)
@@ -127,6 +127,7 @@ export function QuotesPage() {
     value:    quotes.filter(q => q.status === 'accepted').reduce((s, q) => s + q.total, 0),
   }
 
+  // ─── Edit / Create view ────────────────────────────────────
   if (view === 'create' || view === 'edit') {
     if (!selectedCustomer && view === 'create') {
       return (
@@ -192,6 +193,7 @@ export function QuotesPage() {
         customerAddress={''}
         customerPhone={cust.phone || cust.mobile || ''}
         existingQuote={view === 'edit' ? editQuote : null}
+        initialView={view === 'edit' ? 'preview' : 'form'}
         onSaved={(q) => {
           loadQuotes()
           setView('list')
@@ -253,10 +255,10 @@ export function QuotesPage() {
         {/* Stats row */}
         <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
           {[
-            { label: 'Total',    val: stats.total,      color: '#94a3b8' },
-            { label: 'Open',     val: stats.sent,       color: '#60a5fa' },
-            { label: 'Accepted', val: stats.accepted,   color: '#4ade80' },
-            { label: 'Value Won',val: fmt(stats.value), color: '#22d3ee' },
+            { label: 'Total',     val: stats.total,      color: '#94a3b8' },
+            { label: 'Open',      val: stats.sent,       color: '#60a5fa' },
+            { label: 'Accepted',  val: stats.accepted,   color: '#4ade80' },
+            { label: 'Value Won', val: fmt(stats.value), color: '#22d3ee' },
           ].map(s => (
             <div key={s.label} style={S.statCard}>
               <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{s.label}</div>
