@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../hooks/useAuth';
 import {
   getProducts,
   createProduct,
   updateProduct,
   deactivateProduct,
   reactivateProduct,
+  canViewProcurementFields,
+  canEditProcurementFields,
   CATEGORY_LABELS,
   BUYOUT_LABELS,
   Product,
@@ -12,7 +15,7 @@ import {
   ProductUpdate,
 } from './productService';
 
-const EMPTY_FORM: ProductInsert & { vendor_sku?: string; vendor_cost?: number | null } = {
+const EMPTY_FORM: ProductInsert = {
   name: '',
   sku: '',
   category: 'ro',
@@ -26,8 +29,10 @@ const EMPTY_FORM: ProductInsert & { vendor_sku?: string; vendor_cost?: number | 
   warranty_months: 12,
   requires_survey_type: null,
   is_active: true,
-  vendor_sku: '',
+
+  vendor_sku: null,
   vendor_cost: null,
+  vendor_id: null,
 };
 
 const CATEGORY_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -61,26 +66,32 @@ function fmt(val: number | null): string {
 }
 
 export default function ProductCatalog() {
+  // ── Role guard — source of truth for all field-level visibility ──
+  const { profile } = useAuth();
+  const role = profile?.role ?? null;
+  const showProcurement = canViewProcurementFields(role);
+  const canEditProcurement = canEditProcurementFields(role);
+
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<typeof EMPTY_FORM>(EMPTY_FORM);
+  const [form, setForm] = useState<ProductInsert>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [showInactive, setShowInactive] = useState(false);
   const [search, setSearch] = useState('');
 
-  useEffect(() => { loadProducts(); }, [filterCategory, showInactive]);
+  useEffect(() => { loadProducts(); }, [filterCategory, showInactive, role]);
 
   async function loadProducts() {
     setLoading(true);
     try {
-      const data = await getProducts({
-        activeOnly: !showInactive,
-        category: filterCategory === 'all' ? undefined : filterCategory,
-      });
+      const data = await getProducts(
+        { activeOnly: !showInactive, category: filterCategory === 'all' ? undefined : filterCategory },
+        role === 'admin'
+      );
       setProducts(data);
     } catch (err: any) { setError(err.message); }
     finally { setLoading(false); }
@@ -108,8 +119,11 @@ export default function ProductCatalog() {
       warranty_months: product.warranty_months,
       requires_survey_type: product.requires_survey_type,
       is_active: product.is_active,
-      vendor_sku: (product as any).vendor_sku || '',
-      vendor_cost: (product as any).vendor_cost ?? null,
+      // vendor fields only populated when admin (product_safe returns null for others)
+
+      vendor_sku:  product.vendor_sku  ?? null,
+      vendor_cost: product.vendor_cost ?? null,
+      vendor_id:   product.vendor_id   ?? null,
     });
     setEditingId(product.id);
     setShowForm(true);
@@ -121,12 +135,15 @@ export default function ProductCatalog() {
     setSaving(true);
     setError(null);
     try {
-      const payload = {
-        ...form,
-        vendor_sku: form.vendor_sku || null,
-        vendor_cost: form.vendor_cost ?? null,
-      };
-      if (editingId) { await updateProduct(editingId, payload as ProductUpdate); }
+      // Strip vendor fields from payload if caller is not admin
+      const payload: ProductUpdate = { ...form };
+      if (!canEditProcurement) {
+  
+        delete payload.vendor_sku;
+        delete payload.vendor_cost;
+        delete payload.vendor_id;
+      }
+      if (editingId) { await updateProduct(editingId, payload); }
       else { await createProduct(payload as ProductInsert); }
       setShowForm(false);
       setEditingId(null);
@@ -156,10 +173,27 @@ export default function ProductCatalog() {
     return (
       p.name.toLowerCase().includes(q) ||
       (p.sku && p.sku.toLowerCase().includes(q)) ||
-      ((p as any).vendor_sku && (p as any).vendor_sku.toLowerCase().includes(q)) ||
+      // vendor_sku search only for admin (non-admin never has this data)
+      (showProcurement && p.vendor_sku && p.vendor_sku.toLowerCase().includes(q)) ||
       (p.description && p.description.toLowerCase().includes(q))
     );
   });
+
+  // ── Table columns — vendor columns only rendered for admin ──
+  const tableHeaders = [
+    { label: 'Product',     align: 'left'   },
+    { label: 'SKU',         align: 'left'   },
+    ...(showProcurement ? [{ label: 'Vendor SKU',  align: 'left'  }] : []),
+    { label: 'Category',    align: 'left'   },
+    { label: 'Retail',      align: 'right'  },
+    ...(showProcurement ? [{ label: 'Vendor Cost', align: 'right' }] : []),
+    { label: 'Rental/mo',   align: 'right'  },
+    { label: 'Install Fee', align: 'right'  },
+    { label: 'Maint/mo',    align: 'right'  },
+    { label: 'Warranty',    align: 'center' },
+    { label: 'Status',      align: 'center' },
+    { label: 'Actions',     align: 'right'  },
+  ];
 
   return (
     <div style={{ background: '#0f1923', minHeight: '100vh', color: '#e2e8f0', display: 'flex', flexDirection: 'column' }}>
@@ -176,7 +210,7 @@ export default function ProductCatalog() {
           </div>
         </div>
         <input
-          placeholder="Search name, SKU, or vendor SKU…"
+          placeholder={showProcurement ? 'Search name, SKU, or vendor SKU…' : 'Search name or SKU…'}
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={{
@@ -189,16 +223,18 @@ export default function ProductCatalog() {
           <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} style={{ accentColor: '#0d7ea3' }} />
           <span style={{ fontSize: 13, color: '#94a3b8' }}>Show inactive</span>
         </label>
-        <button
-          onClick={openAddForm}
-          style={{
-            padding: '10px 22px', borderRadius: 8, border: 'none', cursor: 'pointer',
-            background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 14,
-            flexShrink: 0, whiteSpace: 'nowrap',
-          }}
-        >
-          + Add Product
-        </button>
+        {role === 'admin' && (
+          <button
+            onClick={openAddForm}
+            style={{
+              padding: '10px 22px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 14,
+              flexShrink: 0, whiteSpace: 'nowrap',
+            }}
+          >
+            + Add Product
+          </button>
+        )}
       </div>
 
       {/* ── Category filter tabs ── */}
@@ -282,7 +318,7 @@ export default function ProductCatalog() {
             <div style={{ color: '#64748b', fontSize: 15 }}>
               {search ? 'No products matching your search' : 'No products found'}
             </div>
-            {!search && (
+            {!search && role === 'admin' && (
               <button onClick={openAddForm} style={{
                 marginTop: 16, padding: '10px 24px', borderRadius: 8, border: 'none',
                 cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700,
@@ -296,20 +332,7 @@ export default function ProductCatalog() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#0f1923', borderBottom: '1px solid #1e3a4f' }}>
-                  {[
-                    { label: 'Product',     align: 'left' },
-                    { label: 'SKU',         align: 'left' },
-                    { label: 'Vendor SKU',  align: 'left' },
-                    { label: 'Category',    align: 'left' },
-                    { label: 'Retail',      align: 'right' },
-                    { label: 'Vendor Cost', align: 'right' },
-                    { label: 'Rental/mo',   align: 'right' },
-                    { label: 'Install Fee', align: 'right' },
-                    { label: 'Maint/mo',    align: 'right' },
-                    { label: 'Warranty',    align: 'center' },
-                    { label: 'Status',      align: 'center' },
-                    { label: 'Actions',     align: 'right' },
-                  ].map(h => (
+                  {tableHeaders.map(h => (
                     <th key={h.label} style={{
                       padding: '10px 14px', fontSize: 11, fontWeight: 700, color: '#64748b',
                       textTransform: 'uppercase', letterSpacing: '0.08em',
@@ -321,8 +344,6 @@ export default function ProductCatalog() {
               <tbody>
                 {filteredProducts.map(product => {
                   const catColor = CATEGORY_COLORS[product.category] || DEFAULT_CAT_COLOR;
-                  const vendorSku  = (product as any).vendor_sku;
-                  const vendorCost = (product as any).vendor_cost;
                   return (
                     <tr
                       key={product.id}
@@ -340,26 +361,28 @@ export default function ProductCatalog() {
                         )}
                       </td>
 
-                      {/* Internal SKU */}
+                      {/* Internal SKU — always shown */}
                       <td style={{ padding: '12px 14px', fontSize: 12, color: '#94a3b8', fontFamily: 'monospace' }}>
                         {product.sku || '—'}
                       </td>
 
-                      {/* Vendor SKU / reorder code */}
-                      <td style={{ padding: '12px 14px', fontSize: 12, fontFamily: 'monospace' }}>
-                        {vendorSku ? (
-                          <span style={{
-                            color: '#fbbf24',
-                            background: 'rgba(251,191,36,0.08)',
-                            border: '1px solid rgba(251,191,36,0.2)',
-                            borderRadius: 4, padding: '2px 7px',
-                          }}>
-                            {vendorSku}
-                          </span>
-                        ) : (
-                          <span style={{ color: '#334155' }}>—</span>
-                        )}
-                      </td>
+                      {/* Vendor SKU — admin only column */}
+                      {showProcurement && (
+                        <td style={{ padding: '12px 14px', fontSize: 12, fontFamily: 'monospace' }}>
+                          {product.vendor_sku ? (
+                            <span style={{
+                              color: '#fbbf24',
+                              background: 'rgba(251,191,36,0.08)',
+                              border: '1px solid rgba(251,191,36,0.2)',
+                              borderRadius: 4, padding: '2px 7px',
+                            }}>
+                              {product.vendor_sku}
+                            </span>
+                          ) : (
+                            <span style={{ color: '#334155' }}>—</span>
+                          )}
+                        </td>
+                      )}
 
                       {/* Category */}
                       <td style={{ padding: '12px 14px' }}>
@@ -372,15 +395,17 @@ export default function ProductCatalog() {
                         </span>
                       </td>
 
-                      {/* Retail */}
+                      {/* Retail — always shown */}
                       <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>
                         {fmt(product.retail_price)}
                       </td>
 
-                      {/* Vendor cost */}
-                      <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, color: vendorCost ? '#4ade80' : '#334155' }}>
-                        {vendorCost != null ? fmt(vendorCost) : '—'}
-                      </td>
+                      {/* Vendor cost — admin only column */}
+                      {showProcurement && (
+                        <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, color: product.vendor_cost ? '#4ade80' : '#334155' }}>
+                          {product.vendor_cost != null ? fmt(product.vendor_cost) : '—'}
+                        </td>
+                      )}
 
                       {/* Rental/mo */}
                       <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: product.rental_price_monthly ? '#22d3ee' : '#475569' }}>
@@ -415,38 +440,40 @@ export default function ProductCatalog() {
                         </span>
                       </td>
 
-                      {/* Actions */}
+                      {/* Actions — edit/deactivate only for admin */}
                       <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
-                          <button
-                            onClick={() => openEditForm(product)}
-                            style={{
-                              padding: '4px 12px', borderRadius: 6,
-                              border: '1px solid rgba(13,126,163,0.3)', background: 'transparent',
-                              color: '#22d3ee', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                            }}
-                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(13,126,163,0.15)'; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleToggleActive(product)}
-                            style={{
-                              padding: '4px 12px', borderRadius: 6,
-                              border: `1px solid ${product.is_active ? 'rgba(248,113,113,0.25)' : 'rgba(74,222,128,0.25)'}`,
-                              background: 'transparent',
-                              color: product.is_active ? '#f87171' : '#4ade80',
-                              cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                            }}
-                            onMouseEnter={e => {
-                              e.currentTarget.style.background = product.is_active ? 'rgba(248,113,113,0.12)' : 'rgba(74,222,128,0.12)';
-                            }}
-                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                          >
-                            {product.is_active ? 'Deactivate' : 'Reactivate'}
-                          </button>
-                        </div>
+                        {role === 'admin' && (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+                            <button
+                              onClick={() => openEditForm(product)}
+                              style={{
+                                padding: '4px 12px', borderRadius: 6,
+                                border: '1px solid rgba(13,126,163,0.3)', background: 'transparent',
+                                color: '#22d3ee', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(13,126,163,0.15)'; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleToggleActive(product)}
+                              style={{
+                                padding: '4px 12px', borderRadius: 6,
+                                border: `1px solid ${product.is_active ? 'rgba(248,113,113,0.25)' : 'rgba(74,222,128,0.25)'}`,
+                                background: 'transparent',
+                                color: product.is_active ? '#f87171' : '#4ade80',
+                                cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                              }}
+                              onMouseEnter={e => {
+                                e.currentTarget.style.background = product.is_active ? 'rgba(248,113,113,0.12)' : 'rgba(74,222,128,0.12)';
+                              }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                            >
+                              {product.is_active ? 'Deactivate' : 'Reactivate'}
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );
@@ -457,8 +484,8 @@ export default function ProductCatalog() {
         )}
       </div>
 
-      {/* ── Add/Edit Modal ── */}
-      {showForm && (
+      {/* ── Add/Edit Modal — vendor section only rendered for admin ── */}
+      {showForm && role === 'admin' && (
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16,
@@ -537,35 +564,42 @@ export default function ProductCatalog() {
                 />
               </ModalField>
 
-              {/* ── VENDOR section ── */}
-              <div style={{ borderTop: '1px solid #1e3a4f', paddingTop: 16 }}>
-                <div style={{
-                  fontSize: 13, fontWeight: 700, color: '#fbbf24', marginBottom: 12,
-                  display: 'flex', alignItems: 'center', gap: 8,
-                }}>
-                  <span>🏭</span> VENDOR / ORDERING
+              {/* ── VENDOR section — admin only ── */}
+              {canEditProcurement && (
+                <div style={{ borderTop: '1px solid #1e3a4f', paddingTop: 16 }}>
+                  <div style={{
+                    fontSize: 13, fontWeight: 700, color: '#fbbf24', marginBottom: 12,
+                    display: 'flex', alignItems: 'center', gap: 8,
+                  }}>
+                    <span>🏭</span> VENDOR / ORDERING
+                    <span style={{
+                      fontSize: 10, fontWeight: 600, color: '#92400e',
+                      background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.2)',
+                      borderRadius: 4, padding: '2px 6px', marginLeft: 4,
+                    }}>ADMIN ONLY</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                    <ModalField label="Vendor Reorder Code / Vendor SKU">
+                      <ModalInput
+                        value={form.vendor_sku || ''}
+                        onChange={v => updateField('vendor_sku', v || null)}
+                        placeholder="e.g. KW-2056-B or MFR-PN-4412"
+                      />
+                    </ModalField>
+                    <ModalField label="Vendor Cost ($/unit)">
+                      <ModalInput
+                        type="number"
+                        value={form.vendor_cost ?? ''}
+                        onChange={v => updateField('vendor_cost', v ? parseFloat(v) : null)}
+                        placeholder="0.00"
+                      />
+                    </ModalField>
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 11, color: '#475569' }}>
+                    Vendor SKU is your reorder code used when placing purchase orders. Vendor cost is your purchase price (not shown to customers or team members).
+                  </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                  <ModalField label="Vendor Reorder Code / Vendor SKU">
-                    <ModalInput
-                      value={form.vendor_sku || ''}
-                      onChange={v => updateField('vendor_sku', v || null)}
-                      placeholder="e.g. KW-2056-B or MFR-PN-4412"
-                    />
-                  </ModalField>
-                  <ModalField label="Vendor Cost ($/unit)">
-                    <ModalInput
-                      type="number"
-                      value={form.vendor_cost ?? ''}
-                      onChange={v => updateField('vendor_cost', v ? parseFloat(v) : null)}
-                      placeholder="0.00"
-                    />
-                  </ModalField>
-                </div>
-                <div style={{ marginTop: 8, fontSize: 11, color: '#475569' }}>
-                  Vendor SKU is your reorder code used when placing purchase orders. Vendor cost is your purchase price (not shown to customers).
-                </div>
-              </div>
+              )}
 
               {/* ── PRICING section ── */}
               <div style={{ borderTop: '1px solid #1e3a4f', paddingTop: 16 }}>
