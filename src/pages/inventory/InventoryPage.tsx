@@ -231,10 +231,9 @@ function StockLevelsTab() {
 
     if (delta !== 0) {
       const inv = adjustModal.inv
-      const newOnHand    = Math.max(0, inv.quantity_on_hand    + delta)
-      const newAvailable = Math.max(0, inv.quantity_available  + delta)
+      const newOnHand    = Math.max(0, inv.quantity_on_hand   + delta)
+      const newAvailable = Math.max(0, inv.quantity_available + delta)
 
-      // Update inventory row directly
       await supabase
         .from('inventory')
         .update({
@@ -242,17 +241,6 @@ function StockLevelsTab() {
           quantity_available: newAvailable,
         })
         .eq('id', inv.id)
-
-      // Write transaction log manually
-      await supabase
-        .from('inventory_transactions')
-        .insert({
-          product_id:       inv.product_id,
-          transaction_type: 'adjustment',
-          qty:              delta,
-          reference_type:   'adjustment',
-          notes:            adjustNote || 'Manual adjustment',
-        })
     }
 
     setAdjustModal(null)
@@ -953,15 +941,6 @@ function ReceivingTab() {
             quantity_available: inv.quantity_available + qty,
           }).eq('id', inv.id)
         }
-
-        await supabase.from('inventory_transactions').insert({
-          product_id:       item.product_id,
-          transaction_type: 'receive',
-          qty:              qty,
-          reference_type:   'purchase_order',
-          reference_id:     selected.id,
-          notes:            `Received against ${selected.po_number}`,
-        })
       }
     }
     await supabase
