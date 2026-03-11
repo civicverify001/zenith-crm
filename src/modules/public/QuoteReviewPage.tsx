@@ -19,7 +19,8 @@ interface LineItem {
 interface Quote {
   id: string
   quote_number: string
-  quote_type: 'rental' | 'purchase' | 'finance'
+  quote_type: string
+  commercial_type: string   // ← AUTHORITATIVE field for flow branching
   status: string
   monthly_amount: number
   install_fee: number
@@ -35,7 +36,7 @@ interface Quote {
   signed_at: string | null
   finance_redirect_url: string | null
   customer_id: string
-  lead_id: string | null       // ← connects quote back to originating lead
+  lead_id: string | null
   customer?: Customer
 }
 
@@ -83,7 +84,9 @@ interface Invoice {
 type FlowStep =
   | 'loading' | 'error' | 'expired' | 'already_complete'
   | 'view_quote' | 'view_agreement' | 'view_invoice'
-  | 'stripe_first_payment' | 'stripe_purchase_payment'
+  | 'payment_choice'          // purchase only — customer picks 50% or full
+  | 'stripe_card_save'        // rental only — save card, no charge
+  | 'stripe_purchase_payment' // purchase only — redirect to Stripe
   | 'hearth_redirect' | 'complete'
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -95,33 +98,20 @@ function today() {
 }
 
 // ─── Lead → Customer conversion ──────────────────────────────────
-// Called when customer signs their first document.
-// Upgrades customer lifecycle_status and marks lead as converted.
 async function convertLeadToCustomer(leadId: string | null | undefined, customerId: string | null | undefined) {
   if (!leadId || !customerId) return
-
   try {
     const now = new Date().toISOString()
-
-    // 1. Upgrade customer from 'lead' → 'active'
-    await supabase
-      .from('customers')
+    await supabase.from('customers')
       .update({ lifecycle_status: 'active', lifecycle_updated_at: now })
       .eq('id', customerId)
-
-    // 2. Move lead stage to agreement_signed + stamp conversion
-    await supabase
-      .from('leads')
-      .update({
-        stage: 'agreement_signed',
-        stage_entered_at: now,
-        stage_changed_at: now,
-        converted_at: now,
-        converted_to_customer_id: customerId,
-      })
-      .eq('id', leadId)
-
-    // 3. Log to activity feed
+    await supabase.from('leads').update({
+      stage: 'agreement_signed',
+      stage_entered_at: now,
+      stage_changed_at: now,
+      converted_at: now,
+      converted_to_customer_id: customerId,
+    }).eq('id', leadId)
     await supabase.from('lead_activity_log').insert({
       lead_id: leadId,
       event_type: 'agreement_signed',
@@ -129,7 +119,6 @@ async function convertLeadToCustomer(leadId: string | null | undefined, customer
       metadata: { customer_id: customerId },
     })
   } catch (e) {
-    // Non-blocking — conversion failure should never stop the signing flow
     console.error('convertLeadToCustomer error:', e)
   }
 }
@@ -236,7 +225,6 @@ function SignaturePad({ onSign, label = 'Sign Document', loading = false }: {
   return (
     <div className="border border-gray-200 rounded-xl p-5 bg-gray-50">
       <div className="text-sm font-semibold text-gray-700 mb-4">Sign this document</div>
-
       <div className="flex gap-1 mb-4 bg-white border border-gray-200 rounded-lg p-1 w-fit">
         {(['type', 'draw'] as const).map(m => (
           <button key={m} onClick={() => setMode(m)}
@@ -247,7 +235,6 @@ function SignaturePad({ onSign, label = 'Sign Document', loading = false }: {
           </button>
         ))}
       </div>
-
       {mode === 'type' ? (
         <div className="mb-4">
           <label className="block text-xs font-medium text-gray-600 mb-1">Full Legal Name</label>
@@ -283,14 +270,12 @@ function SignaturePad({ onSign, label = 'Sign Document', loading = false }: {
           {hasDrawn && <button onClick={clearCanvas} className="mt-1.5 text-xs text-red-400 hover:text-red-600">✕ Clear</button>}
         </div>
       )}
-
       <label className="flex items-start gap-3 mb-4 cursor-pointer">
         <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-0.5 w-4 h-4 rounded border-gray-300 flex-shrink-0" />
         <span className="text-xs text-gray-600">
           By signing, I agree this constitutes my legal electronic signature with the same effect as a handwritten signature.
         </span>
       </label>
-
       <button
         onClick={handleSign} disabled={!canSubmit || loading}
         className="w-full py-3 rounded-lg text-white font-semibold text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -464,12 +449,6 @@ function InvoiceDocument({ invoice, customer, terms, onSign, signing, error }: {
                 <div className="flex justify-between text-sm text-gray-600"><span>Subtotal</span><span>{fmt(invoice.total - (invoice.tax_amount || 0))}</span></div>
                 <div className="flex justify-between text-sm text-gray-600"><span>Tax</span><span>{fmt(invoice.tax_amount || 0)}</span></div>
                 <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-300"><span>Total</span><span>{fmt(invoice.total)}</span></div>
-                <div className="flex justify-between text-sm font-bold pt-2 border-t border-gray-200" style={{ color: '#0a2540' }}>
-                  <span>Deposit Due Today ({invoice.deposit_percent}%)</span><span>{fmt(invoice.deposit_amount)}</span>
-                </div>
-                <div className="flex justify-between text-sm text-gray-500">
-                  <span>Balance at Installation</span><span>{fmt(invoice.total - invoice.deposit_amount)}</span>
-                </div>
               </div>
             </div>
           </>
@@ -524,14 +503,32 @@ export function QuoteReviewPage() {
   const [redirecting, setRedirecting] = useState(false)
   const topRef = useRef<HTMLDivElement>(null)
 
+  // ── SINGLE SOURCE OF TRUTH for flow branching ──────────────────
+  // Always derived from commercial_type — never from quote_type
+  const flowType: 'rental' | 'purchase' | 'finance' =
+    quote?.commercial_type === 'rental' ? 'rental'
+    : quote?.commercial_type === 'finance' ? 'finance'
+    : 'purchase'
+
+  // ── Step bar config per flow ───────────────────────────────────
+  const rentalSteps  = ['Review Quote', 'Sign Quote', 'Sign Agreement', 'Save Card']
+  const purchaseSteps = ['Review Quote', 'Sign Quote', 'Sign Invoice', 'Payment']
+  const currentStep =
+    step === 'view_quote'    ? 1
+    : step === 'view_agreement' || step === 'view_invoice' ? 2
+    : step === 'payment_choice' || step === 'stripe_card_save' || step === 'stripe_purchase_payment' ? 3
+    : step === 'complete' ? 4
+    : 0
+
   async function redirectToStripe(params: {
     amount_cents: number
     description: string
-    quote_type: 'rental' | 'purchase'
+    flow: 'rental' | 'purchase'
     agreement_id?: string
     invoice_id?: string
   }) {
-    if (!quote || !customer) return
+    if (!quote) return
+    const customer = quote.customer
     setRedirecting(true)
     try {
       const origin = window.location.origin
@@ -545,11 +542,11 @@ export function QuoteReviewPage() {
             'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
           },
           body: JSON.stringify({
-            customer_name: customer.full_name,
-            customer_email: customer.email,
+            customer_name: customer?.full_name,
+            customer_email: customer?.email,
             amount_cents: params.amount_cents,
             description: params.description,
-            quote_type: params.quote_type,
+            quote_type: params.flow,   // 'rental' | 'purchase'
             agreement_id: params.agreement_id,
             invoice_id: params.invoice_id,
             quote_id: quote.id,
@@ -569,22 +566,26 @@ export function QuoteReviewPage() {
   }
 
   useEffect(() => {
-    // Returning from Stripe — mark lead as won then show complete screen
     if (searchParams.get('paid') === '1') {
-      setStep('complete')
-      // Fire-and-forget: mark lead as won after payment
+      // Load quote to know flow type for correct completion message
       if (token) {
-        supabase.from('quotes').select('lead_id, customer_id').eq('public_token', token).maybeSingle()
+        supabase.from('quotes').select('*, customer:customers(full_name, email, phone, address, city, state, zip)')
+          .eq('public_token', token).maybeSingle()
           .then(({ data }) => {
-            if (data?.lead_id) {
-              supabase.from('leads').update({
-                stage: 'won',
-                stage_entered_at: new Date().toISOString(),
-                stage_changed_at: new Date().toISOString(),
-              }).eq('id', data.lead_id).then(() => {})
+            if (data) {
+              setQuote(data)
+              // Mark lead as won
+              if (data.lead_id) {
+                supabase.from('leads').update({
+                  stage: 'won',
+                  stage_entered_at: new Date().toISOString(),
+                  stage_changed_at: new Date().toISOString(),
+                }).eq('id', data.lead_id).then(() => {})
+              }
             }
           })
       }
+      setStep('complete')
       return
     }
     if (token) loadQuote(token)
@@ -606,7 +607,7 @@ export function QuoteReviewPage() {
       }
 
       if (q.created_by) {
-        const { data: rep } = await supabase.from('profiles').select('full_name').eq('id', q.created_by).single()
+        const { data: rep } = await supabase.from('profiles').select('full_name').eq('id', q.created_by).maybeSingle()
         q.created_by_name = rep?.full_name || null
       }
 
@@ -626,13 +627,22 @@ export function QuoteReviewPage() {
         b.slug?.startsWith('purchase-') || b.slug?.startsWith('inv-')
       ))
 
+      const ct = q.commercial_type  // use commercial_type for branching
       if (q.signed_at) {
-        if (q.quote_type === 'rental') {
-          const { data: ag } = await supabase.from('agreements').select('*').eq('quote_id', q.id).single()
-          if (ag) { setAgreement(ag); setStep(ag.signed_at ? 'complete' : 'view_agreement'); return }
+        if (ct === 'rental') {
+          const { data: ag } = await supabase.from('agreements').select('*').eq('quote_id', q.id).maybeSingle()
+          if (ag) {
+            setAgreement(ag)
+            setStep(ag.signed_at ? 'stripe_card_save' : 'view_agreement')
+            return
+          }
         } else {
-          const { data: inv } = await supabase.from('invoices').select('*').eq('quote_id', q.id).single()
-          if (inv) { setInvoice(inv); setStep(inv.signed_at ? 'complete' : 'view_invoice'); return }
+          const { data: inv } = await supabase.from('invoices').select('*').eq('quote_id', q.id).maybeSingle()
+          if (inv) {
+            setInvoice(inv)
+            setStep(inv.signed_at ? 'payment_choice' : 'view_invoice')
+            return
+          }
         }
       }
       setStep('view_quote')
@@ -643,6 +653,7 @@ export function QuoteReviewPage() {
     return fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip).catch(() => 'unknown')
   }
 
+  // ── Sign Quote ────────────────────────────────────────────────
   async function handleSignQuote(signedName: string) {
     if (!quote) return
     setSigning(true); setError('')
@@ -656,8 +667,8 @@ export function QuoteReviewPage() {
 
       const year = new Date().getFullYear()
 
-      if (quote.quote_type === 'rental') {
-        // Generate rental agreement
+      // ── RENTAL: Quote → Rental Agreement ──────────────────────
+      if (flowType === 'rental') {
         const { data: last } = await supabase.from('agreements')
           .select('agreement_number').like('agreement_number', `RA-${year}-%`)
           .order('agreement_number', { ascending: false }).limit(1)
@@ -671,38 +682,35 @@ export function QuoteReviewPage() {
           line_items_snapshot: lineItems,
         }).select().single()
         if (agErr) throw agErr
-
-        // ── Convert lead → customer on quote sign ──
         await convertLeadToCustomer(quote.lead_id, quote.customer_id)
-
         setAgreement(ag); setStep('view_agreement'); scrollTop()
 
-      } else if (quote.quote_type === 'purchase') {
-        // Generate purchase invoice
+      // ── PURCHASE: Quote → Invoice ──────────────────────────────
+      } else if (flowType === 'purchase') {
         const { data: last } = await supabase.from('invoices')
           .select('invoice_number').like('invoice_number', `INV-${year}-%`)
           .order('invoice_number', { ascending: false }).limit(1)
         const lastNum = last?.[0]?.invoice_number ? parseInt(last[0].invoice_number.split('-')[2]) : 0
         const invNum = `INV-${year}-${String(lastNum + 1).padStart(4, '0')}`
-        const depositAmt = quote.deposit_type === '50_percent' ? Math.round(quote.total * 0.5 * 100) / 100 : quote.total
+        const depositAmt = Math.round(quote.total * 0.5 * 100) / 100
         const { data: inv, error: invErr } = await supabase.from('invoices').insert({
           invoice_number: invNum, quote_id: quote.id, customer_id: quote.customer_id,
           invoice_type: 'purchase', status: 'draft',
           subtotal: quote.subtotal, tax_amount: quote.tax_amount, total: quote.total,
-          deposit_percent: quote.deposit_type === '50_percent' ? 50 : 100,
-          deposit_amount: depositAmt, amount_due: depositAmt,
+          deposit_percent: 50, deposit_amount: depositAmt, amount_due: depositAmt,
           terms_snapshot: { blocks: purchaseTerms, captured_at: new Date().toISOString() },
           line_items_snapshot: lineItems,
+          customer_name: quote.customer?.full_name,
+          customer_email: quote.customer?.email,
+          customer_phone: quote.customer?.phone,
+          customer_address: [quote.customer?.address, quote.customer?.city, quote.customer?.state, quote.customer?.zip].filter(Boolean).join(', '),
         }).select().single()
         if (invErr) throw invErr
-
-        // ── Convert lead → customer on quote sign ──
         await convertLeadToCustomer(quote.lead_id, quote.customer_id)
-
         setInvoice(inv); setStep('view_invoice'); scrollTop()
 
+      // ── FINANCE: Quote → Hearth ────────────────────────────────
       } else {
-        // Finance path
         await convertLeadToCustomer(quote.lead_id, quote.customer_id)
         setStep('hearth_redirect')
         if (quote.finance_redirect_url) setTimeout(() => window.location.href = quote.finance_redirect_url!, 2000)
@@ -711,6 +719,7 @@ export function QuoteReviewPage() {
     setSigning(false)
   }
 
+  // ── Sign Agreement (rental) → save card only ─────────────────
   async function handleSignAgreement(signedName: string) {
     if (!agreement) return
     setSigning(true); setError('')
@@ -720,17 +729,13 @@ export function QuoteReviewPage() {
         status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName, signed_ip: ip,
       }).eq('id', agreement.id)
       if (e) throw e
-      setStep('stripe_first_payment'); scrollTop()
-      await redirectToStripe({
-        amount_cents: Math.round((agreement.monthly_amount || 0) * 100),
-        description: `First Month Rental Payment — ${agreement.agreement_number}`,
-        quote_type: 'rental',
-        agreement_id: agreement.id,
-      })
+      // Rental: go to card save screen — DO NOT charge
+      setStep('stripe_card_save'); scrollTop()
     } catch (e: any) { setError(e.message) }
     setSigning(false)
   }
 
+  // ── Sign Invoice (purchase) → payment choice ──────────────────
   async function handleSignInvoice(signedName: string) {
     if (!invoice) return
     setSigning(true); setError('')
@@ -740,22 +745,35 @@ export function QuoteReviewPage() {
         status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName, signed_ip: ip,
       }).eq('id', invoice.id)
       if (e) throw e
-      setStep('stripe_purchase_payment'); scrollTop()
-      await redirectToStripe({
-        amount_cents: Math.round((invoice.deposit_amount || 0) * 100),
-        description: `Purchase Deposit (${invoice.deposit_percent}%) — ${invoice.invoice_number}`,
-        quote_type: 'purchase',
-        invoice_id: invoice.id,
-      })
+      // Purchase: show payment choice screen — do NOT auto-redirect
+      setStep('payment_choice'); scrollTop()
     } catch (e: any) { setError(e.message) }
     setSigning(false)
   }
 
-  const customer = quote?.customer
-  const rentalSteps = ['Review Quote', 'Sign Quote', 'Sign Agreement', 'Payment']
-  const purchaseSteps = ['Review Quote', 'Sign Quote', 'Sign Invoice', 'Payment']
-  const currentStep = step === 'view_quote' ? 0 : step === 'view_agreement' || step === 'view_invoice' ? 2 :
-    step === 'stripe_first_payment' || step === 'stripe_purchase_payment' ? 3 : 0
+  // ── Payment choice handler (purchase only) ────────────────────
+  async function handlePaymentChoice(type: '50_percent' | 'full') {
+    if (!invoice || !quote) return
+    const amountCents = type === 'full'
+      ? Math.round(invoice.total * 100)
+      : Math.round(invoice.deposit_amount * 100)
+    const description = type === 'full'
+      ? `Full Payment — ${invoice.invoice_number}`
+      : `Purchase Deposit (50%) — ${invoice.invoice_number}`
+
+    // Update deposit_percent on invoice if paying full
+    if (type === 'full') {
+      await supabase.from('invoices').update({ deposit_percent: 100, deposit_amount: invoice.total, amount_due: invoice.total }).eq('id', invoice.id)
+    }
+
+    setStep('stripe_purchase_payment')
+    await redirectToStripe({
+      amount_cents: amountCents,
+      description,
+      flow: 'purchase',
+      invoice_id: invoice.id,
+    })
+  }
 
   // ── Terminal screens ──────────────────────────────────────────
   if (step === 'loading') return (
@@ -810,7 +828,8 @@ export function QuoteReviewPage() {
     </div>
   )
 
-  if (step === 'stripe_first_payment') return (
+  // ── RENTAL: Save card — no charge ─────────────────────────────
+  if (step === 'stripe_card_save') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
         {redirecting ? (
@@ -818,26 +837,36 @@ export function QuoteReviewPage() {
             <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: '#eff6ff' }}>
               <div className="w-7 h-7 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#0a2540', borderTopColor: 'transparent' }} />
             </div>
-            <h2 className="text-xl font-bold mb-2">Agreement Signed!</h2>
-            <p className="text-sm text-gray-500">Taking you to secure payment...</p>
+            <h2 className="text-xl font-bold mb-2">Redirecting to secure card save...</h2>
           </>
         ) : (
           <>
             <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4 text-3xl">✅</div>
             <h2 className="text-xl font-bold mb-2">Agreement Signed!</h2>
-            <p className="text-sm text-gray-600 mb-4">Ready to collect your first payment of <strong>{fmt(agreement?.monthly_amount || 0)}</strong>.</p>
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-5 text-left">
+              <div className="text-sm font-semibold text-blue-800 mb-1">💳 No charge today</div>
+              <p className="text-sm text-blue-700">
+                We just need to save your payment method securely. 
+                <strong> Autopay will begin after your installation is completed.</strong>
+              </p>
+            </div>
+            <div className="bg-gray-50 rounded-xl p-4 mb-5 text-left space-y-2">
+              <div className="flex justify-between text-sm text-gray-600"><span>Monthly rental</span><span className="font-semibold">{fmt(agreement?.monthly_amount || 0)}/mo</span></div>
+              <div className="flex justify-between text-sm text-gray-600"><span>First charge</span><span className="font-semibold text-green-600">After installation</span></div>
+              <div className="flex justify-between text-sm text-gray-600"><span>Agreement</span><span className="font-semibold">{agreement?.agreement_number}</span></div>
+            </div>
             {error && <p className="text-red-500 text-xs mb-4">{error}</p>}
             <button
               onClick={() => redirectToStripe({
-                amount_cents: Math.round((agreement?.monthly_amount || 0) * 100),
-                description: `First Month Rental Payment — ${agreement?.agreement_number}`,
-                quote_type: 'rental',
+                amount_cents: 0,
+                description: `Card save for rental — ${agreement?.agreement_number}`,
+                flow: 'rental',
                 agreement_id: agreement?.id,
               })}
               className="w-full py-3 rounded-xl text-white font-semibold text-sm"
               style={{ backgroundColor: '#0a2540' }}
             >
-              Continue to Payment →
+              Save Card Securely →
             </button>
             <p className="text-xs text-gray-400 mt-4">(317) 690-4172</p>
           </>
@@ -846,49 +875,74 @@ export function QuoteReviewPage() {
     </div>
   )
 
+  // ── PURCHASE: Payment choice ───────────────────────────────────
+  if (step === 'payment_choice') return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full">
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4 text-3xl">✅</div>
+          <h2 className="text-xl font-bold">Invoice Signed!</h2>
+          <p className="text-sm text-gray-500 mt-1">Choose your payment option below.</p>
+        </div>
+        <div className="space-y-3 mb-6">
+          <button
+            onClick={() => handlePaymentChoice('50_percent')}
+            className="w-full border-2 border-gray-200 hover:border-blue-400 rounded-xl p-4 text-left transition-colors group"
+          >
+            <div className="flex justify-between items-center">
+              <div>
+                <div className="font-bold text-gray-900 group-hover:text-blue-700">Pay 50% Deposit Today</div>
+                <div className="text-xs text-gray-500 mt-0.5">Balance of {fmt((invoice?.total || 0) / 2)} due on installation day</div>
+              </div>
+              <div className="text-xl font-black" style={{ color: '#0a2540' }}>{fmt((invoice?.total || 0) / 2)}</div>
+            </div>
+          </button>
+          <button
+            onClick={() => handlePaymentChoice('full')}
+            className="w-full border-2 border-gray-200 hover:border-green-400 rounded-xl p-4 text-left transition-colors group"
+          >
+            <div className="flex justify-between items-center">
+              <div>
+                <div className="font-bold text-gray-900 group-hover:text-green-700">Pay Full Amount</div>
+                <div className="text-xs text-gray-500 mt-0.5">No balance due at installation</div>
+              </div>
+              <div className="text-xl font-black text-green-600">{fmt(invoice?.total || 0)}</div>
+            </div>
+          </button>
+        </div>
+        {error && <p className="text-red-500 text-xs mb-4 text-center">{error}</p>}
+        <p className="text-xs text-gray-400 text-center">(317) 690-4172</p>
+      </div>
+    </div>
+  )
+
+  // ── PURCHASE: Redirecting to Stripe ───────────────────────────
   if (step === 'stripe_purchase_payment') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
-        {redirecting ? (
-          <>
-            <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: '#eff6ff' }}>
-              <div className="w-7 h-7 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#0a2540', borderTopColor: 'transparent' }} />
-            </div>
-            <h2 className="text-xl font-bold mb-2">Invoice Signed!</h2>
-            <p className="text-sm text-gray-500">Taking you to secure payment...</p>
-          </>
-        ) : (
-          <>
-            <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4 text-3xl">✅</div>
-            <h2 className="text-xl font-bold mb-2">Invoice Signed!</h2>
-            <p className="text-sm text-gray-600 mb-4">Ready to collect your deposit of <strong>{fmt(invoice?.deposit_amount || 0)}</strong>.</p>
-            {error && <p className="text-red-500 text-xs mb-4">{error}</p>}
-            <button
-              onClick={() => redirectToStripe({
-                amount_cents: Math.round((invoice?.deposit_amount || 0) * 100),
-                description: `Purchase Deposit (${invoice?.deposit_percent}%) — ${invoice?.invoice_number}`,
-                quote_type: 'purchase',
-                invoice_id: invoice?.id,
-              })}
-              className="w-full py-3 rounded-xl text-white font-semibold text-sm"
-              style={{ backgroundColor: '#0a2540' }}
-            >
-              Continue to Payment →
-            </button>
-            <p className="text-xs text-gray-400 mt-4">(317) 690-4172</p>
-          </>
-        )}
+        <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: '#eff6ff' }}>
+          <div className="w-7 h-7 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#0a2540', borderTopColor: 'transparent' }} />
+        </div>
+        <h2 className="text-xl font-bold mb-2">Redirecting to secure payment...</h2>
+        <p className="text-sm text-gray-400">Please wait</p>
       </div>
     </div>
   )
 
+  // ── Complete ───────────────────────────────────────────────────
   if (step === 'complete') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
         <div className="text-5xl mb-4">🎉</div>
-        <h2 className="text-xl font-bold mb-2">All Done!</h2>
-        <p className="text-sm text-gray-500">Documents signed. Zenith will be in touch soon.</p>
-        <p className="text-xs text-gray-400 mt-5">(317) 690-4172</p>
+        <h2 className="text-xl font-bold mb-2">
+          {flowType === 'rental' ? 'Card Saved Successfully!' : 'All Done!'}
+        </h2>
+        <p className="text-sm text-gray-500 mb-4">
+          {flowType === 'rental'
+            ? 'Your payment method has been saved. Autopay will begin after your installation is completed. We\'ll be in touch to schedule.'
+            : 'Documents signed and payment received. Zenith will be in touch soon.'}
+        </p>
+        <p className="text-xs text-gray-400">(317) 690-4172</p>
       </div>
     </div>
   )
@@ -904,7 +958,7 @@ export function QuoteReviewPage() {
       </div>
 
       <div className="max-w-3xl mx-auto px-4 py-8">
-        <StepBar steps={quote?.quote_type === 'rental' ? rentalSteps : purchaseSteps} current={currentStep} />
+        <StepBar steps={flowType === 'rental' ? rentalSteps : purchaseSteps} current={currentStep} />
 
         {/* ── VIEW QUOTE ────────────────────────────── */}
         {step === 'view_quote' && quote && (
@@ -914,7 +968,7 @@ export function QuoteReviewPage() {
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="text-xl font-bold">
-                      {quote.quote_type === 'rental' ? 'Rental Quote' : quote.quote_type === 'purchase' ? 'Purchase Order' : 'Finance Quote'}
+                      {flowType === 'rental' ? 'Rental Quote' : flowType === 'purchase' ? 'Purchase Order' : 'Finance Quote'}
                     </div>
                     <div className="text-blue-200 text-sm">{quote.quote_number}</div>
                   </div>
@@ -941,17 +995,16 @@ export function QuoteReviewPage() {
               <div className="px-6 py-5 grid grid-cols-3 gap-4 text-sm border-b border-gray-100">
                 <div>
                   <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">Bill To</div>
-                  <div className="font-semibold text-gray-800">{customer?.full_name || '—'}</div>
-                  <div className="text-gray-500 text-xs">{customer?.address}</div>
-                  <div className="text-gray-500 text-xs">{customer?.city}, {customer?.state} {customer?.zip}</div>
-                  <div className="text-gray-500 text-xs">{customer?.phone}</div>
+                  <div className="font-semibold text-gray-800">{quote.customer?.full_name || '—'}</div>
+                  <div className="text-gray-500 text-xs">{quote.customer?.address}</div>
+                  <div className="text-gray-500 text-xs">{quote.customer?.city}, {quote.customer?.state} {quote.customer?.zip}</div>
+                  <div className="text-gray-500 text-xs">{quote.customer?.phone}</div>
                 </div>
                 <div>
                   <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">Installation Address</div>
-                  <div className="font-semibold text-gray-800">{customer?.full_name || '—'}</div>
-                  <div className="text-gray-500 text-xs">{customer?.address}</div>
-                  <div className="text-gray-500 text-xs">{customer?.city}, {customer?.state} {customer?.zip}</div>
-                  <div className="text-gray-500 text-xs">{customer?.phone}</div>
+                  <div className="font-semibold text-gray-800">{quote.customer?.full_name || '—'}</div>
+                  <div className="text-gray-500 text-xs">{quote.customer?.address}</div>
+                  <div className="text-gray-500 text-xs">{quote.customer?.city}, {quote.customer?.state} {quote.customer?.zip}</div>
                 </div>
                 <div className="text-right">
                   <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">From</div>
@@ -979,7 +1032,6 @@ export function QuoteReviewPage() {
                     <th className="px-6 py-3 text-left font-semibold">Description</th>
                     <th className="px-4 py-3 text-center font-semibold">Qty</th>
                     <th className="px-4 py-3 text-right font-semibold">Price</th>
-                    <th className="px-4 py-3 text-right font-semibold">Discount</th>
                     <th className="px-6 py-3 text-right font-semibold">Total</th>
                   </tr></thead>
                   <tbody>
@@ -987,15 +1039,14 @@ export function QuoteReviewPage() {
                       <tr key={item.id} className="border-b border-gray-50">
                         <td className="px-6 py-4 text-sm text-gray-800">{item.description}</td>
                         <td className="px-4 py-4 text-sm text-gray-600 text-center">{item.quantity}</td>
-                        <td className="px-4 py-4 text-sm text-gray-600 text-right">{quote.quote_type === 'rental' ? `${fmt(item.unit_price)}/mo` : fmt(item.unit_price)}</td>
-                        <td className="px-4 py-4 text-sm text-gray-400 text-right">—</td>
-                        <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">{quote.quote_type === 'rental' ? `${fmt(item.total)}/mo` : fmt(item.total)}</td>
+                        <td className="px-4 py-4 text-sm text-gray-600 text-right">{flowType === 'rental' ? `${fmt(item.unit_price)}/mo` : fmt(item.unit_price)}</td>
+                        <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">{flowType === 'rental' ? `${fmt(item.total)}/mo` : fmt(item.total)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <div className="px-6 py-4 bg-gray-50">
-                  {quote.quote_type === 'rental' ? (
+                  {flowType === 'rental' ? (
                     <div className="space-y-2">
                       <div className="flex justify-between text-sm text-gray-600"><span>Installation Fee (one-time)</span><span className="font-medium">{fmt(quote.install_fee || 0)}</span></div>
                       <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-200"><span>Monthly Total</span><span style={{ color: '#0a2540' }}>{fmt(quote.monthly_amount)}/mo</span></div>
@@ -1005,23 +1056,21 @@ export function QuoteReviewPage() {
                       <div className="flex justify-between text-sm text-gray-600"><span>Subtotal</span><span>{fmt(quote.subtotal)}</span></div>
                       <div className="flex justify-between text-sm text-gray-600"><span>Tax</span><span>{fmt(quote.tax_amount)}</span></div>
                       <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-200"><span>Total</span><span>{fmt(quote.total)}</span></div>
-                      {quote.deposit_type === '50_percent' && (
-                        <div className="flex justify-between text-sm font-bold pt-1" style={{ color: '#0a2540' }}><span>Deposit Due (50%)</span><span>{fmt(quote.total * 0.5)}</span></div>
-                      )}
+                      <div className="flex justify-between text-sm font-semibold pt-1" style={{ color: '#0a2540' }}><span>50% Deposit Option</span><span>{fmt(quote.total * 0.5)}</span></div>
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            {quote.quote_type === 'rental' && (
+            {flowType === 'rental' && (
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                 <div className="text-xs font-bold text-blue-700 mb-1">Rental Agreement Notice</div>
                 <p className="text-xs text-blue-600">Accepting this quote initiates a 36-month Residential Equipment Rental Agreement. Equipment remains property of Zenith Pure Solutions LLC. 50% of payments apply toward buyout.</p>
               </div>
             )}
 
-            {quote.quote_type === 'purchase' && (
+            {flowType === 'purchase' && (
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="px-6 py-3 bg-gray-50 border-b border-gray-100">
                   <div className="text-xs font-bold text-gray-400 uppercase tracking-wide">Direct Transfer / ACH Details</div>
@@ -1063,14 +1112,14 @@ export function QuoteReviewPage() {
           </div>
         )}
 
-        {/* ── AGREEMENT ─────────────────────────────── */}
+        {/* ── RENTAL: AGREEMENT ─────────────────────── */}
         {step === 'view_agreement' && quote && agreement && (
-          <AgreementDocument agreement={agreement} customer={customer} terms={rentalTerms} onSign={handleSignAgreement} signing={signing} error={error} />
+          <AgreementDocument agreement={agreement} customer={quote.customer} terms={rentalTerms} onSign={handleSignAgreement} signing={signing} error={error} />
         )}
 
-        {/* ── INVOICE ───────────────────────────────── */}
+        {/* ── PURCHASE: INVOICE ─────────────────────── */}
         {step === 'view_invoice' && quote && invoice && (
-          <InvoiceDocument invoice={invoice} customer={customer} terms={purchaseTerms} onSign={handleSignInvoice} signing={signing} error={error} />
+          <InvoiceDocument invoice={invoice} customer={quote.customer} terms={purchaseTerms} onSign={handleSignInvoice} signing={signing} error={error} />
         )}
 
         <div className="mt-10 text-center text-xs text-gray-400 pb-8 space-y-1">
