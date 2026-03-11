@@ -23,9 +23,10 @@ interface DetectedProduct {
 }
 
 interface JobSlot {
-  date: string   // YYYY-MM-DD
+  date: string        // YYYY-MM-DD
   count: number
   customerNames: string[]
+  bookedHours: number[]  // 8, 9, 10, etc.
 }
 
 function formatCurrency(val: number | null | undefined): string {
@@ -82,7 +83,53 @@ const CATEGORY_LABELS: Record<string, string> = {
 const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa']
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
-// ── Mini Install Calendar ──────────────────────────────────────
+// Hours available: 8am–5pm
+const HOUR_SLOTS = [8,9,10,11,12,13,14,15,16,17]
+function hourLabel(h: number): string {
+  if (h === 12) return '12:00 PM'
+  return h < 12 ? `${h}:00 AM` : `${h - 12}:00 PM`
+}
+
+// ── Time Slot Picker ───────────────────────────────────────────
+function TimeSlotPicker({
+  selectedHour,
+  onSelect,
+  bookedHours,
+}: {
+  selectedHour: number | null
+  onSelect: (h: number) => void
+  bookedHours: number[]
+}) {
+  return (
+    <div className="grid grid-cols-5 gap-1.5">
+      {HOUR_SLOTS.map(h => {
+        const booked = bookedHours.includes(h)
+        const selected = selectedHour === h
+        return (
+          <button
+            key={h}
+            onClick={() => { if (!booked) onSelect(h) }}
+            disabled={booked}
+            className={`
+              py-2 rounded-lg text-xs font-semibold transition-all border
+              ${booked
+                ? 'bg-red-500/10 border-red-500/30 text-red-400/60 cursor-not-allowed line-through'
+                : selected
+                ? 'bg-cyan border-cyan text-white shadow-lg shadow-cyan/20'
+                : 'bg-surface border-border text-slate-300 hover:border-accent hover:text-white cursor-pointer'
+              }
+            `}
+          >
+            {hourLabel(h)}
+            {booked && <div className="text-[9px] mt-0.5 no-underline" style={{textDecoration:'none'}}>Booked</div>}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Mini Calendar ──────────────────────────────────────────────
 function MiniCalendar({
   selectedDate,
   onSelect,
@@ -135,17 +182,14 @@ function MiniCalendar({
 
   return (
     <div className="bg-surface border border-border rounded-xl p-3">
-      {/* Nav */}
       <div className="flex items-center justify-between mb-3">
         <button onClick={() => setViewDate(new Date(year, month-1, 1))} className="text-muted hover:text-white w-6 h-6 flex items-center justify-center rounded transition-colors">‹</button>
         <span className="text-xs font-bold text-white">{MONTHS[month]} {year}</span>
         <button onClick={() => setViewDate(new Date(year, month+1, 1))} className="text-muted hover:text-white w-6 h-6 flex items-center justify-center rounded transition-colors">›</button>
       </div>
-      {/* Day headers */}
       <div className="grid grid-cols-7 mb-1">
         {DAYS.map(d => <div key={d} className="text-center text-xs text-muted font-semibold py-0.5">{d}</div>)}
       </div>
-      {/* Grid */}
       <div className="grid grid-cols-7 gap-0.5">
         {cells.map((cell, i) => {
           const key = dk(cell.date)
@@ -153,25 +197,22 @@ function MiniCalendar({
           const isSelected = selectedDate === key
           const past = isPast(cell.date)
           const count = slot?.count || 0
+          const fullyBooked = count >= HOUR_SLOTS.length
 
-          // Color coding: 0=open(green), 1=light(yellow), 2=moderate(orange), 3+=busy(red)
-          const busyColor = count === 0
-            ? 'text-green/60'
-            : count === 1
-            ? 'text-yellow-400'
-            : count === 2
-            ? 'text-orange-400'
+          const busyColor = count === 0 ? 'text-green/60'
+            : count <= 2 ? 'text-yellow-400'
+            : count <= 5 ? 'text-orange-400'
             : 'text-red-400'
 
           return (
             <button
               key={i}
-              onClick={() => { if (cell.current && !past) onSelect(key) }}
-              disabled={!cell.current || past}
-              title={slot ? `${count} job${count!==1?'s':''}: ${slot.customerNames.join(', ')}` : 'Open'}
+              onClick={() => { if (cell.current && !past && !fullyBooked) onSelect(key) }}
+              disabled={!cell.current || past || fullyBooked}
+              title={slot ? `${count} booked: ${slot.customerNames.join(', ')}` : 'Open'}
               className={`
                 relative flex flex-col items-center justify-center rounded-lg py-1.5 transition-all
-                ${!cell.current || past ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer hover:bg-card'}
+                ${!cell.current || past || fullyBooked ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer hover:bg-card'}
                 ${isSelected ? 'bg-cyan ring-2 ring-cyan text-white' : ''}
                 ${isToday(cell.date) && !isSelected ? 'ring-1 ring-accent' : ''}
               `}
@@ -179,22 +220,20 @@ function MiniCalendar({
               <span className={`text-xs font-semibold leading-none ${isSelected ? 'text-white' : cell.current ? 'text-slate-300' : 'text-muted'}`}>
                 {cell.date.getDate()}
               </span>
-              {/* Job count dot */}
               {cell.current && !past && (
                 <span className={`text-[9px] font-bold mt-0.5 leading-none ${isSelected ? 'text-white/80' : busyColor}`}>
-                  {count === 0 ? '●' : `${count}j`}
+                  {count === 0 ? '●' : `${count}/${HOUR_SLOTS.length}`}
                 </span>
               )}
             </button>
           )
         })}
       </div>
-      {/* Legend */}
       <div className="flex items-center gap-3 mt-3 pt-2 border-t border-border/50">
         <span className="text-[10px] text-green/70 font-semibold">● open</span>
-        <span className="text-[10px] text-yellow-400 font-semibold">1j light</span>
-        <span className="text-[10px] text-orange-400 font-semibold">2j mod</span>
-        <span className="text-[10px] text-red-400 font-semibold">3j+ busy</span>
+        <span className="text-[10px] text-yellow-400 font-semibold">light</span>
+        <span className="text-[10px] text-orange-400 font-semibold">moderate</span>
+        <span className="text-[10px] text-red-400 font-semibold">busy</span>
       </div>
     </div>
   )
@@ -216,6 +255,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
       ? new Date(lead.install_preferred_date).toISOString().split('T')[0]
       : ''
   )
+  const [scheduledHour, setScheduledHour] = useState<number | null>(null)
   const [techId, setTechId] = useState('')
   const [systemType, setSystemType] = useState<SystemType>('softener_only')
   const [needsFaucetHole, setNeedsFaucetHole] = useState(false)
@@ -252,13 +292,17 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
         .select('scheduled_date, customer_name_snapshot, status')
         .not('scheduled_date', 'is', null)
         .in('status', ['scheduled', 'in_progress', 'waiting_for_stock'])
+
       const map = new Map<string, JobSlot>()
       ;(data || []).forEach((j: any) => {
-        const key = j.scheduled_date.split('T')[0]
-        if (!map.has(key)) map.set(key, { date: key, count: 0, customerNames: [] })
+        const dt = new Date(j.scheduled_date)
+        const key = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
+        const hour = dt.getHours()
+        if (!map.has(key)) map.set(key, { date: key, count: 0, customerNames: [], bookedHours: [] })
         const s = map.get(key)!
         s.count++
         s.customerNames.push(j.customer_name_snapshot)
+        if (hour >= 8) s.bookedHours.push(hour)
       })
       setJobSlots(Array.from(map.values()))
     } catch(e) {
@@ -340,11 +384,24 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     loadJobSlots()
   }
 
+  // When date changes, clear time selection
+  function handleDateSelect(d: string) {
+    setScheduledDate(d)
+    setScheduledHour(null)
+  }
+
+  // Build ISO datetime string from date + hour
+  function buildScheduledDatetime(): string | null {
+    if (!scheduledDate || scheduledHour === null) return scheduledDate || null
+    return `${scheduledDate}T${String(scheduledHour).padStart(2,'0')}:00:00`
+  }
+
   async function handleScheduleInstall() {
     if (!user) return
     setSubmitting(true)
     try {
-      const newJob = await createInstallJobFromLead(lead, systemType, scheduledDate || null, needsFaucetHole, { actor_id: user.id, actor_name: profile?.full_name })
+      const datetime = buildScheduledDatetime()
+      const newJob = await createInstallJobFromLead(lead, systemType, datetime, needsFaucetHole, { actor_id: user.id, actor_name: profile?.full_name })
       if (techId) await supabase.from('jobs').update({ assigned_technician_id: techId, assigned_at: new Date().toISOString() }).eq('id', newJob.id)
       if (notes) await supabase.from('jobs').update({ notes }).eq('id', newJob.id)
       const actor = { actor_id: user.id, actor_name: profile?.full_name }
@@ -361,12 +418,14 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     }
   }
 
-  // Selected date display
+  const selectedDaySlot = scheduledDate ? jobSlots.find(s => s.date === scheduledDate) : null
+  const bookedHoursForDay = selectedDaySlot?.bookedHours || []
+
   const selectedDateLabel = scheduledDate
     ? new Date(scheduledDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
     : null
 
-  const selectedDaySlot = scheduledDate ? jobSlots.find(s => s.date === scheduledDate) : null
+  const canSubmit = !submitting && !loadingAgreement && !!scheduledDate && scheduledHour !== null
 
   return (
     <>
@@ -482,53 +541,54 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 </div>
               )}
 
-              {/* ── Install Date — mini calendar ── */}
+              {/* ── Step 1: Pick Date ── */}
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">
-                  Install Date <span className="text-red-400">*</span>
+                  Step 1 — Pick a Date <span className="text-red-400">*</span>
                   {lead.install_preferred_date && (
                     <span className="ml-2 text-accent font-normal normal-case">
                       Customer requested: {new Date(lead.install_preferred_date).toLocaleDateString()}
                     </span>
                   )}
                 </label>
-
                 {loadingSlots ? (
-                  <div className="bg-surface border border-border rounded-xl p-4 text-xs text-accent animate-pulse text-center">
-                    Loading availability…
-                  </div>
+                  <div className="bg-surface border border-border rounded-xl p-4 text-xs text-accent animate-pulse text-center">Loading availability…</div>
                 ) : (
-                  <MiniCalendar
-                    selectedDate={scheduledDate}
-                    onSelect={setScheduledDate}
-                    jobSlots={jobSlots}
-                  />
-                )}
-
-                {/* Selected date confirmation */}
-                {scheduledDate && (
-                  <div className="mt-2 flex items-center justify-between bg-cyan/10 border border-cyan/30 rounded-lg px-3 py-2">
-                    <div>
-                      <div className="text-xs font-semibold text-cyan">Selected Date</div>
-                      <div className="text-sm text-white font-medium">{selectedDateLabel}</div>
-                    </div>
-                    {selectedDaySlot ? (
-                      <div className="text-right">
-                        <div className={`text-xs font-bold ${selectedDaySlot.count >= 3 ? 'text-red-400' : selectedDaySlot.count === 2 ? 'text-orange-400' : 'text-yellow-400'}`}>
-                          {selectedDaySlot.count} other job{selectedDaySlot.count !== 1 ? 's' : ''} this day
-                        </div>
-                        <div className="text-xs text-muted mt-0.5 max-w-[140px] truncate">{selectedDaySlot.customerNames.join(', ')}</div>
-                      </div>
-                    ) : (
-                      <div className="text-xs font-bold text-green">✓ Open slot</div>
-                    )}
-                  </div>
-                )}
-
-                {!scheduledDate && (
-                  <div className="mt-2 text-xs text-amber text-center">⚠ Select a date from the calendar above</div>
+                  <MiniCalendar selectedDate={scheduledDate} onSelect={handleDateSelect} jobSlots={jobSlots} />
                 )}
               </div>
+
+              {/* ── Step 2: Pick Time (appears after date selected) ── */}
+              {scheduledDate && !loadingSlots && (
+                <div>
+                  <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">
+                    Step 2 — Pick a Time Slot <span className="text-red-400">*</span>
+                    <span className="ml-2 font-normal normal-case text-slate-400">{selectedDateLabel}</span>
+                  </label>
+                  <TimeSlotPicker
+                    selectedHour={scheduledHour}
+                    onSelect={setScheduledHour}
+                    bookedHours={bookedHoursForDay}
+                  />
+                  {bookedHoursForDay.length > 0 && (
+                    <div className="text-xs text-muted mt-2">
+                      {bookedHoursForDay.length} slot{bookedHoursForDay.length !== 1 ? 's' : ''} already booked this day
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Confirmation bar */}
+              {scheduledDate && scheduledHour !== null && (
+                <div className="flex items-center justify-between bg-cyan/10 border border-cyan/30 rounded-lg px-3 py-2.5">
+                  <div>
+                    <div className="text-xs font-semibold text-cyan mb-0.5">Scheduled For</div>
+                    <div className="text-sm text-white font-bold">{selectedDateLabel}</div>
+                    <div className="text-sm text-cyan">{hourLabel(scheduledHour)}</div>
+                  </div>
+                  <div className="text-2xl">📅</div>
+                </div>
+              )}
 
               {/* Technician */}
               <div>
@@ -561,10 +621,11 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
               <button onClick={() => setShowModal(false)} disabled={submitting} className="flex-1 py-2.5 text-sm text-muted hover:text-white transition-colors">Cancel</button>
               <button
                 onClick={handleScheduleInstall}
-                disabled={submitting || loadingAgreement || !scheduledDate}
+                disabled={!canSubmit}
                 className="flex-1 py-2.5 bg-cyan hover:bg-cyan/80 disabled:opacity-50 text-white font-bold rounded-lg text-sm transition-colors"
+                title={!scheduledDate ? 'Select a date first' : scheduledHour === null ? 'Select a time slot' : ''}
               >
-                {submitting ? 'Creating Job…' : '📅 Create Job & Schedule'}
+                {submitting ? 'Creating Job…' : scheduledHour !== null ? `📅 Schedule for ${hourLabel(scheduledHour)}` : '📅 Create Job & Schedule'}
               </button>
             </div>
           </div>
