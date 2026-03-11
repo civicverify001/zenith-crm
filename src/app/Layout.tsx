@@ -55,17 +55,20 @@ function Avatar({ name, size = 8 }: { name: string; size?: number }) {
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { profile, role } = useAuth()
-  const { canAccess } = usePermissions()
+  const { canAccess, allowedPages } = usePermissions()
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
   // Admin: show all nav items that match role (unchanged behaviour)
   // Other roles: show items that match BOTH role AND custom page permissions
   const visibleNav = NAV_ITEMS.filter(item => {
-    if (!role) return false
-    if (role === 'admin') return item.roles.includes(role)
-    return item.roles.includes(role) && canAccess(item.path)
-  })
+  if (!role) return false
+  if (role === 'admin') return item.roles.includes(role)
+  // If admin has set custom pages, ignore role restrictions — use granted pages only
+  if (allowedPages) return canAccess(item.path)
+  // No custom pages set — fall back to role defaults
+  return item.roles.includes(role)
+})
 
   const liveItems = visibleNav.filter(i => !i.soon)
   const soonItems = visibleNav.filter(i => i.soon)
