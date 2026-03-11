@@ -87,6 +87,15 @@ module.exports = async function handler(req, res) {
       return res.status(500).json({ error: 'Failed to mark job complete', detail: updateError.message });
     }
 
+    // ── 5b. Set job_id on customer record so Documents tab loads ──────
+    if (customerId) {
+      await supabase
+        .from('customers')
+        .update({ job_id: job_id })
+        .eq('id', customerId)
+        .is('job_id', null); // only set if not already set
+    }
+
     // ── 6. Create installed_systems record ────────────────────────────
     let installedSystemId = null;
     if (customerId) {
