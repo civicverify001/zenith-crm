@@ -38,69 +38,22 @@ function formatDateTime(d: string): string {
 type FilterView = 'all' | 'overdue' | 'today' | 'upcoming' | 'completed';
 
 // ============================================================
-// TAB CONFIG — colorful full-width tabs
+// TAB CONFIG — matches QuotesPage pill style exactly
 // ============================================================
 
-const TAB_CONFIG: {
+const STATUS_FILTERS: {
   key: FilterView;
   label: string;
   icon: string;
   color: string;
   bg: string;
-  glow: string;
   border: string;
-  hoverBg: string;
 }[] = [
-  {
-    key: 'all',
-    label: 'All Open',
-    icon: '📋',
-    color: '#38bdf8',
-    bg: 'rgba(56,189,248,0.10)',
-    glow: '0 0 20px rgba(56,189,248,0.15)',
-    border: 'rgba(56,189,248,0.3)',
-    hoverBg: 'rgba(56,189,248,0.06)',
-  },
-  {
-    key: 'overdue',
-    label: 'Overdue',
-    icon: '🔴',
-    color: '#f87171',
-    bg: 'rgba(248,113,113,0.10)',
-    glow: '0 0 20px rgba(248,113,113,0.15)',
-    border: 'rgba(248,113,113,0.3)',
-    hoverBg: 'rgba(248,113,113,0.06)',
-  },
-  {
-    key: 'today',
-    label: 'Today',
-    icon: '🟡',
-    color: '#fbbf24',
-    bg: 'rgba(251,191,36,0.10)',
-    glow: '0 0 20px rgba(251,191,36,0.15)',
-    border: 'rgba(251,191,36,0.3)',
-    hoverBg: 'rgba(251,191,36,0.06)',
-  },
-  {
-    key: 'upcoming',
-    label: 'Upcoming',
-    icon: '📅',
-    color: '#a78bfa',
-    bg: 'rgba(167,139,250,0.10)',
-    glow: '0 0 20px rgba(167,139,250,0.15)',
-    border: 'rgba(167,139,250,0.3)',
-    hoverBg: 'rgba(167,139,250,0.06)',
-  },
-  {
-    key: 'completed',
-    label: 'Completed',
-    icon: '✅',
-    color: '#4ade80',
-    bg: 'rgba(74,222,128,0.10)',
-    glow: '0 0 20px rgba(74,222,128,0.15)',
-    border: 'rgba(74,222,128,0.3)',
-    hoverBg: 'rgba(74,222,128,0.06)',
-  },
+  { key: 'all',       label: 'All Open',  icon: '◈', color: '#e2e8f0', bg: 'rgba(226,232,240,0.1)',  border: 'rgba(226,232,240,0.2)' },
+  { key: 'overdue',   label: 'Overdue',   icon: '🔴', color: '#f87171', bg: 'rgba(248,113,113,0.1)', border: 'rgba(248,113,113,0.25)' },
+  { key: 'today',     label: 'Today',     icon: '◉', color: '#fbbf24', bg: 'rgba(251,191,36,0.1)',  border: 'rgba(251,191,36,0.25)' },
+  { key: 'upcoming',  label: 'Upcoming',  icon: '▷', color: '#a78bfa', bg: 'rgba(167,139,250,0.1)', border: 'rgba(167,139,250,0.25)' },
+  { key: 'completed', label: 'Completed', icon: '✓', color: '#4ade80', bg: 'rgba(74,222,128,0.1)',  border: 'rgba(74,222,128,0.25)' },
 ];
 
 // ============================================================
@@ -116,10 +69,9 @@ export function FollowUpsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterView>('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [search, setSearch] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [entityNames, setEntityNames] = useState<Record<string, string>>({});
-  const [hoveredTab, setHoveredTab] = useState<FilterView | null>(null);
 
   // Load tasks
   async function loadTasks() {
@@ -136,7 +88,6 @@ export function FollowUpsPage() {
       const customerIds = [...new Set([...open, ...completed].map(t => t.customer_id).filter(Boolean))] as string[];
 
       const names: Record<string, string> = {};
-
       if (leadIds.length > 0) {
         const { data: leads } = await supabase.from('leads').select('id, full_name').in('id', leadIds);
         (leads || []).forEach((l: any) => { names[`lead:${l.id}`] = l.full_name; });
@@ -145,7 +96,6 @@ export function FollowUpsPage() {
         const { data: customers } = await supabase.from('customers').select('id, full_name').in('id', customerIds);
         (customers || []).forEach((c: any) => { names[`customer:${c.id}`] = c.full_name; });
       }
-
       setEntityNames(names);
     } catch (err: any) {
       setError(err.message);
@@ -158,18 +108,16 @@ export function FollowUpsPage() {
 
   // ─── Filter logic ────────────────────────────────────────
   const today_str = new Date().toISOString().split('T')[0];
-
   const overdueTasks = tasks.filter(t => t.due_date < today_str);
   const todayTasks = tasks.filter(t => t.due_date === today_str);
   const upcomingTasks = tasks.filter(t => t.due_date > today_str);
 
-  const counts: Record<FilterView, number> = {
-    all: tasks.length,
-    overdue: overdueTasks.length,
-    today: todayTasks.length,
-    upcoming: upcomingTasks.length,
-    completed: completedTasks.length,
-  };
+  const countFor = (key: FilterView) =>
+    key === 'all' ? tasks.length :
+    key === 'overdue' ? overdueTasks.length :
+    key === 'today' ? todayTasks.length :
+    key === 'upcoming' ? upcomingTasks.length :
+    completedTasks.length;
 
   const baseFilteredTasks = filter === 'all' ? tasks
     : filter === 'overdue' ? overdueTasks
@@ -177,19 +125,16 @@ export function FollowUpsPage() {
     : filter === 'upcoming' ? upcomingTasks
     : completedTasks;
 
-  // Search filter
   const displayTasks = useMemo(() => {
-    if (!searchQuery.trim()) return baseFilteredTasks;
-    const q = searchQuery.toLowerCase();
+    if (!search.trim()) return baseFilteredTasks;
+    const q = search.toLowerCase();
     return baseFilteredTasks.filter(t => {
-      const entityName = getEntityNameFn(t);
-      return (
-        t.title.toLowerCase().includes(q) ||
+      const name = getEntityNameFn(t);
+      return t.title.toLowerCase().includes(q) ||
         (t.notes && t.notes.toLowerCase().includes(q)) ||
-        (entityName && entityName.toLowerCase().includes(q))
-      );
+        (name && name.toLowerCase().includes(q));
     });
-  }, [baseFilteredTasks, searchQuery, entityNames]);
+  }, [baseFilteredTasks, search, entityNames]);
 
   function getEntityNameFn(task: FollowUpTask): string | null {
     if (task.lead_id) return entityNames[`lead:${task.lead_id}`] || null;
@@ -210,100 +155,170 @@ export function FollowUpsPage() {
 
   // ─── Actions ─────────────────────────────────────────────
   async function handleComplete(taskId: string) {
-    try {
-      await completeFollowUp(taskId);
-      await loadTasks();
-    } catch (err: any) {
-      setError(err.message);
-    }
+    try { await completeFollowUp(taskId); await loadTasks(); }
+    catch (err: any) { setError(err.message); }
   }
 
   async function handleReopen(taskId: string) {
-    try {
-      await reopenFollowUp(taskId);
-      await loadTasks();
-    } catch (err: any) {
-      setError(err.message);
-    }
+    try { await reopenFollowUp(taskId); await loadTasks(); }
+    catch (err: any) { setError(err.message); }
   }
 
   async function handleDelete(taskId: string) {
     if (!confirm('Delete this follow-up?')) return;
-    try {
-      await deleteFollowUp(taskId);
-      await loadTasks();
-    } catch (err: any) {
-      setError(err.message);
-    }
+    try { await deleteFollowUp(taskId); await loadTasks(); }
+    catch (err: any) { setError(err.message); }
   }
 
   async function handleCreate(params: CreateFollowUpParams) {
-    try {
-      await createFollowUp(params);
-      setShowCreateModal(false);
-      await loadTasks();
-    } catch (err: any) {
-      setError(err.message);
-    }
+    try { await createFollowUp(params); setShowCreateModal(false); await loadTasks(); }
+    catch (err: any) { setError(err.message); }
   }
 
   // ─── Render ──────────────────────────────────────────────
-  if (loading) {
-    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-      <div style={{ color: '#64748b', fontSize: 14 }}>Loading follow-ups...</div>
-    </div>;
-  }
-
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+    <div style={{ background: '#0f1923', minHeight: '100vh', color: '#e2e8f0', display: 'flex', flexDirection: 'column' }}>
 
-      {/* ── Header row: title + search + button ── */}
+      {/* ── Top bar: title + search + new button ── */}
       <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        gap: 12, flexWrap: 'wrap', marginBottom: 20,
+        background: '#162232',
+        borderBottom: '1px solid #1e3a4f',
+        padding: '16px 24px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        flexWrap: 'wrap',
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 24, margin: 0 }}>Follow-Ups</h1>
-          <p style={{ color: '#64748b', fontSize: 13, marginTop: 4 }}>
-            {overdueTasks.length > 0 ? (
-              <span style={{ color: '#f87171', fontWeight: 600 }}>{overdueTasks.length} overdue</span>
-            ) : <span style={{ color: '#4ade80' }}>All caught up</span>} · {todayTasks.length} today · {upcomingTasks.length} upcoming
-          </p>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* Search */}
-          <div style={{ position: 'relative' }}>
-            <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#64748b', fontSize: 14, pointerEvents: 'none' }}>🔍</span>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search follow-ups..."
-              style={{
-                background: 'rgba(30,58,79,0.5)', border: '1px solid #1e3a4f', borderRadius: 8,
-                color: '#e2e8f0', fontSize: 13, padding: '8px 12px 8px 32px', width: 200,
-                outline: 'none',
-              }}
-            />
+          <div style={{ fontWeight: 800, fontSize: 20, color: '#e2e8f0', lineHeight: 1.2 }}>Follow-Ups</div>
+          <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>
+            {overdueTasks.length > 0
+              ? <><span style={{ color: '#f87171' }}>{overdueTasks.length} overdue</span> · {todayTasks.length} today · {upcomingTasks.length} upcoming</>
+              : <>All caught up · {todayTasks.length} today · {upcomingTasks.length} upcoming</>
+            }
           </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            style={{
-              padding: '9px 18px', backgroundColor: '#2563eb', color: '#fff',
-              fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none',
-              cursor: 'pointer', whiteSpace: 'nowrap',
-            }}
-          >
-            + New Follow-Up
-          </button>
         </div>
+        <input
+          placeholder="Search title or name…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{
+            background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8,
+            color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none',
+            width: 220, flexShrink: 0,
+          }}
+        />
+        <button
+          onClick={() => setShowCreateModal(true)}
+          style={{
+            padding: '10px 22px', borderRadius: 8, border: 'none', cursor: 'pointer',
+            background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 14,
+            flexShrink: 0, whiteSpace: 'nowrap',
+          }}
+        >
+          + New Follow-Up
+        </button>
+      </div>
+
+      {/* ── Colorful filter tabs — matches QuotesPage exactly ── */}
+      <div style={{
+        background: '#0c1a26',
+        borderBottom: '1px solid #1e3a4f',
+        padding: '12px 24px',
+        display: 'flex',
+        gap: 8,
+        flexShrink: 0,
+      }}>
+        {STATUS_FILTERS.map(f => {
+          const count = countFor(f.key);
+          const isActive = filter === f.key;
+          return (
+            <button
+              key={f.key}
+              onClick={() => setFilter(f.key)}
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 7,
+                padding: '11px 8px',
+                borderRadius: 10,
+                border: `1px solid ${isActive ? f.color + '60' : f.border}`,
+                background: isActive ? f.bg : 'rgba(255,255,255,0.02)',
+                color: isActive ? f.color : '#475569',
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: isActive ? 700 : 500,
+                transition: 'all 0.12s',
+                boxShadow: isActive ? `0 0 14px ${f.color}20` : 'none',
+              }}
+              onMouseEnter={e => {
+                if (!isActive) {
+                  e.currentTarget.style.background = f.bg;
+                  e.currentTarget.style.color = f.color;
+                  e.currentTarget.style.borderColor = f.border;
+                }
+              }}
+              onMouseLeave={e => {
+                if (!isActive) {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.color = '#475569';
+                  e.currentTarget.style.borderColor = f.border;
+                }
+              }}
+            >
+              <span style={{ fontSize: 14 }}>{f.icon}</span>
+              <span>{f.label}</span>
+              {count > 0 && (
+                <span style={{
+                  background: isActive ? f.color + '30' : 'rgba(255,255,255,0.06)',
+                  color: isActive ? f.color : '#64748b',
+                  borderRadius: 20,
+                  padding: '1px 7px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  minWidth: 20,
+                  textAlign: 'center' as const,
+                }}>
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Stats strip ── */}
+      <div style={{
+        display: 'flex',
+        gap: 12,
+        padding: '14px 24px',
+        borderBottom: '1px solid #1e3a4f',
+        background: '#0f1923',
+        flexShrink: 0,
+        overflowX: 'auto',
+      }}>
+        {[
+          { label: 'Open',      val: String(tasks.length),          color: '#94a3b8' },
+          { label: 'Overdue',   val: String(overdueTasks.length),   color: '#f87171' },
+          { label: 'Due Today', val: String(todayTasks.length),     color: '#fbbf24' },
+          { label: 'Completed', val: String(completedTasks.length), color: '#4ade80' },
+        ].map(s => (
+          <div key={s.label} style={{
+            background: '#162232', border: '1px solid #1e3a4f', borderRadius: 10,
+            padding: '10px 18px', flexShrink: 0, minWidth: 110,
+          }}>
+            <div style={{ color: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: '0.08em' }}>{s.label}</div>
+            <div style={{ color: s.color, fontWeight: 800, fontSize: 20, marginTop: 3 }}>{s.val}</div>
+          </div>
+        ))}
       </div>
 
       {/* Error */}
       {error && (
         <div style={{
-          padding: '10px 14px', marginBottom: 16, borderRadius: 8,
+          margin: '12px 24px 0', padding: '10px 14px', borderRadius: 8,
           background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
           color: '#f87171', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
@@ -312,299 +327,174 @@ export function FollowUpsPage() {
         </div>
       )}
 
-      {/* ── Colorful Full-Width Tabs ── */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: `repeat(${TAB_CONFIG.length}, 1fr)`,
-        gap: 0,
-        marginBottom: 16,
-        borderRadius: 12,
-        overflow: 'hidden',
-        border: '1px solid #1e3a4f',
-      }}>
-        {TAB_CONFIG.map((tab, idx) => {
-          const active = filter === tab.key;
-          const hovered = hoveredTab === tab.key;
-          const count = counts[tab.key];
-
-          return (
-            <button
-              key={tab.key}
-              onClick={() => setFilter(tab.key)}
-              onMouseEnter={() => setHoveredTab(tab.key)}
-              onMouseLeave={() => setHoveredTab(null)}
-              style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                gap: 4, padding: '14px 8px', cursor: 'pointer',
-                background: active ? tab.bg : hovered ? tab.hoverBg : 'rgba(15,25,35,0.6)',
-                borderRight: idx < TAB_CONFIG.length - 1 ? '1px solid #1e3a4f' : 'none',
-                border: 'none',
-                borderBottom: active ? `2px solid ${tab.color}` : '2px solid transparent',
-                boxShadow: active ? tab.glow : 'none',
-                transition: 'all 0.2s ease',
-                position: 'relative',
-              }}
-            >
-              <span style={{ fontSize: 18, lineHeight: 1 }}>{tab.icon}</span>
-              <span style={{
-                fontSize: 11, fontWeight: 600, letterSpacing: 0.3,
-                color: active ? tab.color : hovered ? tab.color : '#64748b',
-                transition: 'color 0.2s',
-              }}>
-                {tab.label}
-              </span>
-              <span style={{
-                fontSize: 18, fontWeight: 700, lineHeight: 1,
-                color: active ? tab.color : '#94a3b8',
-                transition: 'color 0.2s',
-              }}>
-                {count}
-              </span>
-
-              {/* Pulse dot on overdue if count > 0 */}
-              {tab.key === 'overdue' && count > 0 && (
-                <span style={{
-                  position: 'absolute', top: 8, right: 8,
-                  width: 8, height: 8, borderRadius: '50%',
-                  backgroundColor: '#f87171',
-                  boxShadow: '0 0 8px rgba(248,113,113,0.6)',
-                  animation: 'followup-pulse 2s infinite',
-                }} />
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      <style>{`
-        @keyframes followup-pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.4; }
-        }
-      `}</style>
-
-      {/* ── Stats strip ── */}
-      <div style={{
-        display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap',
-      }}>
-        {overdueTasks.length > 0 && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '6px 14px', borderRadius: 8,
-            background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)',
-          }}>
-            <span style={{ color: '#f87171', fontSize: 12, fontWeight: 600 }}>⚠ {overdueTasks.length} overdue</span>
-            <span style={{ color: '#64748b', fontSize: 11 }}>
-              — oldest {overdueTasks.length > 0 ? `${Math.abs(daysUntil(overdueTasks.sort((a, b) => a.due_date.localeCompare(b.due_date))[0]?.due_date || today_str))}d ago` : ''}
-            </span>
-          </div>
-        )}
-        {todayTasks.length > 0 && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '6px 14px', borderRadius: 8,
-            background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)',
-          }}>
-            <span style={{ color: '#fbbf24', fontSize: 12, fontWeight: 600 }}>{todayTasks.length} due today</span>
-          </div>
-        )}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          padding: '6px 14px', borderRadius: 8,
-          background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)',
-        }}>
-          <span style={{ color: '#4ade80', fontSize: 12, fontWeight: 600 }}>{completedTasks.length} completed</span>
-        </div>
-      </div>
-
       {/* ── Task list ── */}
-      {displayTasks.length === 0 ? (
-        <div style={{
-          background: 'rgba(30,58,79,0.3)', border: '1px solid #1e3a4f', borderRadius: 12,
-          padding: '48px 24px', textAlign: 'center',
-        }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>{filter === 'completed' ? '✅' : '📋'}</div>
-          <div style={{ color: '#64748b', fontSize: 14 }}>
-            {searchQuery ? 'No matching follow-ups' :
-             filter === 'overdue' ? 'No overdue tasks — nice!' :
-             filter === 'today' ? 'Nothing due today' :
-             filter === 'upcoming' ? 'No upcoming tasks' :
-             filter === 'completed' ? 'No completed tasks yet' :
-             'No open follow-ups. Create one to get started.'}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 60, color: '#64748b' }}>Loading follow-ups…</div>
+        ) : displayTasks.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 60 }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>{filter === 'completed' ? '✅' : '📋'}</div>
+            <div style={{ color: '#64748b', fontSize: 15 }}>
+              {search ? 'No matching follow-ups' :
+               filter === 'overdue' ? 'No overdue tasks — nice!' :
+               filter === 'today' ? 'Nothing due today' :
+               filter === 'upcoming' ? 'No upcoming tasks' :
+               filter === 'completed' ? 'No completed tasks yet' :
+               'No open follow-ups'}
+            </div>
+            {filter === 'all' && !search && (
+              <button onClick={() => setShowCreateModal(true)} style={{
+                marginTop: 16, padding: '10px 24px', borderRadius: 8, border: 'none',
+                cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700,
+              }}>
+                Create First Follow-Up
+              </button>
+            )}
           </div>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {displayTasks.map(task => {
-            const days = daysUntil(task.due_date);
-            const isOverdue = days < 0 && !task.completed_at;
-            const isToday = days === 0 && !task.completed_at;
-            const isCompleted = !!task.completed_at;
-            const entityName = getEntityNameFn(task);
-            const entityType = getEntityType(task);
+        ) : (
+          <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12, overflow: 'hidden' }}>
+            {displayTasks.map((task, idx) => {
+              const days = daysUntil(task.due_date);
+              const isOverdue = days < 0 && !task.completed_at;
+              const isToday = days === 0 && !task.completed_at;
+              const isCompleted = !!task.completed_at;
+              const entityName = getEntityNameFn(task);
+              const entityType = getEntityType(task);
 
-            return (
-              <div
-                key={task.id}
-                style={{
-                  background: 'rgba(30,58,79,0.3)',
-                  border: `1px solid ${
-                    isOverdue ? 'rgba(248,113,113,0.3)' :
-                    isToday ? 'rgba(251,191,36,0.3)' :
-                    isCompleted ? 'rgba(100,116,139,0.2)' :
-                    '#1e3a4f'
-                  }`,
-                  borderRadius: 12,
-                  padding: '14px 16px',
-                  opacity: isCompleted ? 0.6 : 1,
-                  transition: 'border-color 0.2s',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-                  {/* Left: checkbox + info */}
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1, minWidth: 0 }}>
-                    {/* Checkbox */}
-                    {!isCompleted ? (
-                      <button
-                        onClick={() => handleComplete(task.id)}
-                        title="Mark complete"
-                        style={{
-                          marginTop: 2, width: 20, height: 20, borderRadius: 4, flexShrink: 0,
-                          border: '2px solid #475569', background: 'transparent', cursor: 'pointer',
-                          transition: 'border-color 0.15s, background 0.15s',
-                        }}
-                        onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#4ade80'; el.style.background = 'rgba(74,222,128,0.15)'; }}
-                        onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#475569'; el.style.background = 'transparent'; }}
-                      />
-                    ) : (
-                      <button
-                        onClick={() => handleReopen(task.id)}
-                        title="Reopen"
-                        style={{
-                          marginTop: 2, width: 20, height: 20, borderRadius: 4, flexShrink: 0,
-                          border: 'none', background: '#16a34a', cursor: 'pointer',
-                          color: '#fff', fontSize: 11, fontWeight: 700,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        }}
-                      >
-                        ✓
-                      </button>
-                    )}
+              const dueText = isCompleted ? formatDate(task.due_date) :
+                isOverdue ? `${Math.abs(days)}d overdue` :
+                isToday ? 'Due today' :
+                days === 1 ? 'Tomorrow' :
+                `In ${days}d`;
 
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      {/* Title row */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 14 }}>{TASK_TYPE_ICONS[task.task_type]}</span>
-                        <span style={{
-                          fontSize: 14, fontWeight: 600,
-                          color: isCompleted ? '#64748b' : '#e2e8f0',
-                          textDecoration: isCompleted ? 'line-through' : 'none',
-                        }}>
-                          {task.title}
-                        </span>
-                        <span style={{
-                          fontSize: 10, padding: '2px 8px', borderRadius: 6, fontWeight: 600,
-                          background:
-                            task.task_type === 'call_back' ? 'rgba(59,130,246,0.15)' :
-                            task.task_type === 'google_review' ? 'rgba(251,191,36,0.15)' :
-                            task.task_type === 'service_due' ? 'rgba(6,182,212,0.15)' :
-                            task.task_type === 're_engage' ? 'rgba(167,139,250,0.15)' :
-                            'rgba(100,116,139,0.2)',
-                          color:
-                            task.task_type === 'call_back' ? '#60a5fa' :
-                            task.task_type === 'google_review' ? '#fbbf24' :
-                            task.task_type === 'service_due' ? '#22d3ee' :
-                            task.task_type === 're_engage' ? '#a78bfa' :
-                            '#94a3b8',
-                          border: `1px solid ${
-                            task.task_type === 'call_back' ? 'rgba(59,130,246,0.25)' :
-                            task.task_type === 'google_review' ? 'rgba(251,191,36,0.25)' :
-                            task.task_type === 'service_due' ? 'rgba(6,182,212,0.25)' :
-                            task.task_type === 're_engage' ? 'rgba(167,139,250,0.25)' :
-                            'rgba(100,116,139,0.3)'
-                          }`,
-                        }}>
-                          {TASK_TYPE_LABELS[task.task_type]}
-                        </span>
-                      </div>
+              const dueColor = isCompleted ? '#475569' :
+                isOverdue ? '#f87171' :
+                isToday ? '#fbbf24' :
+                days <= 3 ? '#fb923c' :
+                '#94a3b8';
 
-                      {/* Entity link */}
-                      {entityName && (
-                        <button
-                          onClick={() => navigateToEntity(task)}
-                          style={{
-                            fontSize: 12, marginTop: 4, background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                            color: entityType === 'lead' ? '#38bdf8' : '#4ade80',
-                            textDecoration: 'none',
-                          }}
-                          onMouseEnter={e => { e.currentTarget.style.textDecoration = 'underline'; }}
-                          onMouseLeave={e => { e.currentTarget.style.textDecoration = 'none'; }}
-                        >
-                          {entityType === 'lead' ? '⬡' : '👤'} {entityName}
-                        </button>
-                      )}
+              const typeBg =
+                task.task_type === 'call_back' ? '#60a5fa' :
+                task.task_type === 'google_review' ? '#fbbf24' :
+                task.task_type === 'service_due' ? '#22d3ee' :
+                task.task_type === 're_engage' ? '#a78bfa' :
+                '#94a3b8';
 
-                      {/* Notes */}
-                      {task.notes && (
-                        <p style={{ fontSize: 12, color: '#64748b', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 400, margin: '4px 0 0' }}>
-                          {task.notes}
-                        </p>
-                      )}
+              return (
+                <div
+                  key={task.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '12px 14px',
+                    borderBottom: idx < displayTasks.length - 1 ? '1px solid #1a2a3a' : 'none',
+                    opacity: isCompleted ? 0.5 : 1,
+                    transition: 'background 0.1s',
+                    cursor: 'default',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#1a2e42'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                >
+                  {/* Checkbox */}
+                  {!isCompleted ? (
+                    <button
+                      onClick={() => handleComplete(task.id)}
+                      title="Mark complete"
+                      style={{
+                        width: 20, height: 20, borderRadius: 4, flexShrink: 0,
+                        border: '2px solid #475569', background: 'transparent', cursor: 'pointer',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = '#4ade80'; e.currentTarget.style.background = 'rgba(74,222,128,0.15)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = '#475569'; e.currentTarget.style.background = 'transparent'; }}
+                    />
+                  ) : (
+                    <button
+                      onClick={() => handleReopen(task.id)}
+                      title="Reopen"
+                      style={{
+                        width: 20, height: 20, borderRadius: 4, flexShrink: 0,
+                        border: 'none', background: '#16a34a', cursor: 'pointer',
+                        color: '#fff', fontSize: 11, fontWeight: 700,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                    >
+                      ✓
+                    </button>
+                  )}
 
-                      {/* Completed info */}
-                      {isCompleted && task.completed_at && (
-                        <div style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>
-                          Completed {formatDateTime(task.completed_at)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  {/* Icon */}
+                  <span style={{ fontSize: 14, flexShrink: 0 }}>{TASK_TYPE_ICONS[task.task_type]}</span>
 
-                  {/* Right: due date + actions */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{
-                        fontSize: 12, fontWeight: 600,
-                        color: isCompleted ? '#475569' :
-                          isOverdue ? '#f87171' :
-                          isToday ? '#fbbf24' :
-                          days <= 3 ? '#fb923c' :
-                          '#94a3b8',
+                  {/* Title + entity */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{
+                        fontSize: 13, fontWeight: 600,
+                        color: isCompleted ? '#64748b' : '#e2e8f0',
+                        textDecoration: isCompleted ? 'line-through' : 'none',
                       }}>
-                        {isCompleted ? formatDate(task.due_date) :
-                         isOverdue ? `${Math.abs(days)}d overdue` :
-                         isToday ? 'Due today' :
-                         days === 1 ? 'Tomorrow' :
-                         `In ${days}d`}
-                      </div>
-                      {!isCompleted && (
-                        <div style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>{formatDate(task.due_date)}</div>
-                      )}
+                        {task.title}
+                      </span>
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, color: typeBg,
+                        background: typeBg + '22', padding: '3px 8px', borderRadius: 6,
+                      }}>
+                        {TASK_TYPE_LABELS[task.task_type]}
+                      </span>
                     </div>
-
-                    {/* Delete */}
-                    {role === 'admin' && (
+                    {entityName && (
                       <button
-                        onClick={() => handleDelete(task.id)}
-                        title="Delete"
+                        onClick={() => navigateToEntity(task)}
                         style={{
-                          background: 'none', border: 'none', cursor: 'pointer',
-                          color: '#475569', fontSize: 16, padding: 4,
-                          transition: 'color 0.15s',
+                          fontSize: 12, marginTop: 2, background: 'none', border: 'none',
+                          cursor: 'pointer', padding: 0,
+                          color: entityType === 'lead' ? '#38bdf8' : '#4ade80',
                         }}
-                        onMouseEnter={e => { e.currentTarget.style.color = '#f87171'; }}
-                        onMouseLeave={e => { e.currentTarget.style.color = '#475569'; }}
+                        onMouseEnter={e => { e.currentTarget.style.textDecoration = 'underline'; }}
+                        onMouseLeave={e => { e.currentTarget.style.textDecoration = 'none'; }}
                       >
-                        ×
+                        {entityType === 'lead' ? '⬡' : '👤'} {entityName}
                       </button>
                     )}
+                    {task.notes && (
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: 400 }}>
+                        {task.notes}
+                      </div>
+                    )}
+                    {isCompleted && task.completed_at && (
+                      <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+                        Completed {formatDateTime(task.completed_at)}
+                      </div>
+                    )}
                   </div>
+
+                  {/* Due date */}
+                  <div style={{ textAlign: 'right' as const, flexShrink: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: dueColor }}>{dueText}</div>
+                    {!isCompleted && <div style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>{formatDate(task.due_date)}</div>}
+                  </div>
+
+                  {/* Delete */}
+                  {role === 'admin' && (
+                    <button
+                      onClick={() => handleDelete(task.id)}
+                      title="Delete"
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        color: '#475569', fontSize: 14, padding: '4px 8px', lineHeight: 1,
+                        borderRadius: 6,
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.background = '#3f1a1a'; }}
+                      onMouseLeave={e => { e.currentTarget.style.color = '#475569'; e.currentTarget.style.background = 'none'; }}
+                    >
+                      🗑
+                    </button>
+                  )}
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Create Modal */}
       {showCreateModal && (
@@ -680,8 +570,9 @@ function CreateFollowUpModal({ onClose, onCreate, userId }: {
   }
 
   const inputStyle: React.CSSProperties = {
-    width: '100%', background: 'rgba(30,58,79,0.5)', border: '1px solid #1e3a4f',
-    color: '#e2e8f0', fontSize: 13, borderRadius: 8, padding: '8px 12px', outline: 'none',
+    width: '100%', background: '#0f1923', border: '1px solid #1e3a4f',
+    color: '#e2e8f0', fontSize: 14, borderRadius: 8, padding: '10px 14px',
+    outline: 'none', boxSizing: 'border-box' as const,
   };
 
   return (
@@ -690,23 +581,26 @@ function CreateFollowUpModal({ onClose, onCreate, userId }: {
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, zIndex: 50,
     }}>
       <div style={{
-        background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 16,
-        width: '100%', maxWidth: 440, maxHeight: '90vh', overflowY: 'auto',
+        background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12,
+        width: '100%', maxWidth: 440,
       }}>
         {/* Header */}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '18px 20px', borderBottom: '1px solid #1e3a4f',
+          padding: '20px 24px', borderBottom: '1px solid #1e3a4f',
         }}>
-          <h2 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 18, margin: 0 }}>New Follow-Up</h2>
+          <div>
+            <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 18 }}>New Follow-Up</div>
+            <div style={{ color: '#64748b', fontSize: 13, marginTop: 2 }}>Create a task</div>
+          </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 20, cursor: 'pointer' }}>×</button>
         </div>
 
         {/* Body */}
-        <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
           {/* Task type */}
           <div>
-            <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>TYPE</label>
+            <label style={{ display: 'block', fontSize: 12, color: '#64748b', marginBottom: 6 }}>Type</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {(Object.keys(TASK_TYPE_LABELS) as FollowUpTaskType[]).map(type => (
                 <button
@@ -714,9 +608,9 @@ function CreateFollowUpModal({ onClose, onCreate, userId }: {
                   onClick={() => handleTypeChange(type)}
                   style={{
                     fontSize: 12, padding: '6px 12px', borderRadius: 8, fontWeight: 600, cursor: 'pointer',
-                    border: taskType === type ? '1px solid rgba(37,99,235,0.4)' : '1px solid #1e3a4f',
-                    background: taskType === type ? 'rgba(37,99,235,0.15)' : 'rgba(30,58,79,0.3)',
-                    color: taskType === type ? '#60a5fa' : '#94a3b8',
+                    border: taskType === type ? '1px solid #0d7ea3' : '1px solid #1e3a4f',
+                    background: taskType === type ? 'rgba(13,126,163,0.15)' : 'transparent',
+                    color: taskType === type ? '#22d3ee' : '#64748b',
                     transition: 'all 0.15s',
                   }}
                 >
@@ -728,8 +622,8 @@ function CreateFollowUpModal({ onClose, onCreate, userId }: {
 
           {/* Title */}
           <div>
-            <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>
-              TITLE <span style={{ color: '#f87171' }}>*</span>
+            <label style={{ display: 'block', fontSize: 12, color: '#64748b', marginBottom: 6 }}>
+              Title <span style={{ color: '#f87171' }}>*</span>
             </label>
             <input type="text" value={title} onChange={e => setTitle(e.target.value)}
               placeholder="Call back about softener quote" style={inputStyle} />
@@ -737,15 +631,15 @@ function CreateFollowUpModal({ onClose, onCreate, userId }: {
 
           {/* Due date */}
           <div>
-            <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>
-              DUE DATE <span style={{ color: '#f87171' }}>*</span>
+            <label style={{ display: 'block', fontSize: 12, color: '#64748b', marginBottom: 6 }}>
+              Due Date <span style={{ color: '#f87171' }}>*</span>
             </label>
             <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inputStyle} />
           </div>
 
           {/* Link to entity */}
           <div>
-            <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>LINK TO</label>
+            <label style={{ display: 'block', fontSize: 12, color: '#64748b', marginBottom: 6 }}>Link to</label>
             <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
               {(['none', 'lead', 'customer'] as const).map(et => (
                 <button
@@ -753,10 +647,9 @@ function CreateFollowUpModal({ onClose, onCreate, userId }: {
                   onClick={() => { setEntityType(et); setSelectedEntity(null); setEntitySearch(''); setEntityResults([]); }}
                   style={{
                     fontSize: 12, padding: '6px 12px', borderRadius: 8, fontWeight: 600, cursor: 'pointer',
-                    border: entityType === et ? '1px solid rgba(100,116,139,0.4)' : '1px solid #1e3a4f',
-                    background: entityType === et ? 'rgba(100,116,139,0.15)' : 'transparent',
+                    border: entityType === et ? '1px solid #1e3a4f' : '1px solid #1e3a4f',
+                    background: entityType === et ? 'rgba(255,255,255,0.06)' : 'transparent',
                     color: entityType === et ? '#e2e8f0' : '#64748b',
-                    transition: 'all 0.15s',
                   }}
                 >
                   {et === 'none' ? 'No link' : et === 'lead' ? '⬡ Lead' : '👤 Customer'}
@@ -766,32 +659,28 @@ function CreateFollowUpModal({ onClose, onCreate, userId }: {
 
             {entityType !== 'none' && !selectedEntity && (
               <div style={{ position: 'relative' }}>
-                <input
-                  type="text"
-                  value={entitySearch}
+                <input type="text" value={entitySearch}
                   onChange={e => { setEntitySearch(e.target.value); searchEntities(e.target.value); }}
-                  placeholder={`Search ${entityType}s by name or phone...`}
-                  style={inputStyle}
-                />
+                  placeholder={`Search ${entityType}s by name or phone…`}
+                  style={inputStyle} />
                 {entityResults.length > 0 && (
                   <div style={{
                     position: 'absolute', zIndex: 10, width: '100%', marginTop: 4,
-                    background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8,
-                    overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                    background: '#162232', border: '1px solid #1e3a4f', borderRadius: 8, overflow: 'hidden',
                   }}>
                     {entityResults.map((entity: any) => (
-                      <button
-                        key={entity.id}
+                      <button key={entity.id}
                         onClick={() => { setSelectedEntity(entity); setEntityResults([]); }}
                         style={{
-                          width: '100%', padding: '10px 12px', textAlign: 'left', cursor: 'pointer',
-                          background: 'transparent', border: 'none', borderBottom: '1px solid #1e3a4f',
+                          display: 'flex', flexDirection: 'column', width: '100%', padding: '12px 14px',
+                          background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
+                          borderBottom: '1px solid #1a2a3a',
                         }}
-                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(30,58,79,0.5)'; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                        onMouseEnter={e => (e.currentTarget.style.background = '#1e3a5f')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                       >
-                        <div style={{ fontSize: 13, color: '#e2e8f0' }}>{entity.full_name}</div>
-                        <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{entity.phone} · {entity.stage || entity.lifecycle_status}</div>
+                        <span style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 14 }}>{entity.full_name}</span>
+                        <span style={{ color: '#64748b', fontSize: 12 }}>{entity.phone} · {entity.stage || entity.lifecycle_status}</span>
                       </button>
                     ))}
                   </div>
@@ -802,11 +691,10 @@ function CreateFollowUpModal({ onClose, onCreate, userId }: {
             {selectedEntity && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 8,
-                background: 'rgba(30,58,79,0.5)', border: '1px solid #1e3a4f', borderRadius: 8,
-                padding: '8px 12px',
+                background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, padding: '10px 14px',
               }}>
                 <span style={{ fontSize: 14 }}>{entityType === 'lead' ? '⬡' : '👤'}</span>
-                <span style={{ fontSize: 13, color: '#e2e8f0', flex: 1 }}>{selectedEntity.full_name}</span>
+                <span style={{ fontSize: 14, color: '#e2e8f0', flex: 1 }}>{selectedEntity.full_name}</span>
                 <button onClick={() => setSelectedEntity(null)} style={{
                   background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 14,
                 }}>×</button>
@@ -816,37 +704,32 @@ function CreateFollowUpModal({ onClose, onCreate, userId }: {
 
           {/* Notes */}
           <div>
-            <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>NOTES</label>
-            <textarea
-              value={notes} onChange={e => setNotes(e.target.value)}
-              placeholder="Additional details..."
-              rows={2}
-              style={{ ...inputStyle, resize: 'none' as const }}
-            />
+            <label style={{ display: 'block', fontSize: 12, color: '#64748b', marginBottom: 6 }}>Notes</label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)}
+              placeholder="Additional details…" rows={2}
+              style={{ ...inputStyle, resize: 'none' as const }} />
           </div>
         </div>
 
         {/* Footer */}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12,
-          padding: '16px 20px', borderTop: '1px solid #1e3a4f',
+          padding: '16px 24px', borderTop: '1px solid #1e3a4f',
         }}>
           <button onClick={onClose} style={{
             padding: '8px 16px', fontSize: 13, color: '#64748b', background: 'none', border: 'none', cursor: 'pointer',
-          }}>
-            Cancel
-          </button>
+          }}>Cancel</button>
           <button
             onClick={handleSubmit}
             disabled={!title.trim() || !dueDate || saving}
             style={{
-              padding: '9px 20px', fontSize: 13, fontWeight: 600, borderRadius: 8, cursor: 'pointer',
-              background: (!title.trim() || !dueDate || saving) ? 'rgba(37,99,235,0.3)' : '#2563eb',
-              color: '#fff', border: 'none',
+              padding: '10px 22px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              background: (!title.trim() || !dueDate || saving) ? '#0d7ea350' : '#0d7ea3',
+              color: '#fff', fontWeight: 700, fontSize: 14,
               opacity: (!title.trim() || !dueDate || saving) ? 0.5 : 1,
             }}
           >
-            {saving ? 'Creating...' : 'Create Follow-Up'}
+            {saving ? 'Creating…' : 'Create Follow-Up'}
           </button>
         </div>
       </div>
