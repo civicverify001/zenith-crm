@@ -261,6 +261,17 @@ export async function updateJobStatus(
     throw new Error('Technician must be assigned before starting')
   }
 
+  // ── PHASE A STEP 5: Inventory gate — block start if stock not ready ──
+  if (newStatus === 'in_progress') {
+    const invStatus = (currentJob as any).inventory_status
+    if (invStatus === 'short') {
+      throw new Error('Cannot start installation — inventory not ready. Materials are on order.')
+    }
+    if (invStatus === 'pending_check') {
+      throw new Error('Cannot start installation — inventory check is still pending.')
+    }
+  }
+
   if (newStatus === 'complete') {
     if (!currentJob.started_at) {
       throw new Error('Job must be started (in_progress) before completing')
@@ -341,6 +352,7 @@ export interface CompletionStatus {
   formsRequired: number
   formsCompleted: number
   generalPhotos: number
+  inventoryStatus: string | null  // NEW: inventory_status from job
   issues: string[]
   ready: boolean
 }
@@ -351,7 +363,8 @@ export async function getCompletionStatus(jobId: string): Promise<CompletionStat
     photosRequired: 0, photosProvided: 0,
     verificationRequired: 0, verificationCompleted: 0,
     formsRequired: 0, formsCompleted: 0,
-    generalPhotos: 0, issues: [], ready: false,
+    generalPhotos: 0, inventoryStatus: null,
+    issues: [], ready: false,
   }
 
   // Checklist items
@@ -411,6 +424,22 @@ export async function getCompletionStatus(jobId: string): Promise<CompletionStat
   status.generalPhotos = count || 0
   if (status.generalPhotos === 0) {
     status.issues.push('At least 1 job photo required')
+  }
+
+  // ── PHASE A STEP 4: Inventory readiness check ──
+  const { data: jobData } = await supabase
+    .from('jobs')
+    .select('inventory_status')
+    .eq('id', jobId)
+    .single()
+
+  status.inventoryStatus = jobData?.inventory_status || null
+
+  if (jobData?.inventory_status === 'short') {
+    status.issues.push('Inventory not ready — materials on order')
+  }
+  if (jobData?.inventory_status === 'pending_check') {
+    status.issues.push('Inventory check pending')
   }
 
   status.ready = status.issues.length === 0
