@@ -237,9 +237,9 @@ function StockLevelsTab() {
                 <td className="px-4 py-3 font-medium text-white">{r.products?.name}</td>
                 <td className="px-4 py-3 text-gray-400 font-mono text-xs">{r.products?.sku}</td>
                 <td className="px-4 py-3 text-gray-400 capitalize">{r.products?.product_categories?.name || r.products?.category}</td>
-                <td className="px-4 py-3 text-right text-white">{r.on_hand}</td>
-                <td className="px-4 py-3 text-right text-yellow-400">{r.reserved}</td>
-                <td className="px-4 py-3 text-right font-bold text-white">{r.available}</td>
+                <td className="px-4 py-3 text-right text-white">{r.quantity_on_hand}</td>
+                <td className="px-4 py-3 text-right text-yellow-400">{r.quantity_reserved}</td>
+                <td className="px-4 py-3 text-right font-bold text-white">{r.quantity_available}</td>
                 <td className="px-4 py-3 text-right text-gray-400">{r.reorder_point}</td>
                 <td className="px-4 py-3 text-center">
                   <StockBadge available={r.available} reorderPoint={r.reorder_point} />
