@@ -90,7 +90,7 @@ module.exports = async function handler(req, res) {
     // ── 6. Create installed_systems record ────────────────────────────
     let installedSystemId = null;
     if (customerId) {
-      const ownershipType = acceptedQuote?.quote_type === 'purchase' ? 'purchased' : 'rental';
+      const ownershipType = acceptedQuote?.quote_type === 'purchase' ? 'purchased' : 'rented';
       const today = new Date().toISOString().split('T')[0];
 
       const { data: sysRecord, error: sysError } = await supabase
