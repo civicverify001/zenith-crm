@@ -7,7 +7,7 @@ import type { Lead } from './leads.types'
 import { PIPELINE_COLUMNS, LEAD_STAGE_LABELS } from '../../types/domain.types'
 import type { LeadStage } from '../../types/domain.types'
 import { useAuth } from '../../hooks/useAuth'
-import { usePermission } from '../../hooks/usePermission'
+import { usePermissions } from '../../hooks/usePermissions'
 
 const STAGE_COLORS: Record<string, string> = {
   new_lead:             'border-t-muted',
@@ -21,7 +21,7 @@ const STAGE_COLORS: Record<string, string> = {
 
 export function LeadPipelinePage() {
   const { role } = useAuth()
-  const { can } = usePermission(role)
+  const { can } = usePermissions(role)
   const { data: leadsByStage, isLoading, error } = useLeadsKanban()
   const { data: counts } = usePipelineCounts()
 
