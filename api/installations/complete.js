@@ -130,7 +130,7 @@ module.exports = async function handler(req, res) {
           const laborEnd = new Date();
           laborEnd.setFullYear(laborEnd.getFullYear() + 1);
 
-          const _wr = try { await supabase.from('warranty_records').insert({
+          try { await supabase.from('warranty_records').insert({
             installed_system_id: installedSystemId,
             customer_id: customerId,
             warranty_status: 'valid',
