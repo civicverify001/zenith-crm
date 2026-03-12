@@ -87,15 +87,16 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
   // Load reps
   useEffect(() => {
     async function loadReps() {
-      // Match fetchReps pattern from leads.api.ts
+      // Get all salesreps and admins — don't filter is_active (may be null for older records)
       const { data } = await supabase
         .from('user_profiles')
-        .select('id, full_name, role')
+        .select('id, full_name, role, is_active')
         .in('role', ['salesrep', 'admin'])
-        .eq('is_active', true)
         .order('full_name')
 
-      if (data) setReps(data)
+      // Filter: include if is_active is true OR null (not explicitly false)
+      const active = (data || []).filter(r => r.is_active !== false)
+      setReps(active)
     }
     loadReps()
   }, [])
