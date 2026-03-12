@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../hooks/useAuth';
+import { useAuth } from '../../hooks/useAuth';
 import {
   getProducts,
   createProduct,
@@ -13,7 +13,7 @@ import {
   Product,
   ProductInsert,
   ProductUpdate,
-} from './productService';
+} from '../../services/productService';
 
 const EMPTY_FORM: ProductInsert = {
   name: '',

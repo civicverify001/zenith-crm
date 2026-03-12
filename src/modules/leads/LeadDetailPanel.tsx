@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import type { Lead } from './leads.types'
 import { useAssignRep, useLogCallAttempt, useCallAttempts, useReps, useNewLeadActivity, LEAD_KEYS } from './useLeads'
 import { useAuth } from '../../hooks/useAuth'
-import { usePermission } from '../../hooks/usePermission'
+import { usePermissions } from '../../hooks/usePermissions'
 import {
   LEAD_STAGE_LABELS,
   LEAD_STAGE_COLORS,
@@ -41,7 +41,7 @@ type Tab = 'overview' | 'activity' | 'calls'
 
 export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onLeadDeleted }: Props) {
   const { role, user, profile } = useAuth()
-  const { can } = usePermission(role)
+  const { can } = usePermissions()
   const queryClient = useQueryClient()
   const isAdmin = profile?.role === 'admin'
 
