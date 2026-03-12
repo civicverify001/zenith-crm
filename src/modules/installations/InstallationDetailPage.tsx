@@ -69,25 +69,52 @@ export function InstallationDetailPage() {
     enabled: !!currentJob?.id && currentJob?.status === 'complete',
   })
 
-  // ── Install fee: fetch from accepted quote linked to this job's opportunity ──
+  // ── Install fee: fetch from accepted/signed quote linked to this job ──
+  // Layer 1: quote by lead_id OR opportunity_id, status IN (accepted, signed)
+  // Layer 2: quote by customer_id if Layer 1 misses (covers CustomerQuotesTab-created quotes)
   const { data: installFeeData } = useQuery({
     queryKey: ['job_install_fee', currentJob?.id],
     queryFn: async () => {
-      if (!currentJob?.lead_id) return { installFee: 0, customerName: currentJob?.customer_name_snapshot || 'Customer' }
+      const fallback = { installFee: 0, customerName: currentJob?.customer_name_snapshot || 'Customer' }
 
-      // Get accepted quote for this opportunity
-      const { data: quote } = await supabase
-        .from('quotes')
-        .select('install_fee, customer_name')
-        .eq('opportunity_id', currentJob.lead_id)
-        .eq('status', 'accepted')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
+      // Layer 1: lead_id / opportunity_id
+      let quote: any = null
+      if (currentJob?.lead_id) {
+        const { data: q } = await supabase
+          .from('quotes')
+          .select('install_fee, customer_name, customer_id')
+          .or(`opportunity_id.eq.${currentJob.lead_id},lead_id.eq.${currentJob.lead_id}`)
+          .in('status', ['accepted', 'signed'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        quote = q || null
+      }
 
+      // Layer 2: customer_id fallback (when quote has no lead_id)
+      if (!quote) {
+        const { data: cust } = await supabase
+          .from('customers')
+          .select('id')
+          .eq('job_id', currentJob!.id)
+          .maybeSingle()
+        if (cust?.id) {
+          const { data: q } = await supabase
+            .from('quotes')
+            .select('install_fee, customer_name')
+            .eq('customer_id', cust.id)
+            .in('status', ['accepted', 'signed'])
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          quote = q || null
+        }
+      }
+
+      if (!quote) return fallback
       return {
-        installFee: quote?.install_fee ? parseFloat(quote.install_fee) : 0,
-        customerName: quote?.customer_name || currentJob?.customer_name_snapshot || 'Customer',
+        installFee: quote.install_fee ? parseFloat(quote.install_fee) : 0,
+        customerName: quote.customer_name || currentJob?.customer_name_snapshot || 'Customer',
       }
     },
     enabled: !!currentJob?.id && (currentJob?.status === 'in_progress' || currentJob?.status === 'scheduled'),
