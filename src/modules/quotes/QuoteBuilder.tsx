@@ -81,7 +81,7 @@ function todayStr() {
   return new Date().toISOString().split('T')[0]
 }
 
-function expiryStr(days = 30) {
+function expiryStr(days = 14) {
   const d = new Date()
   d.setDate(d.getDate() + days)
   return d.toISOString().split('T')[0]
@@ -122,7 +122,7 @@ export function QuoteBuilder({
     existingQuote?.notes || ESTIMATION_DEFAULT
   )
   const [validUntil, setValidUntil] = useState(
-    existingQuote?.valid_until || expiryStr(30)
+    existingQuote?.valid_until || expiryStr(14)
   )
   const [lineItems, setLineItems] = useState<DraftLineItem[]>(
     existingQuote?.line_items?.map((li) => ({
@@ -1208,3 +1208,4 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
     </div>
   )
 }
+

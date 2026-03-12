@@ -359,6 +359,11 @@ export function QuotesPage() {
                         <span style={{ fontSize: 11, fontWeight: 700, color: sc.text, background: sc.bg, padding: '3px 8px', borderRadius: 6 }}>
                           {STATUS_LABELS[q.status]}
                         </span>
+                        {(q.view_count || 0) > 0 && (
+                          <span style={{ fontSize: 10, fontWeight: 600, color: '#60a5fa', background: 'rgba(96,165,250,0.15)', padding: '2px 6px', borderRadius: 6, marginLeft: 4 }}>
+                            👁 {q.view_count}
+                          </span>
+                        )}
                       </td>
                       <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 12, color: '#64748b' }}>
                         {fmtDate(q.valid_until || null)}
@@ -403,3 +408,4 @@ export function QuotesPage() {
     </div>
   )
 }
+

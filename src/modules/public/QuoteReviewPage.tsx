@@ -30,7 +30,7 @@ interface Quote {
   deposit_amount: number
   deposit_type: string
   notes: string
-  expires_at: string
+  valid_until: string
   created_at: string
   created_by_name: string | null
   signed_at: string | null
@@ -507,7 +507,7 @@ export function QuoteReviewPage() {
   // Always derived from commercial_type — never from quote_type
   const flowType: 'rental' | 'purchase' | 'finance' =
     quote?.commercial_type === 'rental' ? 'rental'
-    : quote?.commercial_type === 'finance' ? 'finance'
+    : quote?.commercial_type === 'financed' ? 'finance'
     : 'purchase'
 
   // ── Step bar config per flow ───────────────────────────────────
@@ -597,8 +597,19 @@ export function QuoteReviewPage() {
     try {
       const { data: q, error: qErr } = await supabase.from('quotes').select('*').eq('public_token', t).single()
       if (qErr || !q) { setStep('error'); setError('Quote not found.'); return }
-      if (q.expires_at && new Date(q.expires_at) < new Date()) { setStep('expired'); return }
+      if (q.valid_until && new Date(q.valid_until) < new Date()) { setStep('expired'); return }
       if (['accepted', 'declined', 'void'].includes(q.status)) { setStep('already_complete'); setQuote(q); return }
+
+      // ── Track view: increment count, set viewed_at, mark as viewed ──
+      const viewUpdate: Record<string, any> = {
+        view_count: (q.view_count || 0) + 1,
+        viewed_at: q.viewed_at || new Date().toISOString(),
+      }
+      if (q.status === 'sent') viewUpdate.status = 'viewed'
+      await supabase.from('quotes').update(viewUpdate).eq('id', q.id)
+      q.view_count = viewUpdate.view_count
+      q.viewed_at = viewUpdate.viewed_at
+      if (viewUpdate.status) q.status = viewUpdate.status
 
       if (q.customer_id) {
         const { data: cust } = await supabase.from('customers')
@@ -974,7 +985,7 @@ export function QuoteReviewPage() {
                   </div>
                   <div className="text-right">
                     <div className="text-xs text-blue-300">Expires</div>
-                    <div className="text-white font-medium text-sm">{quote.expires_at ? new Date(quote.expires_at).toLocaleDateString() : '—'}</div>
+                    <div className="text-white font-medium text-sm">{quote.valid_until ? new Date(quote.valid_until).toLocaleDateString() : '—'}</div>
                   </div>
                 </div>
                 <div className="flex gap-8 mt-4 pt-4 border-t border-blue-800">
@@ -984,7 +995,7 @@ export function QuoteReviewPage() {
                   </div>
                   <div>
                     <div className="text-xs text-blue-300 uppercase tracking-wide">Expiration</div>
-                    <div className="text-white text-sm font-medium">{quote.expires_at ? new Date(quote.expires_at).toLocaleDateString() : '—'}</div>
+                    <div className="text-white text-sm font-medium">{quote.valid_until ? new Date(quote.valid_until).toLocaleDateString() : '—'}</div>
                   </div>
                   <div>
                     <div className="text-xs text-blue-300 uppercase tracking-wide">Sales Consultant</div>
@@ -1130,3 +1141,4 @@ export function QuoteReviewPage() {
     </div>
   )
 }
+

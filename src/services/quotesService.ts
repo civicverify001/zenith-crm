@@ -43,6 +43,7 @@ export interface Quote {
   valid_until?: string | null
   sent_at?: string | null
   viewed_at?: string | null
+  view_count?: number
   accepted_at?: string | null
   declined_at?: string | null
   accept_token?: string | null
@@ -394,3 +395,4 @@ export const TYPE_COLORS: Record<CommercialType, string> = {
   purchase: '#4ade80',
   financed: '#f472b6',
 }
+
