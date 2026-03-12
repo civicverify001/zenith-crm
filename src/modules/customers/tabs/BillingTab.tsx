@@ -352,7 +352,6 @@ function AddBankAccountForm({
         <div className="text-sm font-semibold text-slate-200">🏦 Add Bank Account (ACH)</div>
         <div className="text-xs text-slate-400 mb-2">Lower fees than cards — 0.8% capped at $5/transaction</div>
 
-        {/* Option A — Financial Connections */}
         <button
           onClick={handleFinancialConnections}
           disabled={loading}
@@ -370,7 +369,6 @@ function AddBankAccountForm({
           </div>
         </button>
 
-        {/* Option B — Manual */}
         <button
           onClick={() => setMode('manual')}
           className="w-full rounded-xl p-4 text-left transition-all"
@@ -593,6 +591,10 @@ export function BillingTab({ customerId, customer }: Props) {
   const [monthlyDraft, setMonthlyDraft] = useState('')
   const [monthlyLoading, setMonthlyLoading] = useState(false)
   const [monthlyError, setMonthlyError] = useState('')
+  const [editingDay, setEditingDay] = useState(false)
+  const [dayDraft, setDayDraft] = useState('')
+  const [dayLoading, setDayLoading] = useState(false)
+  const [dayError, setDayError] = useState('')
 
   const { data: paymentMethods = [], isLoading: pmLoading } = useQuery({
     queryKey: ['payment-methods', customerId],
@@ -636,6 +638,26 @@ export function BillingTab({ customerId, customer }: Props) {
       setMonthlyError(e.message || 'Failed to save')
     } finally {
       setMonthlyLoading(false)
+    }
+  }
+
+  async function saveBillingDay() {
+    if (!activeContract) return
+    const parsed = parseInt(dayDraft, 10)
+    if (isNaN(parsed) || parsed < 1 || parsed > 31) { setDayError('Enter a day between 1 and 31'); return }
+    setDayLoading(true); setDayError('')
+    try {
+      const { error } = await supabase
+        .from('contracts')
+        .update({ billing_day: parsed })
+        .eq('id', activeContract.id)
+      if (error) throw error
+      setEditingDay(false)
+      invalidate()
+    } catch (e: any) {
+      setDayError(e.message || 'Failed to save')
+    } finally {
+      setDayLoading(false)
     }
   }
 
@@ -709,22 +731,63 @@ export function BillingTab({ customerId, customer }: Props) {
             </div>
 
             <div className="space-y-2">
-              {/* Contract number + type */}
+              {/* Contract number */}
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-400">Contract</span>
                 <span className="text-slate-200 font-medium">{activeContract.contract_number}</span>
               </div>
 
-              {/* Billing day */}
-              {activeContract.billing_day && (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-400">Charges on</span>
-                  <span className="text-slate-200 font-medium">
-                    {activeContract.billing_day === 1 ? '1st' :
-                     activeContract.billing_day === 2 ? '2nd' :
-                     activeContract.billing_day === 3 ? '3rd' :
-                     `${activeContract.billing_day}th`} of each month
-                  </span>
+              {/* Billing day — editable */}
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">Charges on</span>
+                {editingDay ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={31}
+                      value={dayDraft}
+                      onChange={e => setDayDraft(e.target.value)}
+                      autoFocus
+                      className="w-14 text-sm rounded-lg px-2 py-1 outline-none text-right"
+                      style={{ backgroundColor: '#0f172a', border: '1px solid rgba(96,165,250,0.4)', color: '#e2e8f0' }}
+                    />
+                    <span className="text-slate-400">of month</span>
+                    <button
+                      onClick={saveBillingDay}
+                      disabled={dayLoading}
+                      className="text-xs px-2 py-1 rounded-lg font-semibold disabled:opacity-50"
+                      style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}>
+                      {dayLoading ? '…' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => { setEditingDay(false); setDayError('') }}
+                      className="text-xs text-slate-400 hover:text-slate-200">
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-200 font-medium">
+                      {activeContract.billing_day
+                        ? `${activeContract.billing_day === 1 ? '1st' : activeContract.billing_day === 2 ? '2nd' : activeContract.billing_day === 3 ? '3rd' : `${activeContract.billing_day}th`} of each month`
+                        : 'Not set'}
+                    </span>
+                    {canEditMonthly && (
+                      <button
+                        onClick={() => { setDayDraft(String(activeContract.billing_day ?? '')); setEditingDay(true); setDayError('') }}
+                        className="text-muted hover:text-slate-300 transition-colors"
+                        title="Edit billing day"
+                        style={{ lineHeight: 1 }}>
+                        ✏️
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              {dayError && (
+                <div className="text-xs rounded-lg px-2 py-1" style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                  {dayError}
                 </div>
               )}
 
@@ -771,7 +834,6 @@ export function BillingTab({ customerId, customer }: Props) {
                   </div>
                 )}
               </div>
-
               {monthlyError && (
                 <div className="text-xs rounded-lg px-2 py-1" style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
                   {monthlyError}
