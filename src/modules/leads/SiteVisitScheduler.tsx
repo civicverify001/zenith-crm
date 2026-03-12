@@ -87,23 +87,15 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
   // Load reps
   useEffect(() => {
     async function loadReps() {
+      // Match fetchReps pattern from leads.api.ts
       const { data } = await supabase
         .from('user_profiles')
         .select('id, full_name, role')
-        .eq('role', 'salesrep')
+        .in('role', ['salesrep', 'admin'])
+        .eq('is_active', true)
         .order('full_name')
 
-      if (data && data.length > 0) {
-        setReps(data)
-      } else {
-        // Fallback: try profiles table or users
-        const { data: fallback } = await supabase
-          .from('profiles')
-          .select('id, full_name, role')
-          .eq('role', 'salesrep')
-          .order('full_name')
-        if (fallback) setReps(fallback)
-      }
+      if (data) setReps(data)
     }
     loadReps()
   }, [])
