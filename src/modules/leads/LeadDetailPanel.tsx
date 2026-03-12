@@ -19,6 +19,7 @@ import { moveStage } from '../../services/leadMutations'
 import { QuoteBuilder } from '../quotes/QuoteBuilder'
 import QualifyingChecklist from './QualifyingChecklist'
 import SiteVisitScheduler from './SiteVisitScheduler'
+import SiteVisitChecklist from './SiteVisitChecklist'
 
 interface Props {
   lead: Lead
@@ -62,6 +63,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   const [qualifyingComplete, setQualifyingComplete] = useState(false)
   const [showVisitScheduler, setShowVisitScheduler] = useState(false)
   const [visitInfo, setVisitInfo] = useState<{ rep_name: string; date: string; hour: number } | null>(null)
+  const [siteVisitComplete, setSiteVisitComplete] = useState(false)
 
   const { mutateAsync: assignRep } = useAssignRep()
   const { mutateAsync: logCall, isPending: callPending } = useLogCallAttempt()
@@ -306,6 +308,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
               onCreateQuote={handleCreateQuote}
               qualifyingComplete={qualifyingComplete}
               onScheduleVisit={() => setShowVisitScheduler(true)}
+              siteVisitComplete={siteVisitComplete}
             />
 
             {preparingQuote && (
@@ -357,6 +360,11 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                       </div>
                     </div>
                   </div>
+                )}
+
+                {/* Site Visit Checklist — shows at site_visit_scheduled stage */}
+                {lead.stage === 'site_visit_scheduled' && (
+                  <SiteVisitChecklist lead={lead} onLeadUpdated={handleLeadUpdated} onCompletionChange={setSiteVisitComplete} />
                 )}
 
                 {lead.stage === 'quote_sent' && quoteLink && (

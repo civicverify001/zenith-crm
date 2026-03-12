@@ -52,7 +52,7 @@ const FIELD_TYPE_LABELS: Record<string, string> = {
   prefill_source: 'Auto-fill: Lead Source',
 }
 
-type AdminTab = 'terms' | 'qualifying'
+type AdminTab = 'terms' | 'qualifying' | 'site_visit'
 
 export default function AdminSettingsPage() {
   const { profile } = useAuth()
@@ -71,6 +71,7 @@ export default function AdminSettingsPage() {
 
   const tabs: { key: AdminTab; label: string; icon: string }[] = [
     { key: 'qualifying', label: 'Qualifying Checklist', icon: '✅' },
+    { key: 'site_visit', label: 'Site Visit Checklist', icon: '📋' },
     { key: 'terms', label: 'Term Blocks', icon: '📄' },
   ]
 
@@ -102,6 +103,7 @@ export default function AdminSettingsPage() {
       <div className="flex-1 overflow-hidden">
         {activeTab === 'terms' && <TermBlocksTab />}
         {activeTab === 'qualifying' && <QualifyingQuestionsTab />}
+        {activeTab === 'site_visit' && <SiteVisitQuestionsTab />}
       </div>
     </div>
   )
@@ -434,7 +436,257 @@ function QualifyingQuestionsTab() {
 }
 
 // ════════════════════════════════════════════════════════════════
-// TAB 2: TERM BLOCKS (existing logic, unchanged)
+// TAB 2: SITE VISIT CHECKLIST
+// ════════════════════════════════════════════════════════════════
+
+const SV_FIELD_TYPE_LABELS: Record<string, string> = {
+  dropdown: 'Dropdown',
+  yes_no: 'Yes / No',
+  number: 'Number',
+  text: 'Text Input',
+  photo: 'Photo Upload',
+}
+
+interface SiteVisitQuestion {
+  id: string
+  question_text: string
+  field_type: string
+  options: string[]
+  is_required: boolean
+  requires_photo: boolean
+  sort_order: number
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+function SiteVisitQuestionsTab() {
+  const [questions, setQuestions] = useState<SiteVisitQuestion[]>([])
+  const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState<SiteVisitQuestion | null>(null)
+  const [showAddForm, setShowAddForm] = useState(false)
+
+  const [formText, setFormText] = useState('')
+  const [formType, setFormType] = useState('dropdown')
+  const [formOptions, setFormOptions] = useState('')
+  const [formRequired, setFormRequired] = useState(true)
+  const [formRequiresPhoto, setFormRequiresPhoto] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => { fetchQuestions() }, [])
+
+  async function fetchQuestions() {
+    setLoading(true)
+    const { data } = await supabase
+      .from('site_visit_questions')
+      .select('*')
+      .order('sort_order')
+    if (data) setQuestions(data)
+    setLoading(false)
+  }
+
+  function startAdd() {
+    setEditing(null)
+    setFormText(''); setFormType('dropdown'); setFormOptions(''); setFormRequired(true); setFormRequiresPhoto(false)
+    setShowAddForm(true)
+  }
+
+  function startEdit(q: SiteVisitQuestion) {
+    setEditing(q)
+    setFormText(q.question_text)
+    setFormType(q.field_type)
+    setFormOptions(Array.isArray(q.options) ? q.options.join(', ') : '')
+    setFormRequired(q.is_required)
+    setFormRequiresPhoto(q.requires_photo)
+    setShowAddForm(true)
+  }
+
+  async function saveQuestion() {
+    if (!formText.trim()) return
+    setSaving(true)
+    const optionsArray = formType === 'dropdown' ? formOptions.split(',').map(s => s.trim()).filter(Boolean) : []
+
+    if (editing) {
+      await supabase.from('site_visit_questions').update({
+        question_text: formText.trim(), field_type: formType, options: optionsArray,
+        is_required: formRequired, requires_photo: formRequiresPhoto || formType === 'photo',
+      }).eq('id', editing.id)
+    } else {
+      const maxOrder = questions.reduce((max, q) => Math.max(max, q.sort_order), 0)
+      await supabase.from('site_visit_questions').insert({
+        question_text: formText.trim(), field_type: formType, options: optionsArray,
+        is_required: formRequired, requires_photo: formRequiresPhoto || formType === 'photo',
+        sort_order: maxOrder + 1, is_active: true,
+      })
+    }
+    setShowAddForm(false); setEditing(null); setSaving(false); fetchQuestions()
+  }
+
+  async function toggleRequired(q: SiteVisitQuestion) {
+    await supabase.from('site_visit_questions').update({ is_required: !q.is_required }).eq('id', q.id)
+    setQuestions(prev => prev.map(x => x.id === q.id ? { ...x, is_required: !x.is_required } : x))
+  }
+
+  async function toggleActive(q: SiteVisitQuestion) {
+    await supabase.from('site_visit_questions').update({ is_active: !q.is_active }).eq('id', q.id)
+    setQuestions(prev => prev.map(x => x.id === q.id ? { ...x, is_active: !x.is_active } : x))
+  }
+
+  async function moveQuestion(q: SiteVisitQuestion, direction: 'up' | 'down') {
+    const idx = questions.findIndex(x => x.id === q.id)
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (swapIdx < 0 || swapIdx >= questions.length) return
+    const other = questions[swapIdx]
+    await supabase.from('site_visit_questions').update({ sort_order: other.sort_order }).eq('id', q.id)
+    await supabase.from('site_visit_questions').update({ sort_order: q.sort_order }).eq('id', other.id)
+    fetchQuestions()
+  }
+
+  async function deleteQuestion(q: SiteVisitQuestion) {
+    if (!confirm(`Delete "${q.question_text}"?`)) return
+    await supabase.from('site_visit_questions').delete().eq('id', q.id)
+    fetchQuestions()
+  }
+
+  const activeCount = questions.filter(q => q.is_active).length
+  const requiredCount = questions.filter(q => q.is_active && q.is_required).length
+
+  return (
+    <div className="p-6 overflow-y-auto h-full">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Site Visit Checklist</h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {activeCount} active items · {requiredCount} required
+            <span className="text-gray-400 ml-2">— Sales reps complete these during site visits</span>
+          </p>
+        </div>
+        <button onClick={startAdd} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors">
+          + Add Item
+        </button>
+      </div>
+
+      {/* Add/Edit form */}
+      {showAddForm && (
+        <div className="mb-6 bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+          <h3 className="font-semibold text-gray-900 mb-4">{editing ? 'Edit Item' : 'New Item'}</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Item Text</label>
+              <input type="text" value={formText} onChange={e => setFormText(e.target.value)} placeholder="e.g., Under-sink photo"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Answer Type</label>
+                <select value={formType} onChange={e => { setFormType(e.target.value); if (e.target.value === 'photo') setFormRequiresPhoto(true) }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  {Object.entries(SV_FIELD_TYPE_LABELS).map(([key, label]) => (
+                    <option key={key} value={key}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2 pt-6">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={formRequired} onChange={e => setFormRequired(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                  <span className="text-sm font-medium text-gray-700">Required</span>
+                </label>
+              </div>
+            </div>
+            {formType === 'dropdown' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Options <span className="font-normal text-gray-400">(comma separated)</span></label>
+                <input type="text" value={formOptions} onChange={e => setFormOptions(e.target.value)} placeholder="e.g., Yes, No, Needs Work"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            )}
+            <div className="flex gap-3 pt-2">
+              <button onClick={() => { setShowAddForm(false); setEditing(null) }} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+              <button onClick={saveQuestion} disabled={saving || !formText.trim()}
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                {saving ? 'Saving...' : editing ? 'Update Item' : 'Add Item'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Questions list */}
+      {loading ? (
+        <div className="text-center text-gray-400 py-12">Loading...</div>
+      ) : questions.length === 0 ? (
+        <div className="text-center py-12">
+          <div className="text-4xl mb-3">📋</div>
+          <p className="text-gray-500">No site visit items yet.</p>
+        </div>
+      ) : (
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3 w-10">#</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">Item</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3 w-28">Type</th>
+                <th className="text-center text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3 w-24">Required</th>
+                <th className="text-center text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3 w-20">Active</th>
+                <th className="text-center text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3 w-24">Order</th>
+                <th className="text-right text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3 w-28">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {questions.map((q, idx) => (
+                <tr key={q.id} className={`hover:bg-gray-50 transition-colors ${!q.is_active ? 'opacity-40' : ''}`}>
+                  <td className="px-4 py-3 text-sm text-gray-400 font-mono">{idx + 1}</td>
+                  <td className="px-4 py-3">
+                    <div className="text-sm font-medium text-gray-900">
+                      {q.field_type === 'photo' && '📷 '}{q.question_text}
+                    </div>
+                    {q.field_type === 'dropdown' && q.options?.length > 0 && (
+                      <div className="text-xs text-gray-400 mt-0.5">Options: {q.options.join(' · ')}</div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                      {SV_FIELD_TYPE_LABELS[q.field_type] || q.field_type}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <button onClick={() => toggleRequired(q)}
+                      className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors ${q.is_required ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                      {q.is_required ? 'Required' : 'Optional'}
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <button onClick={() => toggleActive(q)}
+                      className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors ${q.is_active ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                      {q.is_active ? 'Active' : 'Off'}
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <div className="flex items-center justify-center gap-1">
+                      <button onClick={() => moveQuestion(q, 'up')} disabled={idx === 0} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-sm">▲</button>
+                      <button onClick={() => moveQuestion(q, 'down')} disabled={idx === questions.length - 1} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-sm">▼</button>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <button onClick={() => startEdit(q)} className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
+                      <button onClick={() => deleteQuestion(q)} className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════
+// TAB 3: TERM BLOCKS (existing logic, unchanged)
 // ════════════════════════════════════════════════════════════════
 function TermBlocksTab() {
   const [blocks, setBlocks] = useState<TermBlock[]>([])

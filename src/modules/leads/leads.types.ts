@@ -50,6 +50,9 @@ export interface Lead {
   // Qualifying checklist
   qualifying_answers: Record<string, any> | null
 
+  // Site visit checklist
+  site_visit_answers: Record<string, any> | null
+
   // Joined
   assigned_rep?: { id: string; full_name: string; role: string } | null
   _call_count?: number

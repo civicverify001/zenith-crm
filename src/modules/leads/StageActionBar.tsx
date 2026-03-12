@@ -100,9 +100,11 @@ interface Props {
   qualifyingComplete?: boolean
   /** Called when "Schedule Visit" is clicked — parent opens scheduler */
   onScheduleVisit?: () => void
+  /** Whether all required site visit checklist items are done */
+  siteVisitComplete?: boolean
 }
 
-export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingComplete, onScheduleVisit }: Props) {
+export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingComplete, onScheduleVisit, siteVisitComplete }: Props) {
   const { user, profile } = useAuth()
   const [activeModal, setActiveModal] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
@@ -119,6 +121,11 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
 
     // Hand off to parent for quote creation
     if (actionDef.action === 'create_quote') {
+      // Gate: site_visit_scheduled requires all site visit checklist items complete
+      if (lead.stage === 'site_visit_scheduled' && !siteVisitComplete) {
+        setError('Complete all required site visit checklist items before building a quote.')
+        return
+      }
       onCreateQuote?.()
       return
     }
@@ -211,6 +218,17 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
           <div>
             <div className="text-sm font-bold" style={{ color: '#fde047' }}>Checklist Incomplete</div>
             <div className="text-xs mt-0.5" style={{ color: '#fef08a' }}>Answer all required questions below before moving to Qualified.</div>
+          </div>
+        </div>
+      )}
+
+      {/* Persistent warning when site visit checklist is incomplete */}
+      {lead.stage === 'site_visit_scheduled' && !siteVisitComplete && (
+        <div className="flex items-start gap-2 rounded-xl px-4 py-3" style={{ backgroundColor: '#581c87', border: '2px solid #a855f7' }}>
+          <span className="text-lg leading-none">📋</span>
+          <div>
+            <div className="text-sm font-bold" style={{ color: '#d8b4fe' }}>Site Visit Checklist Incomplete</div>
+            <div className="text-xs mt-0.5" style={{ color: '#e9d5ff' }}>Complete all required items below before building a quote.</div>
           </div>
         </div>
       )}
