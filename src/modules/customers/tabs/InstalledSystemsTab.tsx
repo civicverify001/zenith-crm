@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import { useInstalledSystems, useWarrantyRecords } from '../useCustomers'
 import { OWNERSHIP_LABELS } from '../customers.types'
+import { supabase } from '../../../lib/supabase'
 
 interface Props { customerId: string }
 
@@ -14,9 +16,32 @@ function formatDate(d: string | null) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function fmt(n: number | null | undefined) {
+  if (!n) return null
+  return `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
 export function InstalledSystemsTab({ customerId }: Props) {
   const { data: systems, isLoading } = useInstalledSystems(customerId)
   const { data: warranties } = useWarrantyRecords(customerId)
+
+  // Monthly rental amount comes from agreements (not stored on installed_systems)
+  const [monthlyAmount, setMonthlyAmount] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!customerId) return
+    supabase
+      .from('agreements')
+      .select('monthly_amount')
+      .eq('customer_id', customerId)
+      .eq('status', 'signed')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data?.monthly_amount) setMonthlyAmount(data.monthly_amount)
+      })
+  }, [customerId])
 
   if (isLoading) return <p className="text-sm text-muted text-center py-8">Loading systems...</p>
   if (!systems?.length) return <p className="text-sm text-muted text-center py-8">No installed systems.</p>
@@ -24,7 +49,6 @@ export function InstalledSystemsTab({ customerId }: Props) {
   const active = (systems as any[]).filter(s => s.is_active !== false)
   const inactive = (systems as any[]).filter(s => s.is_active === false)
 
-  // Map warranties by system id
   const warrantyMap: Record<string, any> = {}
   for (const w of (warranties || []) as any[]) {
     warrantyMap[w.installed_system_id] = w
@@ -37,15 +61,20 @@ export function InstalledSystemsTab({ customerId }: Props) {
         const warranty = warrantyMap[sys.id]
         const wStatus = warranty?.warranty_status || 'valid'
         const wStyle = WARRANTY_STATUS_STYLES[wStatus] || WARRANTY_STATUS_STYLES.valid
+        const isRental = sys.ownership_type === 'rented'
+        const isPurchased = sys.ownership_type === 'purchased'
+
+        const ownershipColor = isPurchased
+          ? { bg: 'rgba(34,197,94,0.15)', color: '#4ade80' }
+          : { bg: 'rgba(245,158,11,0.15)', color: '#fbbf24' }
 
         return (
           <div key={sys.id} className="bg-card border border-border rounded-xl p-4">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-3">
               <h4 className="text-sm font-bold text-white">{sys.name_snapshot || sys.system_type}</h4>
               <div className="flex items-center gap-2">
                 <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{
-                  backgroundColor: sys.ownership_type === 'purchased' ? 'rgba(34,197,94,0.15)' : 'rgba(245,158,11,0.15)',
-                  color: sys.ownership_type === 'purchased' ? '#4ade80' : '#fbbf24',
+                  backgroundColor: ownershipColor.bg, color: ownershipColor.color,
                 }}>
                   {OWNERSHIP_LABELS[sys.ownership_type as keyof typeof OWNERSHIP_LABELS] || sys.ownership_type}
                 </span>
@@ -63,15 +92,46 @@ export function InstalledSystemsTab({ customerId }: Props) {
               </div>
             )}
 
+            {/* Pricing summary bar */}
+            {isRental && (monthlyAmount || sys.install_fee_snapshot) && (
+              <div className="flex items-center gap-4 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 mb-3">
+                {monthlyAmount && (
+                  <div>
+                    <div className="text-[10px] text-amber-400/70 font-semibold uppercase tracking-wide">Monthly Rental</div>
+                    <div className="text-sm font-bold text-amber-300">{fmt(monthlyAmount)}/mo</div>
+                  </div>
+                )}
+                {sys.install_fee_snapshot > 0 && (
+                  <div>
+                    <div className="text-[10px] text-amber-400/70 font-semibold uppercase tracking-wide">Install Fee Paid</div>
+                    <div className="text-sm font-bold text-amber-300">{fmt(sys.install_fee_snapshot)}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {isPurchased && sys.retail_price_snapshot && (
+              <div className="flex items-center gap-4 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2 mb-3">
+                <div>
+                  <div className="text-[10px] text-green-400/70 font-semibold uppercase tracking-wide">Purchase Price</div>
+                  <div className="text-sm font-bold text-green-300">{fmt(sys.retail_price_snapshot)}</div>
+                </div>
+                {sys.install_fee_snapshot > 0 && (
+                  <div>
+                    <div className="text-[10px] text-green-400/70 font-semibold uppercase tracking-wide">Install Fee Paid</div>
+                    <div className="text-sm font-bold text-green-300">{fmt(sys.install_fee_snapshot)}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
               {sys.sku_snapshot && <Field label="SKU" value={sys.sku_snapshot} />}
               {sys.serial_number && <Field label="Serial" value={sys.serial_number} />}
               <Field label="Installed" value={formatDate(sys.install_date)} />
-              {sys.retail_price_snapshot && <Field label="Retail Price" value={`$${Number(sys.retail_price_snapshot).toLocaleString()}`} />}
-              {sys.install_fee_snapshot > 0 && <Field label="Install Fee" value={`$${Number(sys.install_fee_snapshot).toLocaleString()}`} />}
             </div>
 
-            {/* Warranty details from warranty_records */}
+            {/* Warranty details */}
             {warranty && (
               <div className="mt-3 pt-2 border-t border-border">
                 <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-1">Warranty</div>
