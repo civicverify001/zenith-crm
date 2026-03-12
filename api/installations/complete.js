@@ -45,31 +45,23 @@ module.exports = async function handler(req, res) {
     }
 
     // ── 3. Get accepted quote (for pricing snapshots + install fee) ───
-    let installFee = 0;
-    let acceptedQuote = null;
+    // ── 3. Get accepted quote (for pricing snapshots + install fee) ───
+let installFee = 0;
+let acceptedQuote = null;
 
-    if (job.lead_id) {
-      // Try opportunity_id first (older quotes), then lead_id (newer quotes)
-      let { data: quote } = await supabase
-        .from('quotes')
-        .select('id, install_fee, monthly_amount, customer_name, product_id, quote_type, commercial_type')
-        .eq('opportunity_id', job.lead_id)
-        .in('status', ['accepted', 'signed'])
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+if (job.lead_id) {
+  const { data: quote } = await supabase
+    .from('quotes')
+    .select('id, install_fee, monthly_amount, customer_name, product_id, quote_type, commercial_type')
+    .or(`lead_id.eq.${job.lead_id},opportunity_id.eq.${job.lead_id}`)
+    .in('status', ['accepted', 'signed'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-      if (!quote) {
-        const { data: q2 } = await supabase
-          .from('quotes')
-          .select('id, install_fee, monthly_amount, customer_name, product_id, quote_type, commercial_type')
-          .eq('lead_id', job.lead_id)
-          .in('status', ['accepted', 'signed'])
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        quote = q2;
-      }
+  acceptedQuote = quote;
+  if (quote?.install_fee) installFee = parseFloat(quote.install_fee);
+}
 
       acceptedQuote = quote;
       if (quote?.install_fee) installFee = parseFloat(quote.install_fee);
