@@ -38,7 +38,7 @@ export async function fetchWarrantyRecords(customerId: string) {
 }
 
 export async function fetchRentalContracts(customerId: string) {
-  const { data, error } = await supabase.from('rental_contracts').select('*').eq('customer_id', customerId)
+  const { data, error } = await supabase.from('contracts').select('*').eq('customer_id', customerId)
   if (error) throw new Error(error.message)
   return data || []
 }
