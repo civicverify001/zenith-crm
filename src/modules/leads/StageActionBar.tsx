@@ -198,11 +198,11 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
     <>
       {/* Persistent warning when qualifying checklist is incomplete */}
       {lead.stage === 'qualifying' && !qualifyingComplete && (
-        <div className="flex items-start gap-2 bg-amber-500/15 border border-amber-500/30 rounded-xl px-3 py-2.5">
-          <span className="text-amber-400 text-sm leading-none mt-0.5">⚠️</span>
+        <div className="flex items-start gap-2 bg-yellow-500/20 border-2 border-yellow-500/60 rounded-xl px-4 py-3">
+          <span className="text-lg leading-none">⚠️</span>
           <div>
-            <div className="text-xs font-bold text-amber-300">Qualifying Checklist Incomplete</div>
-            <div className="text-xs text-amber-400/80 mt-0.5">All required questions must be answered before this lead can move to Qualified.</div>
+            <div className="text-sm font-bold text-yellow-300">Checklist Incomplete</div>
+            <div className="text-xs text-yellow-200 mt-0.5">Answer all required questions below before moving to Qualified.</div>
           </div>
         </div>
       )}
@@ -228,9 +228,9 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 bg-red-500/15 border border-red-500/30 rounded-xl px-3 py-2.5 mt-2 animate-pulse">
-          <span className="text-red-400 text-sm leading-none mt-0.5">🚫</span>
-          <div className="text-xs font-semibold text-red-300">{error}</div>
+        <div className="flex items-start gap-2 bg-red-500/20 border-2 border-red-500/60 rounded-xl px-4 py-3 mt-2">
+          <span className="text-lg leading-none">🚫</span>
+          <div className="text-sm font-bold text-red-300">{error}</div>
         </div>
       )}
 
