@@ -83,12 +83,12 @@ agreement_signed: [
   ],
 }
 
-const VARIANT_CLASSES: Record<string, string> = {
-  primary:   'bg-accent/15 text-accent border-accent/30 hover:bg-accent/25',
-  success:   'bg-green/15 text-green border-green/30 hover:bg-green/25',
-  danger:    'bg-red-500/15 text-red-400 border-red-500/30 hover:bg-red-500/25',
-  warning:   'bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25',
-  secondary: 'bg-border text-slate-300 border-border hover:bg-muted/30',
+const VARIANT_STYLES: Record<string, { bg: string; color: string; border: string; hoverBg: string }> = {
+  primary:   { bg: 'rgba(96,165,250,0.15)', color: '#60a5fa', border: 'rgba(96,165,250,0.3)', hoverBg: 'rgba(96,165,250,0.25)' },
+  success:   { bg: 'rgba(74,222,128,0.15)', color: '#4ade80', border: 'rgba(74,222,128,0.3)', hoverBg: 'rgba(74,222,128,0.25)' },
+  danger:    { bg: 'rgba(239,68,68,0.15)', color: '#f87171', border: 'rgba(239,68,68,0.3)', hoverBg: 'rgba(239,68,68,0.25)' },
+  warning:   { bg: 'rgba(245,158,11,0.15)', color: '#fbbf24', border: 'rgba(245,158,11,0.3)', hoverBg: 'rgba(245,158,11,0.25)' },
+  secondary: { bg: 'rgba(100,116,139,0.15)', color: '#cbd5e1', border: 'rgba(100,116,139,0.3)', hoverBg: 'rgba(100,116,139,0.25)' },
 }
 
 interface Props {
@@ -210,16 +210,18 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
       <div className="flex flex-wrap gap-1.5">
         {actions.map((actionDef) => {
           const isDisabled = actionDef.disabled?.(lead)
+          const vs = VARIANT_STYLES[actionDef.variant] || VARIANT_STYLES.secondary
           return (
             <button
               key={actionDef.action + (actionDef.targetStage || '')}
               onClick={() => !isDisabled && handleAction(actionDef)}
               disabled={!!pendingAction || isDisabled}
-              className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${
-                isDisabled
-                  ? 'bg-green/10 text-green/60 border-green/20 cursor-default'
-                  : VARIANT_CLASSES[actionDef.variant]
-              } ${pendingAction ? 'opacity-50 cursor-not-allowed' : ''}`}
+              style={{
+                backgroundColor: isDisabled ? 'rgba(74,222,128,0.1)' : vs.bg,
+                color: isDisabled ? 'rgba(74,222,128,0.6)' : vs.color,
+                border: `1px solid ${isDisabled ? 'rgba(74,222,128,0.2)' : vs.border}`,
+              }}
+              className={`text-xs px-2.5 py-1.5 rounded-lg font-medium transition-colors ${pendingAction ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               {isDisabled ? actionDef.disabledLabel : actionDef.label}
             </button>
