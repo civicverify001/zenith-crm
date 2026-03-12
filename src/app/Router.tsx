@@ -7,7 +7,7 @@ import { LoadingScreen } from '../shared/ui/LoadingScreen'
 import ProductCatalog from '../modules/products/ProductCatalogPage'
 import { FollowUpsPage } from '../modules/followups/FollowUpsPage'
 import { QuoteReviewPage } from '../modules/public/QuoteReviewPage'
-import TermsAdminPage from '../modules/admin/TermsAdminPage'
+import AdminSettingsPage from '../modules/admin/AdminSettingsPage'
 import PublicTermsPage from '../modules/public/PublicTermsPage'
 import InventoryPage from '../modules/inventory/InventoryPage'
 import UserManagementPage from '../modules/admin/UserManagementPage'
@@ -197,7 +197,7 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
 
         {/* Admin only */}
         <Route path="/admin/terms" element={
-          role === 'admin' ? <TermsAdminPage /> : <Navigate to="/dashboard" replace />
+          role === 'admin' ? <AdminSettingsPage /> : <Navigate to="/dashboard" replace />
         } />
         <Route path="/admin/users" element={
           role === 'admin' ? <UserManagementPage /> : <Navigate to="/dashboard" replace />
@@ -209,3 +209,4 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
     </AppLayout>
   )
 }
+

@@ -47,6 +47,9 @@ export interface Lead {
   followup_notes: string | null
   re_engage_date: string | null
 
+  // Qualifying checklist
+  qualifying_answers: Record<string, any> | null
+
   // Joined
   assigned_rep?: { id: string; full_name: string; role: string } | null
   _call_count?: number
@@ -137,3 +140,4 @@ export interface LeadFilters {
 
 export type LeadSortField = 'created_at' | 'updated_at' | 'full_name' | 'stage_changed_at'
 export type SortDirection = 'asc' | 'desc'
+

@@ -17,6 +17,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { moveStage } from '../../services/leadMutations'
 import { QuoteBuilder } from '../quotes/QuoteBuilder'
+import QualifyingChecklist from './QualifyingChecklist'
 
 interface Props {
   lead: Lead
@@ -289,6 +290,10 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
             {activeTab === 'overview' && (
               <div className="space-y-4">
 
+                {lead.stage === 'qualifying' && (
+                  <QualifyingChecklist lead={lead} onLeadUpdated={handleLeadUpdated} />
+                )}
+
                 {lead.stage === 'quote_sent' && quoteLink && (
                   <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
                     <div className="text-xs font-bold text-blue-400 uppercase tracking-wide mb-1">
@@ -479,3 +484,4 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     </div>
   )
 }
+
