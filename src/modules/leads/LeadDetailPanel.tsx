@@ -47,6 +47,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   const { can } = usePermissions()
   const queryClient = useQueryClient()
   const isAdmin = profile?.role === 'admin'
+  const isSalesRep = role === 'salesrep'
 
   const [lead, setLead] = useState<Lead>(initialLead)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
@@ -55,7 +56,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   const [callNotes, setCallNotes] = useState('')
   const [deleting, setDeleting] = useState(false)
 
-  // ── Quote builder state ──────────────────────────────────────
   const [showQuoteBuilder, setShowQuoteBuilder] = useState(false)
   const [pendingCustomerId, setPendingCustomerId] = useState<string | null>(null)
   const [quoteLink, setQuoteLink] = useState<string | null>(null)
@@ -102,7 +102,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
       .maybeSingle()
       .then(async ({ data }) => {
         if (data) {
-          // Get rep name
           const { data: rep } = await supabase
             .from('user_profiles')
             .select('full_name')
@@ -118,7 +117,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   async function handleVisitScheduled(visit: { rep_name: string; date: string; hour: number }) {
     setVisitInfo(visit)
     setShowVisitScheduler(false)
-    // Move stage to site_visit_scheduled
     if (user) {
       try {
         const actor = { actor_id: user.id, actor_name: profile?.full_name }
@@ -144,22 +142,17 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
     if (!confirm(`Delete lead "${lead.full_name}"?\n\nThis will also delete linked quotes, agreements, and activity. Cannot be undone.`)) return
     setDeleting(true)
     try {
-      // 1. Delete agreements linked to this lead's quotes
       const { data: quotes } = await supabase.from('quotes').select('id').eq('lead_id', lead.id)
       if (quotes?.length) {
         const quoteIds = quotes.map(q => q.id)
         await supabase.from('agreements').delete().in('quote_id', quoteIds)
         await supabase.from('quotes').delete().in('id', quoteIds)
       }
-      // 2. Delete activity + calls
       await supabase.from('lead_activity_log').delete().eq('lead_id', lead.id)
       await supabase.from('call_attempts').delete().eq('lead_id', lead.id)
-      // 3. Nullify customer FK reference
       await supabase.from('customers').update({ lead_id: null }).eq('lead_id', lead.id)
-      // 4. Delete the lead
       const { error } = await supabase.from('leads').delete().eq('id', lead.id)
       if (error) throw error
-
       queryClient.invalidateQueries({ queryKey: LEAD_KEYS.kanban() })
       queryClient.invalidateQueries({ queryKey: LEAD_KEYS.counts })
       onLeadDeleted?.(lead.id)
@@ -199,7 +192,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
           })
           .select('id')
           .single()
-
         if (error) throw error
         customerId = newCust.id
       }
@@ -273,6 +265,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {/* Delete — admin only */}
               {isAdmin && (
                 <button
                   onClick={handleDeleteLead}
@@ -294,12 +287,15 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
               <div className={`stage-badge border ${LEAD_STAGE_COLORS[lead.stage]}`}>
                 {LEAD_STAGE_LABELS[lead.stage]}
               </div>
-              <button
-                onClick={() => setShowCallModal(true)}
-                className="text-xs px-2.5 py-1 bg-green/10 text-green border border-green/30 rounded-lg hover:bg-green/20 transition-colors"
-              >
-                📞 Log Call
-              </button>
+              {/* Log Call — hidden for sales reps */}
+              {!isSalesRep && (
+                <button
+                  onClick={() => setShowCallModal(true)}
+                  className="text-xs px-2.5 py-1 bg-green/10 text-green border border-green/30 rounded-lg hover:bg-green/20 transition-colors"
+                >
+                  📞 Log Call
+                </button>
+              )}
             </div>
 
             <StageActionBar
@@ -362,11 +358,12 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                   </div>
                 )}
 
-                {/* Site Visit Checklist — shows at site_visit_scheduled stage */}
+                {/* Site Visit Checklist */}
                 {lead.stage === 'site_visit_scheduled' && (
                   <SiteVisitChecklist lead={lead} onLeadUpdated={handleLeadUpdated} onCompletionChange={setSiteVisitComplete} />
                 )}
 
+                {/* Quote link */}
                 {lead.stage === 'quote_sent' && quoteLink && (
                   <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
                     <div className="text-xs font-bold text-blue-400 uppercase tracking-wide mb-1">
@@ -440,9 +437,10 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                 <InfoRow label="Days in Stage" value={`${daysInStage} day${daysInStage !== 1 ? 's' : ''}`} />
                 <InfoRow label="Created" value={formatDate(lead.created_at)} />
 
+                {/* Assign Rep — read-only for sales reps */}
                 <div>
                   <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Assigned Rep</div>
-                  {can('leads', 'assign_rep') && reps ? (
+                  {!isSalesRep && can('leads', 'assign_rep') && reps ? (
                     <select
                       value={lead.assigned_rep_id || ''}
                       onChange={e => assignRep({ leadId: lead.id, repId: e.target.value || null })}
@@ -485,8 +483,8 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
             )}
           </div>
 
-          {/* Log Call modal */}
-          {showCallModal && (
+          {/* Log Call modal — not available to sales reps */}
+          {showCallModal && !isSalesRep && (
             <div className="absolute inset-0 bg-black/60 flex items-center justify-center p-4 z-20">
               <div className="bg-card border border-border rounded-2xl w-full max-w-sm p-5 shadow-2xl">
                 <h3 className="font-bold text-white mb-4">Log Call Attempt</h3>
@@ -569,4 +567,3 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     </div>
   )
 }
-
