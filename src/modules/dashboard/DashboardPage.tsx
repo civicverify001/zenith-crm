@@ -177,7 +177,7 @@ function useMyUpcomingVisits(userId: string | undefined, isAdmin: boolean) {
 
       let query = supabase
         .from('site_visits')
-        .select('id, lead_id, assigned_rep_id, visit_date, visit_hour, status, leads(full_name, phone)')
+        .select('id, lead_id, assigned_rep_id, visit_date, visit_hour, status')
         .gte('visit_date', today)
         .lte('visit_date', nextWeek)
         .not('status', 'eq', 'cancelled')
@@ -185,14 +185,27 @@ function useMyUpcomingVisits(userId: string | undefined, isAdmin: boolean) {
         .order('visit_hour', { ascending: true })
         .limit(10)
 
-      // Sales reps only see their own visits; admins see all
       if (!isAdmin) {
         query = query.eq('assigned_rep_id', userId)
       }
 
-      const { data, error } = await query
+      const { data: visits, error } = await query
       if (error) throw error
-      return data || []
+      if (!visits || visits.length === 0) return []
+
+      // Fetch lead names separately
+      const leadIds = [...new Set(visits.map((v: any) => v.lead_id).filter(Boolean))]
+      const { data: leads } = await supabase
+        .from('leads')
+        .select('id, full_name, phone')
+        .in('id', leadIds)
+
+      const leadMap = Object.fromEntries((leads || []).map((l: any) => [l.id, l]))
+
+      return visits.map((v: any) => ({
+        ...v,
+        lead: leadMap[v.lead_id] || null,
+      }))
     },
     enabled: !!userId,
     refetchInterval: 60_000,
