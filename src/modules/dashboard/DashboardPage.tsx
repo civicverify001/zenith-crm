@@ -177,7 +177,7 @@ function useMyUpcomingVisits(userId: string | undefined, isAdmin: boolean) {
 
       let query = supabase
         .from('site_visits')
-        .select('id, lead_id, assigned_rep_id, visit_date, visit_hour, status, leads!inner(full_name, phone, address)')
+        .select('id, lead_id, assigned_rep_id, visit_date, visit_hour, status, leads(full_name, phone)')
         .gte('visit_date', today)
         .lte('visit_date', nextWeek)
         .not('status', 'eq', 'cancelled')
