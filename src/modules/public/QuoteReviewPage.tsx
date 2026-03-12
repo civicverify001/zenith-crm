@@ -64,6 +64,7 @@ interface Agreement {
   monthly_amount: number
   install_fee: number
   signed_at: string | null
+  signed_name?: string | null
   terms_snapshot?: any
   line_items_snapshot?: any
 }
@@ -95,6 +96,141 @@ function fmt(n: number) {
 }
 function today() {
   return new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+}
+
+// ─── Generate printable agreement HTML ───────────────────────────
+function generateAgreementHTML(agreement: Agreement, customer: Customer | undefined, terms: TermBlock[]): string {
+  const termBlocksHTML = terms.map(block => `
+    <div class="section">
+      <h3>${block.display_title || ''}</h3>
+      <p>${(block.content || '')
+        .replace(/\[INSTALL_FEE\]/g, fmt(agreement.install_fee))
+        .replace(/\[MONTHLY_AMOUNT\]/g, fmt(agreement.monthly_amount))
+        .replace(/\n/g, '<br/>')
+      }</p>
+    </div>
+  `).join('')
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>${agreement.agreement_number} — Zenith Pure Solutions</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Georgia, serif; color: #1a1a2e; background: white; padding: 40px; max-width: 800px; margin: 0 auto; }
+    .header { background: #0a2540; color: white; padding: 32px; text-align: center; border-radius: 8px 8px 0 0; }
+    .header h1 { font-size: 20px; font-weight: bold; letter-spacing: 1px; }
+    .header p { font-size: 12px; color: #93c5fd; margin-top: 4px; }
+    .subheader { background: #f8fafc; border: 1px solid #e2e8f0; border-top: none; padding: 20px; text-align: center; }
+    .subheader h2 { font-size: 22px; font-weight: bold; }
+    .subheader .agnum { color: #0a2540; font-size: 14px; font-weight: 600; margin-top: 6px; }
+    .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; padding: 20px; border: 1px solid #e2e8f0; border-top: none; }
+    .party-label { font-size: 10px; font-weight: bold; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .party-name { font-weight: bold; font-size: 14px; }
+    .party-address { font-size: 12px; color: #64748b; margin-top: 2px; }
+    .financials { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; background: #eff6ff; border: 1px solid #bfdbfe; border-top: none; padding: 20px; text-align: center; }
+    .fin-label { font-size: 10px; color: #3b82f6; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+    .fin-value { font-size: 18px; font-weight: bold; color: #1e3a8a; margin-top: 4px; }
+    .notice { background: #fffbeb; border: 1px solid #fcd34d; border-top: none; padding: 12px 20px; text-align: center; font-size: 11px; font-weight: bold; color: #92400e; text-transform: uppercase; letter-spacing: 0.5px; }
+    .intro { padding: 20px; border: 1px solid #e2e8f0; border-top: none; font-size: 13px; line-height: 1.6; }
+    .section { border: 1px solid #e2e8f0; margin-top: 16px; border-radius: 8px; overflow: hidden; }
+    .section h3 { background: #f8fafc; padding: 10px 20px; font-size: 13px; font-weight: bold; border-bottom: 1px solid #e2e8f0; }
+    .section p { padding: 16px 20px; font-size: 12px; line-height: 1.8; color: #374151; }
+    .signatures { border: 2px solid #e2e8f0; border-radius: 8px; padding: 32px; margin-top: 24px; }
+    .sig-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    .sig-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; }
+    .sig-party-label { font-size: 10px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .sig-name { font-size: 22px; font-style: italic; font-family: Georgia, serif; color: #0a2540; border-bottom: 1px solid #334155; padding-bottom: 6px; margin-bottom: 8px; min-height: 36px; }
+    .sig-meta { font-size: 11px; color: #64748b; }
+    .footer { margin-top: 32px; text-align: center; font-size: 10px; color: #94a3b8; }
+    @media print {
+      body { padding: 20px; }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="no-print" style="margin-bottom:20px; text-align:center;">
+    <button onclick="window.print()" style="background:#0a2540;color:white;border:none;padding:10px 28px;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">
+      🖨️ Print / Save as PDF
+    </button>
+    <p style="margin-top:8px;font-size:11px;color:#64748b;">Use your browser's "Save as PDF" option when printing</p>
+  </div>
+
+  <div class="header">
+    <h1>ZENITH PURE SOLUTIONS LLC</h1>
+    <p>6951 E 30th St, Suite B · Indianapolis, IN 46219</p>
+    <p>(317) 690-4172 · zenithpuresolutions.com</p>
+  </div>
+
+  <div class="subheader">
+    <div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">Legal Agreement</div>
+    <h2>Residential Equipment Rental Agreement</h2>
+    <div class="agnum">${agreement.agreement_number}</div>
+  </div>
+
+  <div class="parties">
+    <div>
+      <div class="party-label">Company</div>
+      <div class="party-name">Zenith Pure Solutions LLC</div>
+      <div class="party-address">6951 E 30th St, Suite B<br/>Indianapolis, IN 46219</div>
+    </div>
+    <div>
+      <div class="party-label">Customer</div>
+      <div class="party-name">${customer?.full_name || ''}</div>
+      <div class="party-address">${customer?.address || ''}<br/>${customer?.city || ''}, ${customer?.state || ''} ${customer?.zip || ''}</div>
+    </div>
+  </div>
+
+  <div class="financials">
+    <div>
+      <div class="fin-label">Monthly Payment</div>
+      <div class="fin-value">${fmt(agreement.monthly_amount)}/mo</div>
+    </div>
+    <div>
+      <div class="fin-label">Setup Fee (one-time)</div>
+      <div class="fin-value">${fmt(agreement.install_fee)}</div>
+    </div>
+    <div>
+      <div class="fin-label">Initial Term</div>
+      <div class="fin-value">36 months</div>
+    </div>
+  </div>
+
+  <div class="notice">By signing, you agree to all terms including the binding arbitration clause in Article IX.</div>
+
+  <div class="intro">
+    This Agreement is entered into as of <strong>${today()}</strong> between
+    <strong>Zenith Pure Solutions LLC</strong> ("Company") and <strong>${customer?.full_name || ''}</strong> ("Customer").
+  </div>
+
+  ${termBlocksHTML}
+
+  <div class="signatures">
+    <div style="font-weight:bold;font-size:13px;margin-bottom:4px;">IN WITNESS WHEREOF</div>
+    <p style="font-size:11px;color:#64748b;margin-bottom:24px;">Executed as of ${today()}.</p>
+    <div class="sig-grid">
+      <div class="sig-box">
+        <div class="sig-party-label">ZENITH PURE SOLUTIONS LLC</div>
+        <div class="sig-name">Kuldeep Singh</div>
+        <div class="sig-meta">Authorized Representative · ${today()}</div>
+      </div>
+      <div class="sig-box">
+        <div class="sig-party-label">CUSTOMER</div>
+        <div class="sig-name">${agreement.signed_name || customer?.full_name || ''}</div>
+        <div class="sig-meta">${customer?.full_name || ''} · Signed ${agreement.signed_at ? new Date(agreement.signed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : today()}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p>Zenith Pure Solutions LLC · 6951 E 30th St, Suite B, Indianapolis, IN 46219</p>
+    <p>(317) 690-4172 · info@zenithpuresolutions.com · zenithpuresolutions.com</p>
+    <p style="margin-top:6px;">Agreement ${agreement.agreement_number} · Generated ${today()}</p>
+  </div>
+</body>
+</html>`
 }
 
 // ─── Lead → Customer conversion ──────────────────────────────────
@@ -501,10 +637,10 @@ export function QuoteReviewPage() {
   const [error, setError] = useState('')
   const [signing, setSigning] = useState(false)
   const [redirecting, setRedirecting] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const topRef = useRef<HTMLDivElement>(null)
 
   // ── SINGLE SOURCE OF TRUTH for flow branching ──────────────────
-  // Always derived from commercial_type — never from quote_type
   const flowType: 'rental' | 'purchase' | 'finance' =
     quote?.commercial_type === 'rental' ? 'rental'
     : quote?.commercial_type === 'financed' ? 'finance'
@@ -546,7 +682,7 @@ export function QuoteReviewPage() {
             customer_email: customer?.email,
             amount_cents: params.amount_cents,
             description: params.description,
-            quote_type: params.flow,   // 'rental' | 'purchase'
+            quote_type: params.flow,
             agreement_id: params.agreement_id,
             invoice_id: params.invoice_id,
             quote_id: quote.id,
@@ -565,22 +701,88 @@ export function QuoteReviewPage() {
     }
   }
 
+  // ── Download signed agreement ─────────────────────────────────
+  async function handleDownloadAgreement() {
+    setDownloading(true)
+    try {
+      // Use already-loaded agreement or fetch it
+      let ag = agreement
+      if (!ag && quote) {
+        const { data } = await supabase
+          .from('agreements')
+          .select('*')
+          .eq('quote_id', quote.id)
+          .maybeSingle()
+        if (data) {
+          ag = data
+          setAgreement(data)
+        }
+      }
+      if (!ag) {
+        setError('Agreement not found. Please contact (317) 690-4172.')
+        setDownloading(false)
+        return
+      }
+
+      // Use terms from snapshot (already baked in at signing time)
+      const terms: TermBlock[] = ag.terms_snapshot?.blocks || rentalTerms
+
+      const html = generateAgreementHTML(ag, quote?.customer, terms)
+      const win = window.open('', '_blank')
+      if (win) {
+        win.document.write(html)
+        win.document.close()
+        setTimeout(() => win.print(), 600)
+      } else {
+        // Fallback: create a blob and download
+        const blob = new Blob([html], { type: 'text/html' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${ag.agreement_number}.html`
+        a.click()
+        URL.revokeObjectURL(url)
+      }
+    } catch (e: any) {
+      setError(e.message || 'Could not generate agreement.')
+    }
+    setDownloading(false)
+  }
+
   useEffect(() => {
     if (searchParams.get('paid') === '1') {
-      // Load quote to know flow type for correct completion message
       if (token) {
         supabase.from('quotes').select('*, customer:customers(full_name, email, phone, address, city, state, zip)')
           .eq('public_token', token).maybeSingle()
-          .then(({ data }) => {
+          .then(async ({ data }) => {
             if (data) {
               setQuote(data)
               // Mark lead as won
               if (data.lead_id) {
-                supabase.from('leads').update({
+                await supabase.from('leads').update({
                   stage: 'won',
                   stage_entered_at: new Date().toISOString(),
                   stage_changed_at: new Date().toISOString(),
-                }).eq('id', data.lead_id).then(() => {})
+                }).eq('id', data.lead_id)
+              }
+              // Load agreement for rental so download is available
+              if (data.commercial_type === 'rental') {
+                const { data: ag } = await supabase
+                  .from('agreements')
+                  .select('*')
+                  .eq('quote_id', data.id)
+                  .maybeSingle()
+                if (ag) setAgreement(ag)
+              }
+              // Load rental terms from snapshot or DB for download
+              if (data.commercial_type === 'rental') {
+                const { data: allTerms } = await supabase
+                  .from('term_blocks')
+                  .select('slug, display_title, content, version')
+                  .like('slug', 'ra-%')
+                  .eq('is_active', true)
+                  .order('sort_order')
+                if (allTerms) setRentalTerms(allTerms)
               }
             }
           })
@@ -600,7 +802,6 @@ export function QuoteReviewPage() {
       if (q.valid_until && new Date(q.valid_until) < new Date()) { setStep('expired'); return }
       if (['accepted', 'declined', 'void'].includes(q.status)) { setStep('already_complete'); setQuote(q); return }
 
-      // ── Track view: increment count, set viewed_at, mark as viewed ──
       const viewUpdate: Record<string, any> = {
         view_count: (q.view_count || 0) + 1,
         viewed_at: q.viewed_at || new Date().toISOString(),
@@ -638,7 +839,7 @@ export function QuoteReviewPage() {
         b.slug?.startsWith('purchase-') || b.slug?.startsWith('inv-')
       ))
 
-      const ct = q.commercial_type  // use commercial_type for branching
+      const ct = q.commercial_type
       if (q.signed_at) {
         if (ct === 'rental') {
           const { data: ag } = await supabase.from('agreements').select('*').eq('quote_id', q.id).maybeSingle()
@@ -678,7 +879,6 @@ export function QuoteReviewPage() {
 
       const year = new Date().getFullYear()
 
-      // ── RENTAL: Quote → Rental Agreement ──────────────────────
       if (flowType === 'rental') {
         const { data: last } = await supabase.from('agreements')
           .select('agreement_number').like('agreement_number', `RA-${year}-%`)
@@ -696,7 +896,6 @@ export function QuoteReviewPage() {
         await convertLeadToCustomer(quote.lead_id, quote.customer_id)
         setAgreement(ag); setStep('view_agreement'); scrollTop()
 
-      // ── PURCHASE: Quote → Invoice ──────────────────────────────
       } else if (flowType === 'purchase') {
         const { data: last } = await supabase.from('invoices')
           .select('invoice_number').like('invoice_number', `INV-${year}-%`)
@@ -720,7 +919,6 @@ export function QuoteReviewPage() {
         await convertLeadToCustomer(quote.lead_id, quote.customer_id)
         setInvoice(inv); setStep('view_invoice'); scrollTop()
 
-      // ── FINANCE: Quote → Hearth ────────────────────────────────
       } else {
         await convertLeadToCustomer(quote.lead_id, quote.customer_id)
         setStep('hearth_redirect')
@@ -730,7 +928,6 @@ export function QuoteReviewPage() {
     setSigning(false)
   }
 
-  // ── Sign Agreement (rental) → save card only ─────────────────
   async function handleSignAgreement(signedName: string) {
     if (!agreement) return
     setSigning(true); setError('')
@@ -740,13 +937,12 @@ export function QuoteReviewPage() {
         status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName, signed_ip: ip,
       }).eq('id', agreement.id)
       if (e) throw e
-      // Rental: go to card save screen — DO NOT charge
+      setAgreement(prev => prev ? { ...prev, status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName } : prev)
       setStep('stripe_card_save'); scrollTop()
     } catch (e: any) { setError(e.message) }
     setSigning(false)
   }
 
-  // ── Sign Invoice (purchase) → payment choice ──────────────────
   async function handleSignInvoice(signedName: string) {
     if (!invoice) return
     setSigning(true); setError('')
@@ -756,13 +952,11 @@ export function QuoteReviewPage() {
         status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName, signed_ip: ip,
       }).eq('id', invoice.id)
       if (e) throw e
-      // Purchase: show payment choice screen — do NOT auto-redirect
       setStep('payment_choice'); scrollTop()
     } catch (e: any) { setError(e.message) }
     setSigning(false)
   }
 
-  // ── Payment choice handler (purchase only) ────────────────────
   async function handlePaymentChoice(type: '50_percent' | 'full') {
     if (!invoice || !quote) return
     const amountCents = type === 'full'
@@ -772,7 +966,6 @@ export function QuoteReviewPage() {
       ? `Full Payment — ${invoice.invoice_number}`
       : `Purchase Deposit (50%) — ${invoice.invoice_number}`
 
-    // Update deposit_percent on invoice if paying full
     if (type === 'full') {
       await supabase.from('invoices').update({ deposit_percent: 100, deposit_amount: invoice.total, amount_due: invoice.total }).eq('id', invoice.id)
     }
@@ -839,7 +1032,7 @@ export function QuoteReviewPage() {
     </div>
   )
 
-  // ── RENTAL: Save card — no charge ─────────────────────────────
+  // ── RENTAL: Save card ─────────────────────────────────────────
   if (step === 'stripe_card_save') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
@@ -857,7 +1050,7 @@ export function QuoteReviewPage() {
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-5 text-left">
               <div className="text-sm font-semibold text-blue-800 mb-1">💳 No charge today</div>
               <p className="text-sm text-blue-700">
-                We just need to save your payment method securely. 
+                We just need to save your payment method securely.
                 <strong> Autopay will begin after your installation is completed.</strong>
               </p>
             </div>
@@ -948,11 +1141,41 @@ export function QuoteReviewPage() {
         <h2 className="text-xl font-bold mb-2">
           {flowType === 'rental' ? 'Card Saved Successfully!' : 'All Done!'}
         </h2>
-        <p className="text-sm text-gray-500 mb-4">
+        <p className="text-sm text-gray-500 mb-6">
           {flowType === 'rental'
-            ? 'Your payment method has been saved. Autopay will begin after your installation is completed. We\'ll be in touch to schedule.'
+            ? "Your payment method has been saved. Autopay will begin after your installation is completed. We'll be in touch to schedule."
             : 'Documents signed and payment received. Zenith will be in touch soon.'}
         </p>
+
+        {/* ── Download Agreement (rental only) ── */}
+        {flowType === 'rental' && (
+          <div className="mb-5">
+            <button
+              onClick={handleDownloadAgreement}
+              disabled={downloading}
+              className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+              style={{
+                backgroundColor: '#f0f9ff',
+                border: '1.5px solid #bae6fd',
+                color: '#0369a1',
+              }}
+            >
+              {downloading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#0369a1', borderTopColor: 'transparent' }} />
+                  Preparing...
+                </>
+              ) : (
+                <>
+                  📄 Download Your Signed Agreement
+                </>
+              )}
+            </button>
+            <p className="text-xs text-gray-400 mt-2">Opens a printable copy — use "Save as PDF" in your browser</p>
+          </div>
+        )}
+
+        {error && <p className="text-red-500 text-xs mb-4">{error}</p>}
         <p className="text-xs text-gray-400">(317) 690-4172</p>
       </div>
     </div>
@@ -1141,4 +1364,3 @@ export function QuoteReviewPage() {
     </div>
   )
 }
-
