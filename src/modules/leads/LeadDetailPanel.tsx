@@ -18,6 +18,7 @@ import { supabase } from '../../lib/supabase'
 import { moveStage } from '../../services/leadMutations'
 import { QuoteBuilder } from '../quotes/QuoteBuilder'
 import QualifyingChecklist from './QualifyingChecklist'
+import SiteVisitScheduler from './SiteVisitScheduler'
 
 interface Props {
   lead: Lead
@@ -59,6 +60,8 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   const [quoteLink, setQuoteLink] = useState<string | null>(null)
   const [preparingQuote, setPreparingQuote] = useState(false)
   const [qualifyingComplete, setQualifyingComplete] = useState(false)
+  const [showVisitScheduler, setShowVisitScheduler] = useState(false)
+  const [visitInfo, setVisitInfo] = useState<{ rep_name: string; date: string; hour: number } | null>(null)
 
   const { mutateAsync: assignRep } = useAssignRep()
   const { mutateAsync: logCall, isPending: callPending } = useLogCallAttempt()
@@ -83,6 +86,47 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
         }
       })
   }, [lead.id, lead.stage])
+
+  // ── Load existing site visit info ──────────────────────────────
+  useEffect(() => {
+    if (!['site_visit_scheduled', 'proposal_in_progress', 'quote_sent', 'agreement_signed'].includes(lead.stage)) return
+    supabase
+      .from('site_visits')
+      .select('assigned_rep_id, visit_date, visit_hour, status, notes')
+      .eq('lead_id', lead.id)
+      .eq('status', 'scheduled')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(async ({ data }) => {
+        if (data) {
+          // Get rep name
+          const { data: rep } = await supabase
+            .from('user_profiles')
+            .select('full_name')
+            .eq('id', data.assigned_rep_id)
+            .maybeSingle()
+          const repName = rep?.full_name || 'Rep'
+          setVisitInfo({ rep_name: repName, date: data.visit_date, hour: data.visit_hour })
+        }
+      })
+  }, [lead.id, lead.stage])
+
+  // ── Handle visit scheduled ─────────────────────────────────────
+  async function handleVisitScheduled(visit: { rep_name: string; date: string; hour: number }) {
+    setVisitInfo(visit)
+    setShowVisitScheduler(false)
+    // Move stage to site_visit_scheduled
+    if (user) {
+      try {
+        const actor = { actor_id: user.id, actor_name: profile?.full_name }
+        const updated = await moveStage(lead.id, lead.stage, 'site_visit_scheduled', actor)
+        handleLeadUpdated(updated)
+      } catch (e) {
+        console.error('Stage move after visit schedule failed:', e)
+      }
+    }
+  }
 
   const handleLeadUpdated = useCallback((updated: Lead) => {
     setLead(updated)
@@ -261,6 +305,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
               onLeadUpdated={handleLeadUpdated}
               onCreateQuote={handleCreateQuote}
               qualifyingComplete={qualifyingComplete}
+              onScheduleVisit={() => setShowVisitScheduler(true)}
             />
 
             {preparingQuote && (
@@ -294,6 +339,24 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
 
                 {lead.stage === 'qualifying' && (
                   <QualifyingChecklist lead={lead} onLeadUpdated={handleLeadUpdated} onCompletionChange={setQualifyingComplete} />
+                )}
+
+                {/* Site Visit Info */}
+                {visitInfo && ['site_visit_scheduled', 'proposal_in_progress', 'quote_sent', 'agreement_signed'].includes(lead.stage) && (
+                  <div className="rounded-xl p-4" style={{ backgroundColor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)' }}>
+                    <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: '#60a5fa' }}>
+                      📅 Site Visit {lead.stage === 'site_visit_scheduled' ? 'Scheduled' : 'Completed'}
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-sm text-white">
+                        <span className="font-semibold">{visitInfo.rep_name}</span>
+                        {' · '}
+                        {new Date(visitInfo.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                        {' · '}
+                        {({9:'9:00 AM',10:'10:00 AM',11:'11:00 AM',12:'12:00 PM',13:'1:00 PM',14:'2:00 PM',15:'3:00 PM',16:'4:00 PM'} as Record<number,string>)[visitInfo.hour]}
+                      </div>
+                    </div>
+                  </div>
                 )}
 
                 {lead.stage === 'quote_sent' && quoteLink && (
@@ -473,6 +536,18 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
             onCancel={() => setShowQuoteBuilder(false)}
           />
         </div>
+      )}
+
+      {/* Site Visit Scheduler modal */}
+      {showVisitScheduler && (
+        <SiteVisitScheduler
+          leadId={lead.id}
+          leadName={lead.full_name}
+          leadPhone={lead.phone}
+          leadAddress={fullAddress}
+          onScheduled={handleVisitScheduled}
+          onCancel={() => setShowVisitScheduler(false)}
+        />
       )}
     </>
   )

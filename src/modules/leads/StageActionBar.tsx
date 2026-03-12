@@ -42,7 +42,7 @@ const STAGE_ACTIONS: Partial<Record<LeadStage, ActionDef[]>> = {
     { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd' },
   ],
   qualified: [
-    { label: 'Schedule Visit', action: 'move', variant: 'primary', targetStage: 'site_visit_scheduled' },
+    { label: '📅 Schedule Visit', action: 'schedule_visit', variant: 'primary' },
     { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost' },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
     { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd' },
@@ -98,9 +98,11 @@ interface Props {
   onCreateQuote?: () => void
   /** Whether all required qualifying questions are answered */
   qualifyingComplete?: boolean
+  /** Called when "Schedule Visit" is clicked — parent opens scheduler */
+  onScheduleVisit?: () => void
 }
 
-export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingComplete }: Props) {
+export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingComplete, onScheduleVisit }: Props) {
   const { user, profile } = useAuth()
   const [activeModal, setActiveModal] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
@@ -118,6 +120,12 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
     // Hand off to parent for quote creation
     if (actionDef.action === 'create_quote') {
       onCreateQuote?.()
+      return
+    }
+
+    // Hand off to parent for site visit scheduling
+    if (actionDef.action === 'schedule_visit') {
+      onScheduleVisit?.()
       return
     }
 
