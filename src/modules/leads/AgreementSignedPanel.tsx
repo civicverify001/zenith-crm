@@ -245,6 +245,8 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   const queryClient = useQueryClient()
   const { data: technicians } = useTechnicians()
 
+  const isSalesRep = profile?.role === 'salesrep'
+
   const [showModal, setShowModal] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [loadingAgreement, setLoadingAgreement] = useState(false)
@@ -280,7 +282,6 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   // Load agreement/quote data from DB (digital signing flow writes there, not to lead fields)
   useEffect(() => {
     async function loadAgreementData() {
-      // Try agreements table first
       const { data: ag } = await supabase
         .from('agreements')
         .select('signed_by, signed_at, commercial_type')
@@ -289,7 +290,6 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
         .limit(1)
         .maybeSingle()
 
-      // Also get quote for total/monthly
       const { data: qt } = await supabase
         .from('quotes')
         .select('total, monthly_amount, commercial_type, signed_at, signed_by')
@@ -425,13 +425,11 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     loadJobSlots()
   }
 
-  // When date changes, clear time selection
   function handleDateSelect(d: string) {
     setScheduledDate(d)
     setScheduledHour(null)
   }
 
-  // Build ISO datetime string from date + hour
   function buildScheduledDatetime(): string | null {
     if (!scheduledDate || scheduledHour === null) return scheduledDate || null
     return `${scheduledDate}T${String(scheduledHour).padStart(2,'0')}:00:00`
@@ -471,21 +469,29 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   return (
     <>
       <div className="bg-green/5 border border-green/20 rounded-xl p-4 space-y-3">
-        <<div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-2">
-              <span className="text-green text-sm">✅</span>
-              <h4 className="text-sm font-bold text-green">Agreement Signed</h4>
-            </div>
-            {jobAlreadyCreated ? (
-              <span className="text-xs px-3 py-1.5 bg-green/20 text-green border border-green/30 rounded-lg font-semibold">✓ Job Created</span>
-            ) : profile?.role === 'salesrep' ? (
-              <span className="text-xs px-3 py-1.5 bg-surface text-muted border border-border rounded-lg font-semibold">Pending scheduling</span>
-            ) : (
-              <button onClick={handleOpenModal} className="text-xs px-3 py-1.5 bg-cyan/20 hover:bg-cyan/30 text-cyan border border-cyan/30 rounded-lg font-semibold transition-colors">
-                📅 Schedule Install
-              </button>
-            )}
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2">
+            <span className="text-green text-sm">✅</span>
+            <h4 className="text-sm font-bold text-green">Agreement Signed</h4>
           </div>
+          {jobAlreadyCreated ? (
+            <span className="text-xs px-3 py-1.5 bg-green/20 text-green border border-green/30 rounded-lg font-semibold">
+              ✓ Job Created
+            </span>
+          ) : isSalesRep ? (
+            <span className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ background: 'rgba(255,255,255,0.05)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.1)' }}>
+              Pending scheduling
+            </span>
+          ) : (
+            <button
+              onClick={handleOpenModal}
+              className="text-xs px-3 py-1.5 bg-cyan/20 hover:bg-cyan/30 text-cyan border border-cyan/30 rounded-lg font-semibold transition-colors"
+            >
+              📅 Schedule Install
+            </button>
+          )}
+        </div>
+
         <div className="text-center py-2">
           <div className="text-xs text-muted uppercase tracking-wide">
             {agreementData?.commercial_type === 'rental' ? 'Monthly Amount' : 'Quote Total'}
@@ -496,13 +502,23 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
               : formatCurrency(agreementData?.quote_total || lead.quote_total)}
           </div>
         </div>
+
         <div className="grid grid-cols-2 gap-3">
-          <div><div className="text-xs text-muted">Signed By</div><div className="text-sm text-slate-200">{agreementData?.signed_by || lead.signed_by || '—'}</div></div>
-          <div><div className="text-xs text-muted">Signed At</div><div className="text-sm text-slate-200">{formatDate(agreementData?.signed_at || lead.signed_at)}</div></div>
+          <div>
+            <div className="text-xs text-muted">Signed By</div>
+            <div className="text-sm text-slate-200">{agreementData?.signed_by || lead.signed_by || '—'}</div>
+          </div>
+          <div>
+            <div className="text-xs text-muted">Signed At</div>
+            <div className="text-sm text-slate-200">{formatDate(agreementData?.signed_at || lead.signed_at)}</div>
+          </div>
           <div>
             <div className="text-xs text-muted">Type</div>
             <div className="text-sm text-slate-200">
-              {agreementData?.commercial_type === 'rental' ? '🔄 Rental' : agreementData?.commercial_type === 'purchase' ? '💰 Purchase' : agreementData?.commercial_type === 'financed' ? '🏦 Financed' : '—'}
+              {agreementData?.commercial_type === 'rental' ? '🔄 Rental'
+                : agreementData?.commercial_type === 'purchase' ? '💰 Purchase'
+                : agreementData?.commercial_type === 'financed' ? '🏦 Financed'
+                : '—'}
             </div>
           </div>
           <div>
@@ -514,14 +530,15 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
             </div>
           </div>
         </div>
+
         <div className="flex items-center gap-2 pt-2 border-t border-green/10">
           <StatusBadge active={!!lead.job_created} activeLabel="Job Created" inactiveLabel="Job Pending" />
           <StatusBadge active={!!lead.inventory_reserved} activeLabel="Inventory Reserved" inactiveLabel="Not Reserved" />
         </div>
       </div>
 
-      {/* ── Schedule Install Modal ───────────────────────────────── */}
-      {showModal && (
+      {/* ── Schedule Install Modal (admin/frontdesk only) ──────────── */}
+      {showModal && !isSalesRep && (
         <div className="fixed inset-0 bg-black/70 flex items-start justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-card border border-border rounded-2xl w-full max-w-lg p-6 shadow-2xl my-4">
             <h3 className="font-bold text-white text-base mb-1">Schedule Install</h3>
@@ -532,7 +549,8 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
               {/* Products */}
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">
-                  {loadingAgreement ? <span className="text-accent animate-pulse">Loading products…</span>
+                  {loadingAgreement
+                    ? <span className="text-accent animate-pulse">Loading products…</span>
                     : detectedProducts.length > 0
                     ? <>Products Being Installed <span className="ml-1 font-normal normal-case text-green">✓ from {detectionSource === 'invoice' ? 'signed agreement' : 'quote'}</span></>
                     : 'Products Being Installed'}
@@ -563,16 +581,19 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
 
               {/* Install Type — only show when products NOT auto-detected */}
               {detectedProducts.length === 0 && !loadingAgreement && (
-              <div>
-                <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">
-                  Install Type <span className="text-red-400">*</span>
-                </label>
-                <select value={systemType} onChange={e => setSystemType(e.target.value as SystemType)}
-                  className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-accent">
-                  {ALL_SYSTEM_TYPES.map(t => <option key={t} value={t}>{SYSTEM_TYPE_LABELS[t]}</option>)}
-                </select>
-                <div className="text-xs text-muted mt-1">No products detected — select install type manually.</div>
-              </div>
+                <div>
+                  <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">
+                    Install Type <span className="text-red-400">*</span>
+                  </label>
+                  <select
+                    value={systemType}
+                    onChange={e => setSystemType(e.target.value as SystemType)}
+                    className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-accent"
+                  >
+                    {ALL_SYSTEM_TYPES.map(t => <option key={t} value={t}>{SYSTEM_TYPE_LABELS[t]}</option>)}
+                  </select>
+                  <div className="text-xs text-muted mt-1">No products detected — select install type manually.</div>
+                </div>
               )}
 
               {(systemType === 'ro_install' || systemType === 'combo_whole_home_ro') && (
@@ -582,7 +603,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 </div>
               )}
 
-              {/* ── Step 1: Pick Date ── */}
+              {/* Step 1: Pick Date */}
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">
                   Step 1 — Pick a Date <span className="text-red-400">*</span>
@@ -599,7 +620,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 )}
               </div>
 
-              {/* ── Step 2: Pick Time (appears after date selected) ── */}
+              {/* Step 2: Pick Time */}
               {scheduledDate && !loadingSlots && (
                 <div>
                   <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">
@@ -634,8 +655,11 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
               {/* Technician */}
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Assign Technician</label>
-                <select value={techId} onChange={e => setTechId(e.target.value)}
-                  className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-accent">
+                <select
+                  value={techId}
+                  onChange={e => setTechId(e.target.value)}
+                  className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-accent"
+                >
                   <option value="">— Unassigned —</option>
                   {technicians?.map((t: any) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
                 </select>
@@ -645,8 +669,13 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
               {/* Notes */}
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Notes for Tech</label>
-                <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any install notes…" rows={2}
-                  className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-muted focus:outline-none focus:border-accent resize-none" />
+                <textarea
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  placeholder="Any install notes…"
+                  rows={2}
+                  className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-muted focus:outline-none focus:border-accent resize-none"
+                />
               </div>
 
               {/* Customer summary */}
@@ -675,4 +704,3 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     </>
   )
 }
-
