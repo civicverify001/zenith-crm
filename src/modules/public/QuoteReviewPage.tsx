@@ -773,9 +773,7 @@ export function QuoteReviewPage() {
                   .eq('quote_id', data.id)
                   .maybeSingle()
                 if (ag) setAgreement(ag)
-              }
-              // Load rental terms from snapshot or DB for download
-              if (data.commercial_type === 'rental') {
+                // Load rental terms for download
                 const { data: allTerms } = await supabase
                   .from('term_blocks')
                   .select('slug, display_title, content, version')
@@ -785,9 +783,12 @@ export function QuoteReviewPage() {
                 if (allTerms) setRentalTerms(allTerms)
               }
             }
+            // ✅ setStep AFTER quote + agreement are loaded so flowType resolves correctly
+            setStep('complete')
           })
+      } else {
+        setStep('complete')
       }
-      setStep('complete')
       return
     }
     if (token) loadQuote(token)
