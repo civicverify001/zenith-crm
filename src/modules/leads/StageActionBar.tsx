@@ -27,101 +27,110 @@ interface ActionDef {
   targetStage?: LeadStage
   disabled?: (lead: Lead) => boolean
   disabledLabel?: string
+  /** If true, only admin/frontdesk can see this action — sales reps cannot */
+  adminOnly?: boolean
 }
 
 const STAGE_ACTIONS: Partial<Record<LeadStage, ActionDef[]>> = {
   new_lead: [
-    { label: 'Mark Qualifying', action: 'move', variant: 'primary', targetStage: 'qualifying' },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost' },
-    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd' },
+    { label: 'Mark Qualifying', action: 'move', variant: 'primary', targetStage: 'qualifying', adminOnly: true },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
+    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true },
   ],
   qualifying: [
-    { label: 'Mark Qualified', action: 'move', variant: 'primary', targetStage: 'qualified' },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost' },
+    { label: 'Mark Qualified', action: 'move', variant: 'primary', targetStage: 'qualified', adminOnly: true },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
-    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd' },
+    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true },
   ],
   qualified: [
-    { label: '📅 Schedule Visit', action: 'schedule_visit', variant: 'primary' },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost' },
+    { label: '📅 Schedule Visit', action: 'schedule_visit', variant: 'primary', adminOnly: true },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
-    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd' },
+    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true },
   ],
   site_visit_scheduled: [
-    // ← Opens QuoteBuilder (no stage move — stage moves when quote is actually sent)
     { label: '📄 Build Quote', action: 'create_quote', variant: 'primary' },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost' },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
-    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd' },
+    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true },
   ],
   proposal_in_progress: [
-    // ← Also opens QuoteBuilder so rep can continue building/send
     { label: '📄 Build & Send Quote', action: 'create_quote', variant: 'success' },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost' },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
   ],
   quote_sent: [
-    // ← Only fallback if customer signed on paper; normal flow is via /q/:token
-    { label: 'Mark Signed (Manual)', action: 'agreement', variant: 'success', modal: 'agreement' },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost' },
+    { label: 'Mark Signed (Manual)', action: 'agreement', variant: 'success', modal: 'agreement', adminOnly: true },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
   ],
-  // REPLACE WITH:
-agreement_signed: [
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost' },
+  agreement_signed: [
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
   ],
   lost: [
-    { label: 'Reopen as New Lead', action: 'reopen_lost', variant: 'secondary', modal: 'confirm_reopen' },
+    { label: 'Reopen as New Lead', action: 'reopen_lost', variant: 'secondary', modal: 'confirm_reopen', adminOnly: true },
   ],
   dnd: [
-    { label: 'Reopen as New Lead', action: 'reopen_dnd', variant: 'secondary', modal: 'confirm_reopen' },
+    { label: 'Reopen as New Lead', action: 'reopen_dnd', variant: 'secondary', modal: 'confirm_reopen', adminOnly: true },
   ],
   future_follow_up: [
-    { label: 'Reopen as Qualifying', action: 'reopen_followup', variant: 'primary', modal: 'confirm_reopen' },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost' },
-    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd' },
+    { label: 'Reopen as Qualifying', action: 'reopen_followup', variant: 'primary', modal: 'confirm_reopen', adminOnly: true },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
+    { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
+    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true },
   ],
 }
 
 const VARIANT_STYLES: Record<string, { bg: string; color: string; border: string; hoverBg: string }> = {
-  primary:   { bg: 'rgba(96,165,250,0.15)', color: '#60a5fa', border: 'rgba(96,165,250,0.3)', hoverBg: 'rgba(96,165,250,0.25)' },
-  success:   { bg: 'rgba(74,222,128,0.15)', color: '#4ade80', border: 'rgba(74,222,128,0.3)', hoverBg: 'rgba(74,222,128,0.25)' },
-  danger:    { bg: 'rgba(239,68,68,0.15)', color: '#f87171', border: 'rgba(239,68,68,0.3)', hoverBg: 'rgba(239,68,68,0.25)' },
-  warning:   { bg: 'rgba(245,158,11,0.15)', color: '#fbbf24', border: 'rgba(245,158,11,0.3)', hoverBg: 'rgba(245,158,11,0.25)' },
+  primary:   { bg: 'rgba(96,165,250,0.15)',  color: '#60a5fa', border: 'rgba(96,165,250,0.3)',  hoverBg: 'rgba(96,165,250,0.25)'  },
+  success:   { bg: 'rgba(74,222,128,0.15)',  color: '#4ade80', border: 'rgba(74,222,128,0.3)',  hoverBg: 'rgba(74,222,128,0.25)'  },
+  danger:    { bg: 'rgba(239,68,68,0.15)',   color: '#f87171', border: 'rgba(239,68,68,0.3)',   hoverBg: 'rgba(239,68,68,0.25)'   },
+  warning:   { bg: 'rgba(245,158,11,0.15)',  color: '#fbbf24', border: 'rgba(245,158,11,0.3)',  hoverBg: 'rgba(245,158,11,0.25)'  },
   secondary: { bg: 'rgba(100,116,139,0.15)', color: '#cbd5e1', border: 'rgba(100,116,139,0.3)', hoverBg: 'rgba(100,116,139,0.25)' },
 }
 
 interface Props {
   lead: Lead
   onLeadUpdated: (lead: Lead) => void
-  /** Called when rep clicks "Build Quote" — parent handles opening QuoteBuilder */
   onCreateQuote?: () => void
-  /** Whether all required qualifying questions are answered */
   qualifyingComplete?: boolean
-  /** Called when "Schedule Visit" is clicked — parent opens scheduler */
   onScheduleVisit?: () => void
-  /** Whether all required site visit checklist items are done */
   siteVisitComplete?: boolean
 }
 
 export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingComplete, onScheduleVisit, siteVisitComplete }: Props) {
-  const { user, profile } = useAuth()
+  const { user, profile, role } = useAuth()
   const [activeModal, setActiveModal] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [error, setError] = useState('')
 
-  const actions = STAGE_ACTIONS[lead.stage] || []
-  if (actions.length === 0) return null
+  const isSalesRep = role === 'salesrep'
+
+  const allActions = STAGE_ACTIONS[lead.stage] || []
+
+  // Sales reps only see actions that are NOT adminOnly
+  const actions = isSalesRep
+    ? allActions.filter(a => !a.adminOnly)
+    : allActions
+
   if (!user) return null
+
+  // If sales rep has no actions for this stage, show read-only notice
+  if (isSalesRep && actions.length === 0) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ backgroundColor: 'rgba(100,116,139,0.1)', border: '1px solid rgba(100,116,139,0.2)' }}>
+        <span className="text-xs" style={{ color: '#94a3b8' }}>👁 View only — stage actions managed by admin</span>
+      </div>
+    )
+  }
 
   const actor = { actor_id: user.id, actor_name: profile?.full_name }
 
   async function handleAction(actionDef: ActionDef) {
     setError('')
 
-    // Hand off to parent for quote creation
     if (actionDef.action === 'create_quote') {
-      // Gate: site_visit_scheduled requires all site visit checklist items complete
       if (lead.stage === 'site_visit_scheduled' && !siteVisitComplete) {
         setError('Complete all required site visit checklist items before building a quote.')
         return
@@ -130,21 +139,17 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
       return
     }
 
-    // Hand off to parent for site visit scheduling
     if (actionDef.action === 'schedule_visit') {
       onScheduleVisit?.()
       return
     }
 
-    // Open a modal
     if (actionDef.modal) {
       setActiveModal(actionDef.modal)
       return
     }
 
-    // Direct stage move (no modal)
     if (actionDef.action === 'move' && actionDef.targetStage) {
-      // Gate: qualifying → qualified requires all required checklist questions answered
       if (lead.stage === 'qualifying' && actionDef.targetStage === 'qualified' && !qualifyingComplete) {
         setError('Complete all required qualifying questions before moving to Qualified.')
         return
@@ -201,9 +206,9 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
     setPendingAction('reopen')
     try {
       let updated: Lead
-      if (lead.stage === 'lost')             updated = await reopenFromLost(lead.id, lead, actor)
-      else if (lead.stage === 'dnd')         updated = await reopenFromDND(lead.id, actor)
-      else                                   updated = await reopenFromFollowUp(lead.id, lead, actor)
+      if (lead.stage === 'lost')       updated = await reopenFromLost(lead.id, lead, actor)
+      else if (lead.stage === 'dnd')   updated = await reopenFromDND(lead.id, actor)
+      else                             updated = await reopenFromFollowUp(lead.id, lead, actor)
       onLeadUpdated(updated); setActiveModal(null)
     } catch (e: any) { setError(e.message) }
     finally { setPendingAction(null) }
@@ -211,8 +216,8 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
 
   return (
     <>
-      {/* Persistent warning when qualifying checklist is incomplete */}
-      {lead.stage === 'qualifying' && !qualifyingComplete && (
+      {/* Qualifying checklist warning */}
+      {lead.stage === 'qualifying' && !qualifyingComplete && !isSalesRep && (
         <div className="flex items-start gap-2 rounded-xl px-4 py-3" style={{ backgroundColor: '#854d0e', border: '2px solid #eab308' }}>
           <span className="text-lg leading-none">⚠️</span>
           <div>
@@ -222,7 +227,7 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
         </div>
       )}
 
-      {/* Persistent warning when site visit checklist is incomplete */}
+      {/* Site visit checklist warning */}
       {lead.stage === 'site_visit_scheduled' && !siteVisitComplete && (
         <div className="flex items-start gap-2 rounded-xl px-4 py-3" style={{ backgroundColor: '#581c87', border: '2px solid #a855f7' }}>
           <span className="text-lg leading-none">📋</span>
@@ -302,4 +307,3 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
     </>
   )
 }
-
