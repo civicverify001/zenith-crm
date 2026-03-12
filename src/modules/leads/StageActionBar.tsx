@@ -196,6 +196,17 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
 
   return (
     <>
+      {/* Persistent warning when qualifying checklist is incomplete */}
+      {lead.stage === 'qualifying' && !qualifyingComplete && (
+        <div className="flex items-start gap-2 bg-amber-500/15 border border-amber-500/30 rounded-xl px-3 py-2.5">
+          <span className="text-amber-400 text-sm leading-none mt-0.5">⚠️</span>
+          <div>
+            <div className="text-xs font-bold text-amber-300">Qualifying Checklist Incomplete</div>
+            <div className="text-xs text-amber-400/80 mt-0.5">All required questions must be answered before this lead can move to Qualified.</div>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-1.5">
         {actions.map((actionDef) => {
           const isDisabled = actionDef.disabled?.(lead)
@@ -217,8 +228,9 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
       </div>
 
       {error && (
-        <div className="mt-2 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-1.5">
-          {error}
+        <div className="flex items-start gap-2 bg-red-500/15 border border-red-500/30 rounded-xl px-3 py-2.5 mt-2 animate-pulse">
+          <span className="text-red-400 text-sm leading-none mt-0.5">🚫</span>
+          <div className="text-xs font-semibold text-red-300">{error}</div>
         </div>
       )}
 
