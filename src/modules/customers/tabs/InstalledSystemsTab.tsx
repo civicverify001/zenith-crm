@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { useInstalledSystems, useWarrantyRecords } from '../useCustomers'
 import { OWNERSHIP_LABELS } from '../customers.types'
 import { supabase } from '../../../lib/supabase'
@@ -25,23 +24,8 @@ export function InstalledSystemsTab({ customerId }: Props) {
   const { data: systems, isLoading } = useInstalledSystems(customerId)
   const { data: warranties } = useWarrantyRecords(customerId)
 
-  // Monthly rental amount comes from agreements (not stored on installed_systems)
-  const [monthlyAmount, setMonthlyAmount] = useState<number | null>(null)
-
-  useEffect(() => {
-    if (!customerId) return
-    supabase
-      .from('agreements')
-      .select('monthly_amount')
-      .eq('customer_id', customerId)
-      .eq('status', 'signed')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data?.monthly_amount) setMonthlyAmount(data.monthly_amount)
-      })
-  }, [customerId])
+  // monthly_amount_snapshot is now read directly from each installed_systems row
+  // (written by api/installations/complete.js since the monthly_amount_snapshot migration)
 
   if (isLoading) return <p className="text-sm text-muted text-center py-8">Loading systems...</p>
   if (!systems?.length) return <p className="text-sm text-muted text-center py-8">No installed systems.</p>
@@ -93,12 +77,12 @@ export function InstalledSystemsTab({ customerId }: Props) {
             )}
 
             {/* Pricing summary bar */}
-            {isRental && (monthlyAmount || sys.install_fee_snapshot) && (
+            {isRental && (sys.monthly_amount_snapshot || sys.install_fee_snapshot) && (
               <div className="flex items-center gap-4 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 mb-3">
-                {monthlyAmount && (
+                {sys.monthly_amount_snapshot && (
                   <div>
                     <div className="text-[10px] text-amber-400/70 font-semibold uppercase tracking-wide">Monthly Rental</div>
-                    <div className="text-sm font-bold text-amber-300">{fmt(monthlyAmount)}/mo</div>
+                    <div className="text-sm font-bold text-amber-300">{fmt(sys.monthly_amount_snapshot)}/mo</div>
                   </div>
                 )}
                 {sys.install_fee_snapshot > 0 && (
