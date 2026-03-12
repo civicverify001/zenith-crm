@@ -476,7 +476,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
             <span className="text-green text-sm">✅</span>
             <h4 className="text-sm font-bold text-green">Agreement Signed</h4>
           </div>
-          {{jobAlreadyCreated ? (
+          {jobAlreadyCreated ? (
             <span className="text-xs px-3 py-1.5 bg-green/20 text-green border border-green/30 rounded-lg font-semibold">✓ Job Created</span>
           ) : profile?.role === 'salesrep' ? (
             <span className="text-xs px-3 py-1.5 bg-surface text-muted border border-border rounded-lg font-semibold">Pending scheduling</span>
