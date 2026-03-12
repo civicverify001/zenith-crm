@@ -203,8 +203,9 @@ function useMyUpcomingVisits(userId: string | undefined, isAdmin: boolean) {
       const leadMap = Object.fromEntries((leads || []).map((l: any) => [l.id, l]))
 
       return visits.map((v: any) => ({
-        ...v,
-        lead: leadMap[v.lead_id] || null,
+  ...v,
+  lead: leadMap[v.lead_id] || null,
+})).filter((v: any) => v.lead !== null)
       }))
     },
     enabled: !!userId,
