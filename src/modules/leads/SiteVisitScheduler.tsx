@@ -88,17 +88,24 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
   // Load reps
   useEffect(() => {
     async function loadReps() {
-      // Get all salesreps and admins — don't filter is_active (may be null for older records)
-      const { data } = await supabase
+      // Fetch ALL user profiles — filter in JS to avoid any Supabase query issues
+      const { data, error } = await supabase
         .from('user_profiles')
-        .select('id, full_name, role, is_active')
-        .in('role', ['salesrep', 'admin'])
+        .select('id, full_name, role')
         .order('full_name')
 
-      // Filter: include if is_active is true OR null (not explicitly false)
-      const active = (data || []).filter(r => r.is_active !== false)
-      setReps(active)
-      if (active.length > 0 && !activeRepId) setActiveRepId(active[0].id)
+      if (error) {
+        console.error('Failed to load reps:', error)
+        return
+      }
+
+      // Include salesrep and admin roles
+      const filtered = (data || []).filter(r =>
+        r.role === 'salesrep' || r.role === 'admin'
+      )
+      console.log('Site visit reps loaded:', filtered.map(r => `${r.full_name} (${r.role})`))
+      setReps(filtered)
+      if (filtered.length > 0) setActiveRepId(filtered[0].id)
     }
     loadReps()
   }, [])
