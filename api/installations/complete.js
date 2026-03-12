@@ -1,6 +1,7 @@
 // api/installations/complete.js
 // Mark installation complete + create installed system + link documents + charge install fee
-// IDEMPOTENT: safe to re-run. Will correct installed_systems ownership if previously wrong.
+// IDEMPOTENT: safe to re-run. Corrects wrong ownership_type from prior crashed runs.
+// Does NOT use upsert — uses check-then-update-or-insert to avoid needing a DB unique constraint.
 
 const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
@@ -20,7 +21,7 @@ module.exports = async function handler(req, res) {
   if (!job_id) return res.status(400).json({ error: 'job_id is required' });
 
   try {
-    // ── 1. Fetch the job ──────────────────────────────────────────────
+    // ── 1. Fetch the job ──────────────────────────────────────────────────────
     const { data: job, error: jobError } = await supabase
       .from('jobs')
       .select('id, status, lead_id, system_type, customer_name_snapshot, service_address_snapshot')
@@ -35,27 +36,48 @@ module.exports = async function handler(req, res) {
     // Re-running corrects any partial state from a prior crashed run.
     const alreadyComplete = job.status === 'complete';
 
-    // ── 2. Find customer linked to this lead ──────────────────────────
+    // ── 2. Find customer linked to this job ───────────────────────────────────
+    // Try lead_id first, then fall back to job_id on customers table directly.
     let customerId = null;
     if (job.lead_id) {
-      const { data: customer } = await supabase
+      const { data: cust } = await supabase
         .from('customers')
         .select('id')
         .eq('lead_id', job.lead_id)
         .maybeSingle();
-      customerId = customer?.id || null;
+      customerId = cust?.id || null;
+    }
+    if (!customerId) {
+      const { data: cust } = await supabase
+        .from('customers')
+        .select('id')
+        .eq('job_id', job_id)
+        .maybeSingle();
+      customerId = cust?.id || null;
     }
 
-    // ── 3. Get accepted/signed quote (unified .or() lookup) ───────────
+    // ── 3. Get accepted/signed quote (unified .or() lookup) ───────────────────
     // Matches either lead_id or opportunity_id in one query.
+    // Also falls back to customer's lead_id if job.lead_id is null.
     let installFee = 0;
     let acceptedQuote = null;
+    let lookupLeadId = job.lead_id;
 
-    if (job.lead_id) {
+    // If job.lead_id is null, try to get it from the customer record
+    if (!lookupLeadId && customerId) {
+      const { data: cust } = await supabase
+        .from('customers')
+        .select('lead_id')
+        .eq('id', customerId)
+        .maybeSingle();
+      lookupLeadId = cust?.lead_id || null;
+    }
+
+    if (lookupLeadId) {
       const { data: quote } = await supabase
         .from('quotes')
         .select('id, install_fee, monthly_amount, customer_name, product_id, quote_type, commercial_type')
-        .or(`lead_id.eq.${job.lead_id},opportunity_id.eq.${job.lead_id}`)
+        .or(`lead_id.eq.${lookupLeadId},opportunity_id.eq.${lookupLeadId}`)
         .in('status', ['accepted', 'signed'])
         .order('created_at', { ascending: false })
         .limit(1)
@@ -65,7 +87,7 @@ module.exports = async function handler(req, res) {
       if (quote?.install_fee) installFee = parseFloat(quote.install_fee);
     }
 
-    // ── 4. Get product info for system snapshot ───────────────────────
+    // ── 4. Get product info for system snapshot ───────────────────────────────
     let product = null;
     if (acceptedQuote?.product_id) {
       const { data: prod } = await supabase
@@ -76,7 +98,7 @@ module.exports = async function handler(req, res) {
       product = prod;
     }
 
-    // ── 5. Determine ownership type ───────────────────────────────────
+    // ── 5. Determine ownership type ───────────────────────────────────────────
     // commercial_type is AUTHORITATIVE. Never use quote_type.
     const ct = acceptedQuote?.commercial_type;
     const ownershipType = ct === 'rental' ? 'rented'
@@ -85,7 +107,7 @@ module.exports = async function handler(req, res) {
       : (acceptedQuote?.monthly_amount > 0) ? 'rented'
       : 'purchased';
 
-    // ── 6. Mark job complete (skip if already done) ───────────────────
+    // ── 6. Mark job complete (skip if already done) ───────────────────────────
     if (!alreadyComplete) {
       const { error: updateError } = await supabase
         .from('jobs')
@@ -101,7 +123,7 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // ── 6b. Set job_id on customer record so Documents tab loads ──────
+    // ── 6b. Set job_id on customer record so Documents tab loads ──────────────
     if (customerId) {
       await supabase
         .from('customers')
@@ -110,9 +132,11 @@ module.exports = async function handler(req, res) {
         .is('job_id', null);
     }
 
-    // ── 7. Upsert installed_systems (keyed on job_id) ─────────────────
-    // ON CONFLICT job_id → UPDATE corrects wrong ownership from prior crash.
-    // No manual SQL backfill ever needed again.
+    // ── 7. Check-then-update-or-insert installed_systems ─────────────────────
+    // Does NOT use upsert (which requires a unique constraint on job_id).
+    // Instead: check if a record exists for this job_id, then UPDATE or INSERT.
+    // This is idempotent and self-correcting — re-running fixes wrong ownership_type
+    // from a prior crashed run without any manual SQL backfill.
     let installedSystemId = null;
     if (customerId) {
       const today = new Date().toISOString().split('T')[0];
@@ -128,7 +152,7 @@ module.exports = async function handler(req, res) {
         advanced_softener: 'Advanced Softener System',
       };
 
-      const systemRecord = {
+      const systemFields = {
         customer_id: customerId,
         system_type: job.system_type || product?.category || 'unknown',
         name_snapshot: product?.name || nameMap[job.system_type] || job.system_type?.replace(/_/g, ' ') || 'Installed System',
@@ -141,53 +165,75 @@ module.exports = async function handler(req, res) {
         job_id: job_id,
       };
 
-      const { data: sysRecord, error: sysError } = await supabase
+      // Check if a record already exists for this job_id
+      const { data: existing } = await supabase
         .from('installed_systems')
-        .upsert(systemRecord, { onConflict: 'job_id', ignoreDuplicates: false })
         .select('id')
-        .single();
+        .eq('job_id', job_id)
+        .maybeSingle();
 
-      if (!sysError && sysRecord) {
-        installedSystemId = sysRecord.id;
+      if (existing?.id) {
+        // UPDATE — correct any wrong data from prior run
+        const { error: updErr } = await supabase
+          .from('installed_systems')
+          .update(systemFields)
+          .eq('id', existing.id);
 
-        // Create warranty record only if it doesn't already exist
-        if (product?.warranty_months) {
-          const { data: existingWarranty } = await supabase
-            .from('warranty_records')
-            .select('id')
-            .eq('installed_system_id', installedSystemId)
-            .maybeSingle();
-
-          if (!existingWarranty) {
-            const warrantyEnd = new Date();
-            warrantyEnd.setMonth(warrantyEnd.getMonth() + product.warranty_months);
-            const laborEnd = new Date();
-            laborEnd.setFullYear(laborEnd.getFullYear() + 1);
-
-            try {
-              await supabase.from('warranty_records').insert({
-                installed_system_id: installedSystemId,
-                customer_id: customerId,
-                warranty_status: 'valid',
-                parts_duration_years: Math.round(product.warranty_months / 12),
-                parts_end_date: warrantyEnd.toISOString().split('T')[0],
-                labor_duration_years: 1,
-                labor_end_date: laborEnd.toISOString().split('T')[0],
-              });
-            } catch(e) { console.error('[BEST-EFFORT] warranty_records:', e.message); }
-          }
+        if (!updErr) {
+          installedSystemId = existing.id;
+        } else {
+          console.error('[installed_systems update error]', updErr?.message);
         }
       } else {
-        console.error('[installed_systems upsert error]', sysError?.message);
+        // INSERT — first time running for this job
+        const { data: sysRecord, error: insErr } = await supabase
+          .from('installed_systems')
+          .insert(systemFields)
+          .select('id')
+          .single();
+
+        if (!insErr && sysRecord) {
+          installedSystemId = sysRecord.id;
+        } else {
+          console.error('[installed_systems insert error]', insErr?.message);
+        }
+      }
+
+      // Create warranty record only if it doesn't already exist
+      if (installedSystemId && product?.warranty_months) {
+        const { data: existingWarranty } = await supabase
+          .from('warranty_records')
+          .select('id')
+          .eq('installed_system_id', installedSystemId)
+          .maybeSingle();
+
+        if (!existingWarranty) {
+          const warrantyEnd = new Date();
+          warrantyEnd.setMonth(warrantyEnd.getMonth() + product.warranty_months);
+          const laborEnd = new Date();
+          laborEnd.setFullYear(laborEnd.getFullYear() + 1);
+
+          try {
+            await supabase.from('warranty_records').insert({
+              installed_system_id: installedSystemId,
+              customer_id: customerId,
+              warranty_status: 'valid',
+              parts_duration_years: Math.round(product.warranty_months / 12),
+              parts_end_date: warrantyEnd.toISOString().split('T')[0],
+              labor_duration_years: 1,
+              labor_end_date: laborEnd.toISOString().split('T')[0],
+            });
+          } catch(e) { console.error('[BEST-EFFORT] warranty_records:', e.message); }
+        }
       }
     }
 
-    // ── 8. Link signed documents to customer via document_links ──────
-    if (customerId && job.lead_id) {
+    // ── 8. Link signed documents to customer via document_links ──────────────
+    if (customerId && lookupLeadId) {
       const { data: docs } = await supabase
         .from('documents')
         .select('id, type, status')
-        .eq('opportunity_id', job.lead_id)
+        .eq('opportunity_id', lookupLeadId)
         .in('status', ['signed', 'accepted', 'paid'])
         .order('created_at', { ascending: false });
 
@@ -215,7 +261,7 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // ── 9. Log activity (skip duplicate logs on re-run) ───────────────
+    // ── 9. Log activity (skip duplicate logs on re-run) ───────────────────────
     if (!alreadyComplete) {
       try {
         await supabase.from('job_activity_log').insert({
@@ -252,7 +298,7 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // ── 10. Skip charge if no customer or no fee ──────────────────────
+    // ── 10. Skip charge if no customer or no fee ──────────────────────────────
     if (!customerId || installFee <= 0) {
       return res.status(200).json({
         success: true,
@@ -303,12 +349,12 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    // ── 11. Stripe charge — skip if already charged for this job ──────
+    // ── 11. Stripe charge — skip if already charged for this job ──────────────
     const { data: existingCharge } = await supabase
       .from('payment_transactions')
       .select('id, status')
       .eq('customer_id', customerId)
-      .ilike('description', `%Installation fee%`)
+      .ilike('description', '%Installation fee%')
       .in('status', ['succeeded', 'pending'])
       .maybeSingle();
 
