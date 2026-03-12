@@ -934,11 +934,27 @@ export function QuoteReviewPage() {
     setSigning(true); setError('')
     try {
       const ip = await getIp()
+      const now = new Date().toISOString()
+
+      // 1. Mark agreement signed
       const { error: e } = await supabase.from('agreements').update({
-        status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName, signed_ip: ip,
+        status: 'signed', signed_at: now, signed_name: signedName, signed_ip: ip,
       }).eq('id', agreement.id)
       if (e) throw e
-      setAgreement(prev => prev ? { ...prev, status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName } : prev)
+
+      // 2. Activate the linked contract so autopay can charge it
+      // billing_day = today's date so monthly charge falls on this day each month
+      await supabase
+        .from('contracts')
+        .update({
+          status: 'active',
+          signed_at: now,
+          billing_day: new Date().getDate(),
+        })
+        .eq('quote_id', agreement.quote_id)
+        .eq('status', 'pending_signature')
+
+      setAgreement(prev => prev ? { ...prev, status: 'signed', signed_at: now, signed_name: signedName } : prev)
       setStep('stripe_card_save'); scrollTop()
     } catch (e: any) { setError(e.message) }
     setSigning(false)
