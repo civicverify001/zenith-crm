@@ -228,9 +228,9 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 bg-red-500/20 border-2 border-red-500/60 rounded-xl px-4 py-3 mt-2">
+        <div className="flex items-center gap-2 bg-red-600 border-2 border-red-400 rounded-xl px-4 py-3 mt-2">
           <span className="text-lg leading-none">🚫</span>
-          <div className="text-sm font-bold text-red-300">{error}</div>
+          <div className="text-sm font-bold text-white">{error}</div>
         </div>
       )}
 
