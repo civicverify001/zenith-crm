@@ -45,23 +45,20 @@ module.exports = async function handler(req, res) {
     }
 
     // ── 3. Get accepted quote (for pricing snapshots + install fee) ───
-    // ── 3. Get accepted quote (for pricing snapshots + install fee) ───
-let installFee = 0;
-let acceptedQuote = null;
+    // Uses .or() to match either lead_id or opportunity_id in a single query.
+    // This prevents the old two-step approach from picking the wrong quote.
+    let installFee = 0;
+    let acceptedQuote = null;
 
-if (job.lead_id) {
-  const { data: quote } = await supabase
-    .from('quotes')
-    .select('id, install_fee, monthly_amount, customer_name, product_id, quote_type, commercial_type')
-    .or(`lead_id.eq.${job.lead_id},opportunity_id.eq.${job.lead_id}`)
-    .in('status', ['accepted', 'signed'])
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  acceptedQuote = quote;
-  if (quote?.install_fee) installFee = parseFloat(quote.install_fee);
-}
+    if (job.lead_id) {
+      const { data: quote } = await supabase
+        .from('quotes')
+        .select('id, install_fee, monthly_amount, customer_name, product_id, quote_type, commercial_type')
+        .or(`lead_id.eq.${job.lead_id},opportunity_id.eq.${job.lead_id}`)
+        .in('status', ['accepted', 'signed'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
       acceptedQuote = quote;
       if (quote?.install_fee) installFee = parseFloat(quote.install_fee);
@@ -98,20 +95,22 @@ if (job.lead_id) {
         .from('customers')
         .update({ job_id: job_id })
         .eq('id', customerId)
-        .is('job_id', null); // only set if not already set
+        .is('job_id', null);
     }
 
-    // ── 6. Create installed_systems record ────────────────────────────
+    // ── 6. Determine ownership type (hoisted so accessible in step 8b) ─
+    // commercial_type is AUTHORITATIVE — same source of truth as QuoteReviewPage.
+    // Never fall back to quote_type for ownership classification.
+    const ct = acceptedQuote?.commercial_type;
+    const ownershipType = ct === 'rental' ? 'rented'
+      : ct === 'purchase' ? 'purchased'
+      : ct === 'finance' ? 'purchased'
+      : (acceptedQuote?.monthly_amount > 0) ? 'rented'
+      : 'purchased';
+
+    // ── 7. Create installed_systems record ────────────────────────────
     let installedSystemId = null;
     if (customerId) {
-      // commercial_type is the AUTHORITATIVE field — same source of truth as QuoteReviewPage
-      // Never fall back to quote_type for ownership classification
-      const ct = acceptedQuote?.commercial_type;
-      const ownershipType = ct === 'rental' ? 'rented'
-        : ct === 'purchase' ? 'purchased'
-        : ct === 'finance' ? 'purchased'   // financed = customer owns it
-        : acceptedQuote?.monthly_amount > 0 ? 'rented'  // last-resort: if monthly exists, it's rental
-        : 'purchased';
       const today = new Date().toISOString().split('T')[0];
 
       const { data: sysRecord, error: sysError } = await supabase
@@ -150,22 +149,24 @@ if (job.lead_id) {
           const laborEnd = new Date();
           laborEnd.setFullYear(laborEnd.getFullYear() + 1);
 
-          try { await supabase.from('warranty_records').insert({
-            installed_system_id: installedSystemId,
-            customer_id: customerId,
-            warranty_status: 'valid',
-            parts_duration_years: Math.round(product.warranty_months / 12),
-            parts_end_date: warrantyEnd.toISOString().split('T')[0],
-            labor_duration_years: 1,
-            labor_end_date: laborEnd.toISOString().split('T')[0],
-          }); } catch(e) { console.error('[BEST-EFFORT] warranty_records:', e.message); }
+          try {
+            await supabase.from('warranty_records').insert({
+              installed_system_id: installedSystemId,
+              customer_id: customerId,
+              warranty_status: 'valid',
+              parts_duration_years: Math.round(product.warranty_months / 12),
+              parts_end_date: warrantyEnd.toISOString().split('T')[0],
+              labor_duration_years: 1,
+              labor_end_date: laborEnd.toISOString().split('T')[0],
+            });
+          } catch(e) { console.error('[BEST-EFFORT] warranty_records:', e.message); }
         }
       } else {
         console.error('[installed_systems insert error]', sysError?.message);
       }
     }
 
-    // ── 7. Link signed documents to customer via document_links ──────
+    // ── 8. Link signed documents to customer via document_links ──────
     if (customerId && job.lead_id) {
       const { data: docs } = await supabase
         .from('documents')
@@ -198,22 +199,23 @@ if (job.lead_id) {
       }
     }
 
-    // ── 8. Log activity ───────────────────────────────────────────────
-    try { await supabase.from('job_activity_log').insert({
-      job_id,
-      event_type: 'job_completed',
-      title: 'Job marked complete',
-      metadata: {
-        completed_by: completed_by || null,
-        install_fee: installFee,
-        installed_system_id: installedSystemId,
-        customer_id: customerId,
-      },
-      actor_id: completed_by || job_id,
-    }); } catch(e) { console.error('[BEST-EFFORT] activity log:', e.message); }
+    // ── 9. Log activity ───────────────────────────────────────────────
+    try {
+      await supabase.from('job_activity_log').insert({
+        job_id,
+        event_type: 'job_completed',
+        title: 'Job marked complete',
+        metadata: {
+          completed_by: completed_by || null,
+          install_fee: installFee,
+          installed_system_id: installedSystemId,
+          customer_id: customerId,
+        },
+        actor_id: completed_by || job_id,
+      });
+    } catch(e) { console.error('[BEST-EFFORT] job_activity_log:', e.message); }
 
-    // ── 8b. Customer activity log ─────────────────────────────────────
-    // CustomerActivityTab reads: id, event_type, title, created_at, actor_name, metadata
+    // ── 9b. Customer activity log ─────────────────────────────────────
     if (customerId) {
       try {
         await supabase.from('customer_activity_log').insert({
@@ -226,14 +228,14 @@ if (job.lead_id) {
             job_id,
             installed_system_id: installedSystemId,
             install_fee: installFee,
-            ownership_type: ownershipType,
+            ownership_type: ownershipType,   // now in scope — declared above step 7
             system_type: job.system_type || null,
           },
         });
       } catch(e) { console.error('[BEST-EFFORT] customer_activity_log:', e.message); }
     }
 
-    // ── 9. Skip charge if no customer or no fee ───────────────────────
+    // ── 10. Skip charge if no customer or no fee ──────────────────────
     if (!customerId || installFee <= 0) {
       return res.status(200).json({
         success: true,
@@ -281,7 +283,7 @@ if (job.lead_id) {
       });
     }
 
-    // ── 10. Stripe charge ─────────────────────────────────────────────
+    // ── 11. Stripe charge ─────────────────────────────────────────────
     let chargeResult = {};
     try {
       const paymentIntent = await stripe.paymentIntents.create({
@@ -341,4 +343,3 @@ if (job.lead_id) {
     return res.status(500).json({ error: 'Internal server error', message: err.message });
   }
 };
-
