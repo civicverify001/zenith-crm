@@ -79,6 +79,7 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [activeRepId, setActiveRepId] = useState<string | null>(null)
 
   const weekDates = useMemo(() => getWeekDates(weekOffset), [weekOffset])
   const weekStart = formatDateKey(weekDates[0])
@@ -97,6 +98,7 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
       // Filter: include if is_active is true OR null (not explicitly false)
       const active = (data || []).filter(r => r.is_active !== false)
       setReps(active)
+      if (active.length > 0 && !activeRepId) setActiveRepId(active[0].id)
     }
     loadReps()
   }, [])
@@ -220,85 +222,99 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
               <p className="text-slate-400">No sales reps found. Add reps in Team & Users first.</p>
             </div>
           ) : (
-            <div className="space-y-6">
-              {reps.map(rep => (
-                <div key={rep.id}>
-                  {/* Rep header */}
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white" style={{ backgroundColor: '#3b82f6' }}>
-                      {rep.full_name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-                    </div>
-                    <div className="text-sm font-bold text-white">{rep.full_name}</div>
-                  </div>
+            <div>
+              {/* Rep tabs */}
+              <div className="flex gap-2 mb-4">
+                {reps.map(rep => {
+                  const isActive = activeRepId === rep.id
+                  return (
+                    <button
+                      key={rep.id}
+                      onClick={() => setActiveRepId(rep.id)}
+                      className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                      style={{
+                        backgroundColor: isActive ? '#1d4ed8' : '#1e293b',
+                        color: isActive ? '#ffffff' : '#94a3b8',
+                        border: isActive ? '2px solid #3b82f6' : '1px solid #334155',
+                      }}
+                    >
+                      <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white" style={{ backgroundColor: isActive ? '#2563eb' : '#475569' }}>
+                        {rep.full_name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                      </div>
+                      {rep.full_name}
+                    </button>
+                  )
+                })}
+              </div>
 
-                  {/* Days grid */}
-                  <div className="grid grid-cols-7 gap-1.5">
-                    {weekDates.map(date => {
-                      const dateKey = formatDateKey(date)
-                      const weekend = isWeekend(date)
-                      const isToday = formatDateKey(new Date()) === dateKey
+              {/* Active rep's calendar */}
+              {activeRepId && (
+                <div className="grid grid-cols-7 gap-1.5">
+                  {weekDates.map(date => {
+                    const dateKey = formatDateKey(date)
+                    const weekend = isWeekend(date)
+                    const isToday = formatDateKey(new Date()) === dateKey
 
-                      return (
-                        <div key={dateKey} className="rounded-lg overflow-hidden" style={{ backgroundColor: '#0f172a', border: isToday ? '2px solid #3b82f6' : '1px solid #1e293b' }}>
-                          {/* Day header */}
-                          <div className="px-2 py-1.5 text-center" style={{ backgroundColor: weekend ? '#451a03' : '#1e293b', borderBottom: '1px solid #334155' }}>
-                            <div className="text-xs font-semibold" style={{ color: isToday ? '#60a5fa' : weekend ? '#fbbf24' : '#94a3b8' }}>
-                              {formatDayLabel(date)}
-                            </div>
-                            {weekend && (
-                              <div className="text-xs mt-0.5" style={{ color: '#f59e0b' }}>⚡ Confirm w/ rep</div>
-                            )}
+                    return (
+                      <div key={dateKey} className="rounded-lg overflow-hidden" style={{ backgroundColor: '#0f172a', border: isToday ? '2px solid #3b82f6' : '1px solid #1e293b' }}>
+                        {/* Day header */}
+                        <div className="px-2 py-1.5 text-center" style={{ backgroundColor: weekend ? '#451a03' : '#1e293b', borderBottom: '1px solid #334155' }}>
+                          <div className="text-xs font-semibold" style={{ color: isToday ? '#60a5fa' : weekend ? '#fbbf24' : '#94a3b8' }}>
+                            {formatDayLabel(date)}
                           </div>
-
-                          {/* Time slots */}
-                          <div className="p-1 space-y-0.5">
-                            {HOURS.map(hour => {
-                              const busy = isSlotBusy(rep.id, dateKey, hour)
-                              const past = isPast(date, hour)
-                              const selected = isSelected(rep.id, dateKey, hour)
-
-                              if (past) {
-                                return (
-                                  <div key={hour} className="px-1.5 py-1 rounded text-center" style={{ backgroundColor: '#1e293b' }}>
-                                    <div className="text-xs" style={{ color: '#475569' }}>{HOUR_LABELS[hour]}</div>
-                                  </div>
-                                )
-                              }
-
-                              if (busy) {
-                                return (
-                                  <div key={hour} className="px-1.5 py-1 rounded text-center" style={{ backgroundColor: '#7f1d1d', border: '1px solid #991b1b' }}>
-                                    <div className="text-xs font-medium" style={{ color: '#fca5a5' }}>{HOUR_LABELS[hour]}</div>
-                                    <div className="text-xs truncate" style={{ color: '#f87171' }}>{busy.customer_name_snapshot || 'Booked'}</div>
-                                  </div>
-                                )
-                              }
-
-                              return (
-                                <button
-                                  key={hour}
-                                  onClick={() => handleSlotClick(rep.id, dateKey, hour)}
-                                  className="w-full px-1.5 py-1 rounded text-center transition-all"
-                                  style={{
-                                    backgroundColor: selected ? '#166534' : '#0f2a1a',
-                                    border: selected ? '2px solid #22c55e' : '1px solid #1a3a2a',
-                                    cursor: 'pointer',
-                                  }}
-                                >
-                                  <div className="text-xs font-medium" style={{ color: selected ? '#4ade80' : '#86efac' }}>
-                                    {HOUR_LABELS[hour]}
-                                  </div>
-                                  {selected && <div className="text-xs" style={{ color: '#4ade80' }}>✓ Selected</div>}
-                                </button>
-                              )
-                            })}
-                          </div>
+                          {weekend && (
+                            <div className="text-xs mt-0.5" style={{ color: '#f59e0b' }}>⚡ Confirm w/ rep</div>
+                          )}
                         </div>
-                      )
-                    })}
-                  </div>
+
+                        {/* Time slots */}
+                        <div className="p-1 space-y-0.5">
+                          {HOURS.map(hour => {
+                            const busy = isSlotBusy(activeRepId, dateKey, hour)
+                            const past = isPast(date, hour)
+                            const selected = isSelected(activeRepId, dateKey, hour)
+
+                            if (past) {
+                              return (
+                                <div key={hour} className="px-1.5 py-1 rounded text-center" style={{ backgroundColor: '#1e293b' }}>
+                                  <div className="text-xs" style={{ color: '#475569' }}>{HOUR_LABELS[hour]}</div>
+                                </div>
+                              )
+                            }
+
+                            if (busy) {
+                              return (
+                                <div key={hour} className="px-1.5 py-1 rounded text-center" style={{ backgroundColor: '#7f1d1d', border: '1px solid #991b1b' }}>
+                                  <div className="text-xs font-medium" style={{ color: '#fca5a5' }}>{HOUR_LABELS[hour]}</div>
+                                  <div className="text-xs truncate" style={{ color: '#f87171' }}>{busy.customer_name_snapshot || 'Booked'}</div>
+                                </div>
+                              )
+                            }
+
+                            return (
+                              <button
+                                key={hour}
+                                onClick={() => handleSlotClick(activeRepId, dateKey, hour)}
+                                className="w-full px-1.5 py-1 rounded text-center transition-all"
+                                style={{
+                                  backgroundColor: selected ? '#166534' : '#0f2a1a',
+                                  border: selected ? '2px solid #22c55e' : '1px solid #1a3a2a',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                <div className="text-xs font-medium" style={{ color: selected ? '#4ade80' : '#86efac' }}>
+                                  {HOUR_LABELS[hour]}
+                                </div>
+                                {selected && <div className="text-xs" style={{ color: '#4ade80' }}>✓ Selected</div>}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
+              )}
             </div>
           )}
         </div>
