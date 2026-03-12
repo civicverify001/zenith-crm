@@ -411,7 +411,7 @@ export function DashboardPage() {
                         {lead?.full_name || 'Unknown'}
                       </div>
                       <div className="text-xs text-gray-500">
-                        {lead?.address || lead?.phone || ''}
+                        {lead?.phone || ''}
                       </div>
                     </div>
                   }
