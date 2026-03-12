@@ -189,7 +189,21 @@ module.exports = async function handler(req, res) {
         .is('job_id', null);
     }
 
-    // ── 6. Installed systems — idempotent upsert ──────────────────────
+    // ── 5c. Set billing_day on active contract = today's install date ─
+    // First charge always falls on the day the system was installed.
+    // billing_day is what autopay uses to know which day of month to charge.
+    if (customerId) {
+      const billingDay = new Date().getDate(); // 1–31
+      try {
+        await supabase
+          .from('contracts')
+          .update({ billing_day: billingDay })
+          .eq('customer_id', customerId)
+          .eq('status', 'active');
+      } catch(e) { console.error('[BEST-EFFORT] billing_day update:', e.message); }
+    }
+
+        // ── 6. Installed systems — idempotent upsert ──────────────────────
     //   Check for existing row by job_id.
     //   EXISTS → UPDATE ownership_type, install_fee_snapshot, monthly_amount_snapshot.
     //   NOT EXISTS → INSERT fresh row.
