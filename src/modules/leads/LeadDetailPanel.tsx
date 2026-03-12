@@ -58,6 +58,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   const [pendingCustomerId, setPendingCustomerId] = useState<string | null>(null)
   const [quoteLink, setQuoteLink] = useState<string | null>(null)
   const [preparingQuote, setPreparingQuote] = useState(false)
+  const [qualifyingComplete, setQualifyingComplete] = useState(false)
 
   const { mutateAsync: assignRep } = useAssignRep()
   const { mutateAsync: logCall, isPending: callPending } = useLogCallAttempt()
@@ -259,6 +260,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
               lead={lead}
               onLeadUpdated={handleLeadUpdated}
               onCreateQuote={handleCreateQuote}
+              qualifyingComplete={qualifyingComplete}
             />
 
             {preparingQuote && (
@@ -291,7 +293,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
               <div className="space-y-4">
 
                 {lead.stage === 'qualifying' && (
-                  <QualifyingChecklist lead={lead} onLeadUpdated={handleLeadUpdated} />
+                  <QualifyingChecklist lead={lead} onLeadUpdated={handleLeadUpdated} onCompletionChange={setQualifyingComplete} />
                 )}
 
                 {lead.stage === 'quote_sent' && quoteLink && (

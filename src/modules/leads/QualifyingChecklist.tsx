@@ -20,9 +20,10 @@ interface QualifyingQuestion {
 interface Props {
   lead: Lead
   onLeadUpdated: (lead: Lead) => void
+  onCompletionChange?: (allRequiredDone: boolean) => void
 }
 
-export default function QualifyingChecklist({ lead, onLeadUpdated }: Props) {
+export default function QualifyingChecklist({ lead, onLeadUpdated, onCompletionChange }: Props) {
   const [questions, setQuestions] = useState<QualifyingQuestion[]>([])
   const [answers, setAnswers] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
@@ -97,6 +98,11 @@ export default function QualifyingChecklist({ lead, onLeadUpdated }: Props) {
     const val = answers[q.id]
     return val !== undefined && val !== null && val !== ''
   }).length
+
+  // Notify parent when completion state changes
+  useEffect(() => {
+    onCompletionChange?.(allRequiredDone && questions.length > 0)
+  }, [allRequiredDone, questions.length])
 
   if (loading) {
     return (

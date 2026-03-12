@@ -96,9 +96,11 @@ interface Props {
   onLeadUpdated: (lead: Lead) => void
   /** Called when rep clicks "Build Quote" — parent handles opening QuoteBuilder */
   onCreateQuote?: () => void
+  /** Whether all required qualifying questions are answered */
+  qualifyingComplete?: boolean
 }
 
-export function StageActionBar({ lead, onLeadUpdated, onCreateQuote }: Props) {
+export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingComplete }: Props) {
   const { user, profile } = useAuth()
   const [activeModal, setActiveModal] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
@@ -127,6 +129,11 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote }: Props) {
 
     // Direct stage move (no modal)
     if (actionDef.action === 'move' && actionDef.targetStage) {
+      // Gate: qualifying → qualified requires all required checklist questions answered
+      if (lead.stage === 'qualifying' && actionDef.targetStage === 'qualified' && !qualifyingComplete) {
+        setError('Complete all required qualifying questions before moving to Qualified.')
+        return
+      }
       setPendingAction(actionDef.action)
       try {
         const updated = await moveStage(lead.id, lead.stage, actionDef.targetStage, actor)
@@ -255,3 +262,4 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote }: Props) {
     </>
   )
 }
+
