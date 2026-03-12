@@ -11,6 +11,8 @@ import {
   type PaymentMethod, type PaymentTransaction,
 } from '../../../services/billingService'
 import { useRentalContracts } from '../useCustomers'
+import { supabase } from '../../../lib/supabase'
+import { usePermissions } from '../../../hooks/usePermissions'
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY)
 
@@ -580,11 +582,17 @@ function ChargeModal({
 // ─── Main BillingTab ─────────────────────────────────────────
 export function BillingTab({ customerId, customer }: Props) {
   const qc = useQueryClient()
+  const { role } = usePermissions()
+  const canEditMonthly = role === 'admin' || role === 'frontdesk'
   const [addMode, setAddMode] = useState<null | 'card' | 'bank'>(null)
   const [showChargeModal, setShowChargeModal] = useState(false)
   const [generatingLink, setGeneratingLink] = useState(false)
   const [paymentLinkUrl, setPaymentLinkUrl] = useState('')
   const [linkError, setLinkError] = useState('')
+  const [editingMonthly, setEditingMonthly] = useState(false)
+  const [monthlyDraft, setMonthlyDraft] = useState('')
+  const [monthlyLoading, setMonthlyLoading] = useState(false)
+  const [monthlyError, setMonthlyError] = useState('')
 
   const { data: paymentMethods = [], isLoading: pmLoading } = useQuery({
     queryKey: ['payment-methods', customerId],
@@ -600,6 +608,35 @@ export function BillingTab({ customerId, customer }: Props) {
   function invalidate() {
     qc.invalidateQueries({ queryKey: ['payment-methods', customerId] })
     qc.invalidateQueries({ queryKey: ['payment-transactions', customerId] })
+    qc.invalidateQueries({ queryKey: ['rental-contracts', customerId] })
+  }
+
+  async function saveMonthlyAmount() {
+    if (!activeContract) return
+    const parsed = parseFloat(monthlyDraft)
+    if (isNaN(parsed) || parsed <= 0) { setMonthlyError('Enter a valid amount'); return }
+    setMonthlyLoading(true); setMonthlyError('')
+    try {
+      const { error: e1 } = await supabase
+        .from('contracts')
+        .update({ monthly_amount: parsed })
+        .eq('id', activeContract.id)
+      if (e1) throw e1
+
+      // Keep installed_systems snapshot in sync
+      await supabase
+        .from('installed_systems')
+        .update({ monthly_amount_snapshot: parsed })
+        .eq('customer_id', customerId)
+        .eq('is_active', true)
+
+      setEditingMonthly(false)
+      invalidate()
+    } catch (e: any) {
+      setMonthlyError(e.message || 'Failed to save')
+    } finally {
+      setMonthlyLoading(false)
+    }
   }
 
   async function handleGeneratePaymentLink() {
@@ -658,6 +695,89 @@ export function BillingTab({ customerId, customer }: Props) {
                 <span style={{ color: '#f87171' }}>{fmt(tx.amount)} — {tx.failure_reason || 'failed'}</span>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* ── Billing Plan ─────────────────────────────────── */}
+        {activeContract && (
+          <div className="bg-card border border-border rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">Billing Plan</div>
+              <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}>
+                Active
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              {/* Contract number + type */}
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">Contract</span>
+                <span className="text-slate-200 font-medium">{activeContract.contract_number}</span>
+              </div>
+
+              {/* Billing day */}
+              {activeContract.billing_day && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400">Charges on</span>
+                  <span className="text-slate-200 font-medium">
+                    {activeContract.billing_day === 1 ? '1st' :
+                     activeContract.billing_day === 2 ? '2nd' :
+                     activeContract.billing_day === 3 ? '3rd' :
+                     `${activeContract.billing_day}th`} of each month
+                  </span>
+                </div>
+              )}
+
+              {/* Monthly amount — editable */}
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">Monthly amount</span>
+                {editingMonthly ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={monthlyDraft}
+                      onChange={e => setMonthlyDraft(e.target.value)}
+                      autoFocus
+                      className="w-20 text-sm rounded-lg px-2 py-1 outline-none text-right"
+                      style={{ backgroundColor: '#0f172a', border: '1px solid rgba(96,165,250,0.4)', color: '#e2e8f0' }}
+                    />
+                    <button
+                      onClick={saveMonthlyAmount}
+                      disabled={monthlyLoading}
+                      className="text-xs px-2 py-1 rounded-lg font-semibold disabled:opacity-50"
+                      style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}>
+                      {monthlyLoading ? '…' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => { setEditingMonthly(false); setMonthlyError('') }}
+                      className="text-xs text-slate-400 hover:text-slate-200">
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-white font-semibold">{fmt(activeContract.monthly_amount)}/mo</span>
+                    {canEditMonthly && (
+                      <button
+                        onClick={() => { setMonthlyDraft(String(activeContract.monthly_amount)); setEditingMonthly(true); setMonthlyError('') }}
+                        className="text-muted hover:text-slate-300 transition-colors"
+                        title="Edit monthly amount"
+                        style={{ lineHeight: 1 }}>
+                        ✏️
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {monthlyError && (
+                <div className="text-xs rounded-lg px-2 py-1" style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                  {monthlyError}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
