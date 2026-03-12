@@ -471,24 +471,21 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   return (
     <>
       <div className="bg-green/5 border border-green/20 rounded-xl p-4 space-y-3">
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-2">
-            <span className="text-green text-sm">✅</span>
-            <h4 className="text-sm font-bold text-green">Agreement Signed</h4>
+        <<div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <span className="text-green text-sm">✅</span>
+              <h4 className="text-sm font-bold text-green">Agreement Signed</h4>
+            </div>
+            {jobAlreadyCreated ? (
+              <span className="text-xs px-3 py-1.5 bg-green/20 text-green border border-green/30 rounded-lg font-semibold">✓ Job Created</span>
+            ) : profile?.role === 'salesrep' ? (
+              <span className="text-xs px-3 py-1.5 bg-surface text-muted border border-border rounded-lg font-semibold">Pending scheduling</span>
+            ) : (
+              <button onClick={handleOpenModal} className="text-xs px-3 py-1.5 bg-cyan/20 hover:bg-cyan/30 text-cyan border border-cyan/30 rounded-lg font-semibold transition-colors">
+                📅 Schedule Install
+              </button>
+            )}
           </div>
-          {jobAlreadyCreated ? (
-            <span className="text-xs px-3 py-1.5 bg-green/20 text-green border border-green/30 rounded-lg font-semibold">✓ Job Created</span>
-          ) : profile?.role === 'salesrep' ? (
-            <span className="text-xs px-3 py-1.5 bg-surface text-muted border border-border rounded-lg font-semibold">Pending scheduling</span>
-          ) : (
-            <button onClick={handleOpenModal} className="text-xs px-3 py-1.5 bg-cyan/20 hover:bg-cyan/30 text-cyan border border-cyan/30 rounded-lg font-semibold transition-colors">
-              📅 Schedule Install
-            </button>
-          )}
-          ) : (
-            <span className="text-xs px-3 py-1.5 bg-green/20 text-green border border-green/30 rounded-lg font-semibold">✓ Job Created</span>
-          )}
-        </div>
         <div className="text-center py-2">
           <div className="text-xs text-muted uppercase tracking-wide">
             {agreementData?.commercial_type === 'rental' ? 'Monthly Amount' : 'Quote Total'}
