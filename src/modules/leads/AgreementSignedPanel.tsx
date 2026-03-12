@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import type { Lead } from './leads.types'
 import { useTechnicians } from '../dispatch/useJobs'
 import { SYSTEM_TYPE_LABELS } from '../dispatch/dispatch.types'
@@ -50,7 +50,7 @@ function systemTypeFromCategories(categories: string[]): SystemType {
   if ((has('ro') && has('softener')) || (has('ro') && has('whole_home_filter'))) return 'combo_whole_home_ro'
   if (has('ro')) return 'ro_install'
   if (has('softener')) return 'softener_only'
-  if (has('whole_home_filter')) return 'ro_install'
+  if (has('whole_home_filter') || has('filtration')) return 'softener_only'
   return 'softener_only'
 }
 function systemTypeFromText(agreementType: string | null, lineItems: any[]): SystemType {
@@ -265,9 +265,50 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   const [detectionSource, setDetectionSource] = useState<'invoice'|'quote'|'fallback'|null>(null)
   const [jobSlots, setJobSlots] = useState<JobSlot[]>([])
 
+  // Agreement data loaded from DB (lead fields may be empty for digital signing flow)
+  const [agreementData, setAgreementData] = useState<{
+    signed_by: string | null
+    signed_at: string | null
+    quote_total: number | null
+    monthly_amount: number | null
+    commercial_type: string | null
+  } | null>(null)
   const installPrefLabel: Record<string, string> = { asap: 'ASAP', specific_date: 'Specific Date', flexible: 'Flexible' }
   const paymentLabel: Record<string, string> = { cash: 'Cash', check: 'Check', card: 'Card', financing: 'Financing' }
   const jobAlreadyCreated = !!lead.job_created
+
+  // Load agreement/quote data from DB (digital signing flow writes there, not to lead fields)
+  useEffect(() => {
+    async function loadAgreementData() {
+      // Try agreements table first
+      const { data: ag } = await supabase
+        .from('agreements')
+        .select('signed_by, signed_at, commercial_type')
+        .eq('lead_id', lead.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      // Also get quote for total/monthly
+      const { data: qt } = await supabase
+        .from('quotes')
+        .select('total, monthly_amount, commercial_type, signed_at, signed_by')
+        .eq('lead_id', lead.id)
+        .in('status', ['accepted', 'signed'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      setAgreementData({
+        signed_by: ag?.signed_by || qt?.signed_by || lead.signed_by || null,
+        signed_at: ag?.signed_at || qt?.signed_at || lead.signed_at || null,
+        quote_total: qt?.total || lead.quote_total || null,
+        monthly_amount: qt?.monthly_amount || null,
+        commercial_type: ag?.commercial_type || qt?.commercial_type || null,
+      })
+    }
+    loadAgreementData()
+  }, [lead.id])
 
   function applySystemType(detected: SystemType) {
     setSystemType(detected)
@@ -444,33 +485,30 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
           )}
         </div>
         <div className="text-center py-2">
-          <div className="text-xs text-muted uppercase tracking-wide">Quote Total</div>
-          <div className="text-2xl font-bold text-white mt-0.5">{formatCurrency(lead.quote_total)}</div>
+          <div className="text-xs text-muted uppercase tracking-wide">
+            {agreementData?.commercial_type === 'rental' ? 'Monthly Amount' : 'Quote Total'}
+          </div>
+          <div className="text-2xl font-bold text-white mt-0.5">
+            {agreementData?.commercial_type === 'rental'
+              ? `${formatCurrency(agreementData?.monthly_amount)}/mo`
+              : formatCurrency(agreementData?.quote_total || lead.quote_total)}
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div><div className="text-xs text-muted">Signed By</div><div className="text-sm text-slate-200">{lead.signed_by || '—'}</div></div>
-          <div><div className="text-xs text-muted">Signed At</div><div className="text-sm text-slate-200">{formatDate(lead.signed_at)}</div></div>
+          <div><div className="text-xs text-muted">Signed By</div><div className="text-sm text-slate-200">{agreementData?.signed_by || lead.signed_by || '—'}</div></div>
+          <div><div className="text-xs text-muted">Signed At</div><div className="text-sm text-slate-200">{formatDate(agreementData?.signed_at || lead.signed_at)}</div></div>
           <div>
-            <div className="text-xs text-muted">Payment</div>
+            <div className="text-xs text-muted">Type</div>
             <div className="text-sm text-slate-200">
-              {lead.payment_method ? paymentLabel[lead.payment_method] || lead.payment_method : '—'}
-              {lead.financing_provider && <span className="text-xs text-muted ml-1">({lead.financing_provider})</span>}
-            </div>
-          </div>
-          <div><div className="text-xs text-muted">Deposit</div><div className="text-sm text-slate-200">{formatCurrency(lead.deposit_amount)}</div></div>
-          <div>
-            <div className="text-xs text-muted">Install Pref.</div>
-            <div className="text-sm text-slate-200">
-              {lead.install_preference ? installPrefLabel[lead.install_preference] || lead.install_preference : '—'}
-              {lead.install_preferred_date && <span className="text-xs text-muted ml-1">({new Date(lead.install_preferred_date).toLocaleDateString()})</span>}
+              {agreementData?.commercial_type === 'rental' ? '🔄 Rental' : agreementData?.commercial_type === 'purchase' ? '💰 Purchase' : agreementData?.commercial_type === 'financed' ? '🏦 Financed' : '—'}
             </div>
           </div>
           <div>
-            <div className="text-xs text-muted">Agreement File</div>
+            <div className="text-xs text-muted">Agreement</div>
             <div className="text-sm">
               {lead.agreement_file_url
                 ? <a href={lead.agreement_file_url} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">View PDF</a>
-                : <span className="text-muted">No file</span>}
+                : <span className="text-green">✓ Digitally Signed</span>}
             </div>
           </div>
         </div>
@@ -521,18 +559,19 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 )}
               </div>
 
-              {/* Install Type */}
+              {/* Install Type — only show when products NOT auto-detected */}
+              {detectedProducts.length === 0 && !loadingAgreement && (
               <div>
                 <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">
                   Install Type <span className="text-red-400">*</span>
-                  {detectedProducts.length > 0 && !loadingAgreement && <span className="ml-2 text-accent font-normal normal-case">auto-detected</span>}
                 </label>
                 <select value={systemType} onChange={e => setSystemType(e.target.value as SystemType)}
                   className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-accent">
                   {ALL_SYSTEM_TYPES.map(t => <option key={t} value={t}>{SYSTEM_TYPE_LABELS[t]}</option>)}
                 </select>
-                <div className="text-xs text-muted mt-1">Override if needed — controls the install checklist.</div>
+                <div className="text-xs text-muted mt-1">No products detected — select install type manually.</div>
               </div>
+              )}
 
               {(systemType === 'ro_install' || systemType === 'combo_whole_home_ro') && (
                 <div className="flex items-center gap-3">
@@ -634,3 +673,4 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     </>
   )
 }
+
