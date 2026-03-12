@@ -166,7 +166,6 @@ function useFailedPayments() {
 }
 
 // ── My Upcoming Site Visits ───────────────────────────────────────
-// Shows today + next 7 days for the logged-in rep (or all for admin)
 function useMyUpcomingVisits(userId: string | undefined, isAdmin: boolean) {
   return useQuery({
     queryKey: ['dashboard', 'my_upcoming_visits', userId],
@@ -193,7 +192,6 @@ function useMyUpcomingVisits(userId: string | undefined, isAdmin: boolean) {
       if (error) throw error
       if (!visits || visits.length === 0) return []
 
-      // Fetch lead names separately
       const leadIds = [...new Set(visits.map((v: any) => v.lead_id).filter(Boolean))]
       const { data: leads } = await supabase
         .from('leads')
@@ -202,11 +200,12 @@ function useMyUpcomingVisits(userId: string | undefined, isAdmin: boolean) {
 
       const leadMap = Object.fromEntries((leads || []).map((l: any) => [l.id, l]))
 
-      return visits.map((v: any) => ({
-  ...v,
-  lead: leadMap[v.lead_id] || null,
-})).filter((v: any) => v.lead !== null)
-      }))
+      return visits
+        .map((v: any) => ({
+          ...v,
+          lead: leadMap[v.lead_id] || null,
+        }))
+        .filter((v: any) => v.lead !== null)
     },
     enabled: !!userId,
     refetchInterval: 60_000,
@@ -237,7 +236,6 @@ function formatShortDate(d: string): string {
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-// Format visit_hour integer (e.g. 9 → "9:00 AM", 14 → "2:00 PM")
 function formatHour(h: number): string {
   if (h === 0) return '12:00 AM'
   if (h < 12) return `${h}:00 AM`
@@ -245,12 +243,10 @@ function formatHour(h: number): string {
   return `${h - 12}:00 PM`
 }
 
-// Is a visit date today?
 function isToday(dateStr: string): boolean {
   return dateStr === new Date().toISOString().split('T')[0]
 }
 
-// Is a visit date tomorrow?
 function isTomorrow(dateStr: string): boolean {
   const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]
   return dateStr === tomorrow
@@ -263,10 +259,10 @@ function visitDayLabel(dateStr: string): string {
 }
 
 const JOB_STATUS_BADGE: Record<string, { label: string; color: string }> = {
-  scheduled:   { label: 'Scheduled',  color: 'bg-blue-900/50 text-blue-400'  },
-  in_progress: { label: 'In Progress', color: 'bg-cyan-900/50 text-cyan-400' },
-  complete:    { label: 'Complete',   color: 'bg-green-900/50 text-green-400' },
-  cancelled:   { label: 'Cancelled',  color: 'bg-red-900/50 text-red-400'    },
+  scheduled:   { label: 'Scheduled',   color: 'bg-blue-900/50 text-blue-400'  },
+  in_progress: { label: 'In Progress', color: 'bg-cyan-900/50 text-cyan-400'  },
+  complete:    { label: 'Complete',    color: 'bg-green-900/50 text-green-400' },
+  cancelled:   { label: 'Cancelled',   color: 'bg-red-900/50 text-red-400'    },
 }
 
 // ============================================================
@@ -298,10 +294,7 @@ export function DashboardPage() {
   const completedJobsThisWeek = jobsThisWeek.filter((j: any) => j.status === 'complete').length
   const scheduledToday  = todaysJobs.filter((j: any) => j.status === 'scheduled').length
   const inProgressToday = todaysJobs.filter((j: any) => j.status === 'in_progress').length
-
-  // Count today's visits for the KPI nudge
   const todaysVisitCount = upcomingVisits.filter((v: any) => isToday(v.visit_date)).length
-
   const urgentCount = overdueFollowUps.length + overdueServices.length + failedPayments.length
 
   return (
@@ -362,7 +355,7 @@ export function DashboardPage() {
       {/* ─── Action Queue Grid ───────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-        {/* Failed Payments — Admin, always first */}
+        {/* Failed Payments */}
         {isAdmin && failedPayments.length > 0 && (
           <ActionSection
             title="Failed Payments"
@@ -393,17 +386,14 @@ export function DashboardPage() {
               />
             ))}
             {failedPayments.length > 5 && (
-              <button
-                onClick={() => navigate('/customers')}
-                className="text-xs text-accent hover:underline mt-2 block px-4 pb-2"
-              >
+              <button onClick={() => navigate('/customers')} className="text-xs text-accent hover:underline mt-2 block px-4 pb-2">
                 View all {failedPayments.length} failed →
               </button>
             )}
           </ActionSection>
         )}
 
-        {/* My Upcoming Site Visits — Sales/Admin */}
+        {/* My Upcoming Site Visits */}
         {isSalesOrAdmin && (
           <ActionSection
             title={isAdmin ? 'Upcoming Site Visits' : 'My Upcoming Visits'}
@@ -412,7 +402,7 @@ export function DashboardPage() {
             emptyText="No site visits scheduled this week"
           >
             {upcomingVisits.slice(0, 6).map((visit: any) => {
-              const lead = visit.leads
+              const lead = visit.lead
               const dayLabel = visitDayLabel(visit.visit_date)
               const isVisitToday = isToday(visit.visit_date)
               return (
@@ -431,10 +421,7 @@ export function DashboardPage() {
                   }
                   right={
                     <div className="text-right flex-shrink-0 ml-3">
-                      <div
-                        className="text-xs font-semibold"
-                        style={{ color: isVisitToday ? '#34d399' : '#94a3b8' }}
-                      >
+                      <div className="text-xs font-semibold" style={{ color: isVisitToday ? '#34d399' : '#94a3b8' }}>
                         {dayLabel}
                       </div>
                       <div className="text-xs text-gray-500 mt-0.5">
@@ -445,19 +432,15 @@ export function DashboardPage() {
                 />
               )
             })}
-            {upcomingVisits.length === 0 && todaysVisitCount === 0 && null}
             {upcomingVisits.length > 6 && (
-              <button
-                onClick={() => navigate('/leads')}
-                className="text-xs text-accent hover:underline mt-2 block px-4 pb-2"
-              >
+              <button onClick={() => navigate('/leads')} className="text-xs text-accent hover:underline mt-2 block px-4 pb-2">
                 View all {upcomingVisits.length} visits →
               </button>
             )}
           </ActionSection>
         )}
 
-        {/* Overdue Follow-Ups — Sales/Admin */}
+        {/* Overdue Follow-Ups */}
         {isSalesOrAdmin && (
           <ActionSection
             title="Overdue Follow-Ups"
@@ -491,7 +474,7 @@ export function DashboardPage() {
           </ActionSection>
         )}
 
-        {/* Leads to Contact — Sales/Admin */}
+        {/* Leads to Contact */}
         {isSalesOrAdmin && (
           <ActionSection
             title="Leads to Contact"
@@ -522,7 +505,7 @@ export function DashboardPage() {
           </ActionSection>
         )}
 
-        {/* Today's Installations — All roles */}
+        {/* Today's Installations */}
         <ActionSection
           title="Today's Installations"
           icon="🔧"
@@ -548,7 +531,7 @@ export function DashboardPage() {
           ))}
         </ActionSection>
 
-        {/* Recent Customers — Admin */}
+        {/* Recent Customers */}
         {isAdmin && (
           <ActionSection
             title="Recent Customers"
@@ -584,7 +567,7 @@ export function DashboardPage() {
           </ActionSection>
         )}
 
-        {/* Overdue Service Items — Admin */}
+        {/* Overdue Service Items */}
         {isAdmin && overdueServices.length > 0 && (
           <ActionSection
             title="Overdue Service Items"
