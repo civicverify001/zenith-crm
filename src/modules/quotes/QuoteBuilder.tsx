@@ -136,7 +136,7 @@ export function QuoteBuilder({
   const [savedQuoteId, setSavedQuoteId] = useState<string | null>(existingQuote?.id || null)
   const [serviceAddress, setServiceAddress] = useState(customerAddress || existingQuote?.customer_address || '')
 
-  // Fetch line items if existingQuote was passed without them (e.g. from list view)
+  // Fetch line items if existingQuote was passed without them
   useEffect(() => {
     if (!existingQuote?.id) return
     if (existingQuote.line_items && existingQuote.line_items.length > 0) return
@@ -192,10 +192,26 @@ export function QuoteBuilder({
   }, [])
 
   // ─── Line item helpers ─────────────────────────────────────
+
   function addProduct(product: Product) {
-    const unitPrice = commercialType === 'rental'
-      ? (product.rental_price_monthly ?? product.retail_price ?? 0)
-      : (product.retail_price ?? 0)
+    // ── PRICING FIX: explicit per commercial type, no cross-type fallback ──
+    let unitPrice: number
+
+    if (commercialType === 'rental') {
+      // Rental must use rental_price_monthly — no fallback to retail allowed
+      if (product.rental_price_monthly == null) {
+        alert(`"${product.name}" does not have a rental monthly price configured. Contact admin to update the product catalog before adding this item to a rental quote.`)
+        return
+      }
+      unitPrice = product.rental_price_monthly
+    } else if (commercialType === 'purchase') {
+      // Purchase uses retail_price only
+      unitPrice = product.retail_price ?? 0
+    } else {
+      // financed — same pricing as purchase (retail_price), not rental
+      // financed is a payment/funding path, not a separate price tier
+      unitPrice = product.retail_price ?? 0
+    }
 
     const productItem: DraftLineItem = {
       _key: uid(),
@@ -211,9 +227,6 @@ export function QuoteBuilder({
       discount_pct: 0,
     }
 
-    // ── FIX: always add install fee for ALL quote types (rental and purchase) ──
-    // Removed the `commercialType !== 'rental'` guard — install fee is one-time
-    // regardless of deal type. Also fixed double-add bug (was calling setLineItems twice).
     if (product.install_fee && product.install_fee > 0) {
       const installItem: DraftLineItem = {
         _key: uid(),
@@ -292,13 +305,11 @@ export function QuoteBuilder({
   }
 
   // ─── Totals ────────────────────────────────────────────────
-  // Split recurring vs one-time for rental display
   const recurringItems  = lineItems.filter(li => li.item_type !== 'install_fee')
   const installFeeItems = lineItems.filter(li => li.item_type === 'install_fee')
   const monthlySubtotal = recurringItems.reduce((s, li) => s + li.total, 0)
   const installFeeTotal = installFeeItems.reduce((s, li) => s + li.total, 0)
 
-  // Purchase totals (all items)
   const subtotal  = lineItems.reduce((s, li) => s + li.total, 0)
   const taxAmount = parseFloat((subtotal * 0.07).toFixed(2))
   const total     = parseFloat((subtotal + taxAmount).toFixed(2))
@@ -664,15 +675,32 @@ function FormView({
                         <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{p.name}</div>
                         {p.sku && <div style={{ color: '#64748b', fontSize: 11 }}>{p.sku}</div>}
                       </div>
+
+                      {/* ── PRICING DISPLAY FIX: show only the price relevant to current quote type ── */}
                       <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                        {isRental && p.rental_price_monthly != null && (
-                          <div style={{ color: '#22d3ee', fontSize: 12, fontWeight: 700 }}>{fmt(p.rental_price_monthly)}/mo</div>
+                        {commercialType === 'rental' && (
+                          p.rental_price_monthly != null
+                            ? <div style={{ color: '#22d3ee', fontSize: 12, fontWeight: 700 }}>
+                                {fmt(p.rental_price_monthly)}/mo
+                              </div>
+                            : <div style={{ color: '#ef4444', fontSize: 11, fontWeight: 600 }}>
+                                No rental price
+                              </div>
                         )}
-                        {p.retail_price != null && (
-                          <div style={{ color: '#94a3b8', fontSize: 12 }}>{fmt(p.retail_price)} retail</div>
+                        {(commercialType === 'purchase' || commercialType === 'financed') && (
+                          p.retail_price != null
+                            ? <div style={{ color: '#4ade80', fontSize: 12, fontWeight: 700 }}>
+                                {fmt(p.retail_price)}
+                              </div>
+                            : <div style={{ color: '#ef4444', fontSize: 11, fontWeight: 600 }}>
+                                No purchase price
+                              </div>
                         )}
+                        {/* Install fee shown for all quote types when applicable */}
                         {p.install_fee != null && p.install_fee > 0 && (
-                          <div style={{ color: '#f59e0b', fontSize: 11 }}>+{fmt(p.install_fee)} install</div>
+                          <div style={{ color: '#f59e0b', fontSize: 11 }}>
+                            +{fmt(p.install_fee)} install
+                          </div>
                         )}
                       </div>
                     </button>
@@ -802,6 +830,8 @@ function FormView({
 }
 
 // ─── Preview View ─────────────────────────────────────────────
+// No changes — PreviewView reads saved line item unit_price directly.
+// Pricing correctness is enforced at addProduct() time, not at render time.
 
 function PreviewView({
   quoteNumber, quoteDate, validUntil, customerName, customerAddress = '', customerPhone,
@@ -1032,7 +1062,6 @@ function PreviewView({
 
 function RentalAgreementModal({ quoteNumber, customerName, customerAddress, lineItems, monthlySubtotal, installFeeTotal, onClose }: any) {
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-  // Only show recurring items in equipment schedule (not install_fee)
   const recurringItems = lineItems.filter((li: any) => li.item_type !== 'install_fee')
 
   function downloadAgreement() {
@@ -1208,4 +1237,3 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
     </div>
   )
 }
-
