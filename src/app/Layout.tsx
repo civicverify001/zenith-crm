@@ -297,9 +297,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* ── THE FIX: overflow-hidden instead of overflow-auto ── */}
-        {/* Each page manages its own internal scroll via overflowY: 'auto' on its body section */}
-        <div className="flex-1 overflow-hidden p-4 md:p-6">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6">
           {children}
         </div>
       </main>
