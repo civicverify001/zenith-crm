@@ -205,14 +205,14 @@ function useAcceptedQuotes(customerId: string, leadId: string | null) {
     queryFn: () => mergeByIdDesc([
       supabase
         .from('quotes')
-        .select('id, reference_number, created_at, status, commercial_type, monthly_amount, total_amount, install_fee')
+        .select('id, quote_number, lead_id, created_at, status, commercial_type, monthly_amount, total, install_fee')
         .eq('customer_id', customerId)
         .in('status', ['accepted', 'signed'])
         .order('created_at', { ascending: false }) as any,
       ...(leadId ? [
         supabase
           .from('quotes')
-          .select('id, reference_number, created_at, status, commercial_type, monthly_amount, total_amount, install_fee')
+          .select('id, quote_number, lead_id, created_at, status, commercial_type, monthly_amount, total, install_fee')
           .eq('lead_id', leadId)
           .in('status', ['accepted', 'signed'])
           .order('created_at', { ascending: false }) as any,
@@ -229,14 +229,14 @@ function usePaidInvoices(customerId: string, leadId: string | null) {
     queryFn: () => mergeByIdDesc([
       supabase
         .from('invoices')
-        .select('id, reference_number, created_at, paid_at, status, total_amount, amount_paid')
+        .select('id, invoice_number, lead_id, created_at, paid_at, status, total, amount_paid')
         .eq('customer_id', customerId)
         .in('status', ['paid', 'partial'])
         .order('paid_at', { ascending: false }) as any,
       ...(leadId ? [
         supabase
           .from('invoices')
-          .select('id, reference_number, created_at, paid_at, status, total_amount, amount_paid')
+          .select('id, invoice_number, lead_id, created_at, paid_at, status, total, amount_paid')
           .eq('lead_id', leadId)
           .in('status', ['paid', 'partial'])
           .order('paid_at', { ascending: false }) as any,
@@ -403,7 +403,7 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                 {agr.signed_at          && <div>Signed: {formatDateTime(agr.signed_at)}</div>}
                 {agr.signed_by_rep      && <div>Rep: {agr.signed_by_rep}</div>}
                 {agr.monthly_amount     && <div>Monthly: ${agr.monthly_amount}</div>}
-                {agr.total_amount       && <div>Total: ${agr.total_amount}</div>}
+                {agr.total_amount && <div>Total: ${agr.total_amount}</div>}
                 {agr.rental_term_months && <div>Term: {agr.rental_term_months} months</div>}
                 {agr.deposit_amount     && <div>Deposit: ${agr.deposit_amount} ({agr.deposit_method || 'N/A'})</div>}
                 {agr.install_address    && <div>Install: {agr.install_address}</div>}
@@ -442,10 +442,10 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                 </span>
               </div>
               <div className="text-xs text-muted space-y-0.5">
-                {q.reference_number && <div className="text-slate-400 font-medium">{q.reference_number}</div>}
+                {q.quote_number && <div className="text-slate-400 font-medium">{q.quote_number}</div>}
                 {q.created_at       && <div>Date: {formatDateTime(q.created_at)}</div>}
                 {q.monthly_amount   && <div>Monthly: ${q.monthly_amount}/mo</div>}
-                {q.total_amount     && <div>Total: ${q.total_amount}</div>}
+                {q.total         && <div>Total: ${q.total}</div>}
                 {q.install_fee      && <div>Install fee: ${q.install_fee}</div>}
               </div>
             </DocCard>
@@ -469,9 +469,9 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                 </span>
               </div>
               <div className="text-xs text-muted space-y-0.5">
-                {inv.reference_number && <div className="text-slate-400 font-medium">{inv.reference_number}</div>}
+                {inv.invoice_number && <div className="text-slate-400 font-medium">{inv.invoice_number}</div>}
                 {inv.paid_at          && <div>Paid: {formatDateTime(inv.paid_at)}</div>}
-                {inv.total_amount     && <div>Total: ${inv.total_amount}</div>}
+                {inv.total         && <div>Total: ${inv.total}</div>}
                 {inv.amount_paid      && <div>Amount paid: ${inv.amount_paid}</div>}
               </div>
             </DocCard>
