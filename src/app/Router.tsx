@@ -23,6 +23,7 @@ import { CustomerDetailPage } from '../modules/customers/CustomerDetailPage'
 import { QuotesPage } from '../modules/quotes/QuotesPage'
 import { AccountingPage } from '../modules/accounting/AccountingPage'
 import { ContractsPage } from '../modules/contracts/ContractsPage'
+import ContractDetailPage from '../modules/contracts/ContractDetailPage'
 import { InvoicesPage } from '../modules/invoices/InvoicesPage'
 
 // ─── Phase-aware ComingSoon placeholder ─────────────────────────
@@ -184,6 +185,7 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
 
         {/* Contracts */}
         <Route path="/services" element={guard('/services', <ContractsPage />)} />
+        <Route path="/contracts/:id" element={guard('/services', <ContractDetailPage />)} />
 
         {/* Accounting */}
         <Route path="/accounting" element={guard('/accounting', <AccountingPage />)} />
@@ -209,4 +211,3 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
     </AppLayout>
   )
 }
-
