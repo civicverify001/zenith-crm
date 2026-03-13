@@ -170,7 +170,7 @@ export async function createQuote(params: {
   customer_id: string
   commercial_type: CommercialType
   opportunity_id?: string | null
-  lead_id?: string | null           // ← FIX: now accepted and saved
+  lead_id?: string | null
   created_by?: string | null
   notes?: string
   valid_until?: string
@@ -180,35 +180,33 @@ export async function createQuote(params: {
   const tax_amount = parseFloat((subtotal * 0.07).toFixed(2))
   const total = parseFloat((subtotal + tax_amount).toFixed(2))
 
-  // ── FIX: derive rental-specific fields ──────────────────────
-  // For rental: monthly_amount = sum of product line items (pre-tax)
-  // For purchase: monthly_amount = null
   const isRental = params.commercial_type === 'rental'
-  // monthly_amount = recurring lines only (excludes install_fee which is one-time)
   const monthly_amount = isRental
     ? params.line_items.filter(li => li.item_type !== 'install_fee').reduce((s, li) => s + li.total, 0)
     : null
 
-  // install_fee = sum of install_fee line items (applies to purchase)
   const install_fee = params.line_items
     .filter(li => li.item_type === 'install_fee')
     .reduce((s, li) => s + li.total, 0) || null
+
+  // quote_type enum only accepts 'rental' | 'purchase' — map financed → purchase
+  const quote_type_db = params.commercial_type === 'financed' ? 'purchase' : params.commercial_type
 
   const { data: quote, error: qErr } = await supabase
     .from('quotes')
     .insert({
       customer_id:      params.customer_id,
       commercial_type:  params.commercial_type,
-      quote_type:       params.commercial_type,   // ← FIX: keep in sync
+      quote_type:       quote_type_db,
       opportunity_id:   params.opportunity_id || null,
-      lead_id:          params.lead_id || null,   // ← FIX: now saved
+      lead_id:          params.lead_id || null,
       created_by:       params.created_by || null,
       notes:            params.notes || null,
       valid_until:      params.valid_until || null,
       subtotal,
       tax_amount,
       total,
-      monthly_amount,                              // ← FIX: rental price saved here
+      monthly_amount,
       install_fee,
       status: 'draft',
     })
@@ -229,18 +227,14 @@ export async function createQuote(params: {
       sku:         li.sku || null,
     }))
 
-    // ── FIX: write to document_line_items (authoritative) ──────
-    // document_line_items uses document_id = quote.id
     const { error: dliErr } = await supabase.from('document_line_items').insert(
       mappedItems.map(li => ({ ...li, document_id: quote.id }))
     )
     if (dliErr) throw dliErr
 
-    // Also write to quote_line_items for backwards compatibility
     const { error: liErr } = await supabase.from('quote_line_items').insert(
       mappedItems.map(li => ({ ...li, quote_id: quote.id }))
     )
-    // Non-fatal if quote_line_items doesn't exist or fails
     if (liErr) console.warn('quote_line_items insert failed (non-fatal):', liErr.message)
   }
 
@@ -276,7 +270,9 @@ export async function updateQuote(quoteId: string, params: {
       .filter(li => li.item_type === 'install_fee')
       .reduce((s, li) => s + li.total, 0) || null
 
-    // Delete existing line items from both tables
+    // quote_type enum only accepts 'rental' | 'purchase' — map financed → purchase
+    const quote_type_db = params.commercial_type === 'financed' ? 'purchase' : params.commercial_type
+
     await supabase.from('document_line_items').delete().eq('document_id', quoteId)
     await supabase.from('quote_line_items').delete().eq('quote_id', quoteId)
 
@@ -304,7 +300,7 @@ export async function updateQuote(quoteId: string, params: {
       .from('quotes')
       .update({
         commercial_type: params.commercial_type,
-        quote_type:      params.commercial_type,  // ← keep in sync
+        quote_type:      quote_type_db,
         notes:           params.notes,
         valid_until:     params.valid_until,
         subtotal,
@@ -321,9 +317,8 @@ export async function updateQuote(quoteId: string, params: {
 
 export async function sendQuote(quoteId: string): Promise<string> {
   const accept_token = crypto.randomUUID()
-  const public_token = accept_token   // ← FIX: public_token = accept_token, same value
+  const public_token = accept_token
 
-  // Snapshot from document_line_items (authoritative)
   const { data: lineItems } = await supabase
     .from('document_line_items')
     .select('*')
@@ -339,7 +334,7 @@ export async function sendQuote(quoteId: string): Promise<string> {
       sent_at:             new Date().toISOString(),
       line_items_snapshot: snapshot,
       accept_token,
-      public_token,        // ← FIX: now set so /q/:token works
+      public_token,
     })
     .eq('id', quoteId)
     .eq('status', 'draft')
@@ -395,4 +390,3 @@ export const TYPE_COLORS: Record<CommercialType, string> = {
   purchase: '#4ade80',
   financed: '#f472b6',
 }
-
