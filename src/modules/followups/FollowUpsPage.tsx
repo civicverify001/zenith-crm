@@ -35,6 +35,16 @@ function formatDateTime(d: string): string {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+}
+
 type FilterView = 'all' | 'overdue' | 'today' | 'upcoming' | 'completed';
 
 // ============================================================
@@ -63,6 +73,7 @@ const STATUS_FILTERS: {
 export function FollowUpsPage() {
   const { user, role } = useAuth();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
 
   const [tasks, setTasks] = useState<FollowUpTask[]>([]);
   const [completedTasks, setCompletedTasks] = useState<FollowUpTask[]>([]);
@@ -198,16 +209,19 @@ export function FollowUpsPage() {
             }
           </div>
         </div>
-        <input
-          placeholder="Search title or name…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{
-            background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8,
-            color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none',
-            width: 220, flexShrink: 0,
-          }}
-        />
+        {/* Search hidden on mobile — shown below top bar instead */}
+        {!isMobile && (
+          <input
+            placeholder="Search title or name…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8,
+              color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none',
+              width: 220, flexShrink: 0,
+            }}
+          />
+        )}
         <button
           onClick={() => setShowCreateModal(true)}
           style={{
@@ -220,80 +234,148 @@ export function FollowUpsPage() {
         </button>
       </div>
 
-      {/* ── Colorful filter tabs — matches QuotesPage exactly ── */}
-      <div style={{
-        background: '#0c1a26',
-        borderBottom: '1px solid #1e3a4f',
-        padding: '12px 24px',
-        display: 'flex',
-        gap: 8,
-        flexShrink: 0,
-      }}>
-        {STATUS_FILTERS.map(f => {
-          const count = countFor(f.key);
-          const isActive = filter === f.key;
-          return (
-            <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 7,
-                padding: '11px 8px',
-                borderRadius: 10,
-                border: `1px solid ${isActive ? f.color + '60' : f.border}`,
-                background: isActive ? f.bg : 'rgba(255,255,255,0.02)',
-                color: isActive ? f.color : '#475569',
-                cursor: 'pointer',
-                fontSize: 13,
-                fontWeight: isActive ? 700 : 500,
-                transition: 'all 0.12s',
-                boxShadow: isActive ? `0 0 14px ${f.color}20` : 'none',
-              }}
-              onMouseEnter={e => {
-                if (!isActive) {
-                  e.currentTarget.style.background = f.bg;
-                  e.currentTarget.style.color = f.color;
-                  e.currentTarget.style.borderColor = f.border;
-                }
-              }}
-              onMouseLeave={e => {
-                if (!isActive) {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = '#475569';
-                  e.currentTarget.style.borderColor = f.border;
-                }
-              }}
-            >
-              <span style={{ fontSize: 14 }}>{f.icon}</span>
-              <span>{f.label}</span>
-              {count > 0 && (
-                <span style={{
-                  background: isActive ? f.color + '30' : 'rgba(255,255,255,0.06)',
-                  color: isActive ? f.color : '#64748b',
-                  borderRadius: 20,
-                  padding: '1px 7px',
-                  fontSize: 11,
-                  fontWeight: 700,
-                  minWidth: 20,
-                  textAlign: 'center' as const,
-                }}>
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+      {/* ── Mobile search row ── */}
+      {isMobile && (
+        <div style={{ padding: '10px 16px', background: '#0f1923', borderBottom: '1px solid #1e3a4f' }}>
+          <input
+            placeholder="Search title or name…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              background: '#162232', border: '1px solid #1e3a4f', borderRadius: 8,
+              color: '#e2e8f0', padding: '10px 14px', fontSize: 14, outline: 'none',
+              width: '100%', boxSizing: 'border-box',
+            }}
+          />
+        </div>
+      )}
+
+      {/* ── Colorful filter tabs ── */}
+      {isMobile ? (
+        /* Mobile: icon-only, scrollable */
+        <div style={{
+          background: '#0c1a26',
+          borderBottom: '1px solid #1e3a4f',
+          padding: '10px 16px',
+          display: 'flex',
+          gap: 6,
+          flexShrink: 0,
+          overflowX: 'auto',
+        }}>
+          {STATUS_FILTERS.map(f => {
+            const count = countFor(f.key);
+            const isActive = filter === f.key;
+            return (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                style={{
+                  flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 5,
+                  padding: '8px 10px',
+                  borderRadius: 10,
+                  border: `1px solid ${isActive ? f.color + '60' : f.border}`,
+                  background: isActive ? f.bg : 'rgba(255,255,255,0.02)',
+                  color: isActive ? f.color : '#475569',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: isActive ? 700 : 500,
+                  boxShadow: isActive ? `0 0 14px ${f.color}20` : 'none',
+                }}
+              >
+                <span>{f.icon}</span>
+                {count > 0 && (
+                  <span style={{
+                    background: isActive ? f.color + '30' : 'rgba(255,255,255,0.06)',
+                    color: isActive ? f.color : '#64748b',
+                    borderRadius: 20, padding: '1px 6px', fontSize: 11, fontWeight: 700,
+                  }}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        /* Desktop: full-width equal tabs — ORIGINAL layout preserved exactly */
+        <div style={{
+          background: '#0c1a26',
+          borderBottom: '1px solid #1e3a4f',
+          padding: '12px 24px',
+          display: 'flex',
+          gap: 8,
+          flexShrink: 0,
+        }}>
+          {STATUS_FILTERS.map(f => {
+            const count = countFor(f.key);
+            const isActive = filter === f.key;
+            return (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 7,
+                  padding: '11px 8px',
+                  borderRadius: 10,
+                  border: `1px solid ${isActive ? f.color + '60' : f.border}`,
+                  background: isActive ? f.bg : 'rgba(255,255,255,0.02)',
+                  color: isActive ? f.color : '#475569',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: isActive ? 700 : 500,
+                  transition: 'all 0.12s',
+                  boxShadow: isActive ? `0 0 14px ${f.color}20` : 'none',
+                }}
+                onMouseEnter={e => {
+                  if (!isActive) {
+                    e.currentTarget.style.background = f.bg;
+                    e.currentTarget.style.color = f.color;
+                    e.currentTarget.style.borderColor = f.border;
+                  }
+                }}
+                onMouseLeave={e => {
+                  if (!isActive) {
+                    e.currentTarget.style.background = 'transparent';
+                    e.currentTarget.style.color = '#475569';
+                    e.currentTarget.style.borderColor = f.border;
+                  }
+                }}
+              >
+                <span style={{ fontSize: 14 }}>{f.icon}</span>
+                <span>{f.label}</span>
+                {count > 0 && (
+                  <span style={{
+                    background: isActive ? f.color + '30' : 'rgba(255,255,255,0.06)',
+                    color: isActive ? f.color : '#64748b',
+                    borderRadius: 20,
+                    padding: '1px 7px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    minWidth: 20,
+                    textAlign: 'center' as const,
+                  }}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── Stats strip ── */}
       <div style={{
         display: 'flex',
         gap: 12,
-        padding: '14px 24px',
+        padding: isMobile ? '12px 16px' : '14px 24px',
         borderBottom: '1px solid #1e3a4f',
         background: '#0f1923',
         flexShrink: 0,
@@ -307,10 +389,10 @@ export function FollowUpsPage() {
         ].map(s => (
           <div key={s.label} style={{
             background: '#162232', border: '1px solid #1e3a4f', borderRadius: 10,
-            padding: '10px 18px', flexShrink: 0, minWidth: 110,
+            padding: isMobile ? '8px 14px' : '10px 18px', flexShrink: 0, minWidth: isMobile ? 85 : 110,
           }}>
             <div style={{ color: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: '0.08em' }}>{s.label}</div>
-            <div style={{ color: s.color, fontWeight: 800, fontSize: 20, marginTop: 3 }}>{s.val}</div>
+            <div style={{ color: s.color, fontWeight: 800, fontSize: isMobile ? 18 : 20, marginTop: 3 }}>{s.val}</div>
           </div>
         ))}
       </div>
@@ -328,7 +410,7 @@ export function FollowUpsPage() {
       )}
 
       {/* ── Task list ── */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px 12px' : '16px 24px' }}>
         {loading ? (
           <div style={{ textAlign: 'center', padding: 60, color: '#64748b' }}>Loading follow-ups…</div>
         ) : displayTasks.length === 0 ? (
@@ -351,7 +433,101 @@ export function FollowUpsPage() {
               </button>
             )}
           </div>
+        ) : isMobile ? (
+          /* ── MOBILE: card list ── */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {displayTasks.map(task => {
+              const days = daysUntil(task.due_date);
+              const isOverdue = days < 0 && !task.completed_at;
+              const isToday = days === 0 && !task.completed_at;
+              const isCompleted = !!task.completed_at;
+              const entityName = getEntityNameFn(task);
+              const entityType = getEntityType(task);
+
+              const dueText = isCompleted ? formatDate(task.due_date) :
+                isOverdue ? `${Math.abs(days)}d overdue` :
+                isToday ? 'Due today' :
+                days === 1 ? 'Tomorrow' :
+                `In ${days}d`;
+
+              const dueColor = isCompleted ? '#475569' :
+                isOverdue ? '#f87171' : isToday ? '#fbbf24' :
+                days <= 3 ? '#fb923c' : '#94a3b8';
+
+              const typeBg =
+                task.task_type === 'call_back' ? '#60a5fa' :
+                task.task_type === 'google_review' ? '#fbbf24' :
+                task.task_type === 'service_due' ? '#22d3ee' :
+                task.task_type === 're_engage' ? '#a78bfa' : '#94a3b8';
+
+              return (
+                <div key={task.id} style={{
+                  background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12,
+                  padding: '14px 16px', opacity: isCompleted ? 0.55 : 1,
+                }}>
+                  {/* Row 1: checkbox + title + due badge */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <div style={{ paddingTop: 2, flexShrink: 0 }}>
+                      {!isCompleted ? (
+                        <button onClick={() => handleComplete(task.id)}
+                          style={{ width: 22, height: 22, borderRadius: 5, border: '2px solid #475569', background: 'transparent', cursor: 'pointer' }}
+                          onMouseEnter={e => { e.currentTarget.style.borderColor = '#4ade80'; e.currentTarget.style.background = 'rgba(74,222,128,0.15)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.borderColor = '#475569'; e.currentTarget.style.background = 'transparent'; }}
+                        />
+                      ) : (
+                        <button onClick={() => handleReopen(task.id)}
+                          style={{ width: 22, height: 22, borderRadius: 5, border: 'none', background: '#16a34a', cursor: 'pointer', color: '#fff', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          ✓
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 5 }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: isCompleted ? '#64748b' : '#e2e8f0', textDecoration: isCompleted ? 'line-through' : 'none', flex: 1, minWidth: 0 }}>
+                          {TASK_TYPE_ICONS[task.task_type]} {task.title}
+                        </span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: dueColor, flexShrink: 0 }}>{dueText}</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: typeBg, background: typeBg + '22', padding: '2px 7px', borderRadius: 6 }}>
+                          {TASK_TYPE_LABELS[task.task_type]}
+                        </span>
+                        {!isCompleted && <span style={{ fontSize: 11, color: '#475569' }}>{formatDate(task.due_date)}</span>}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Entity link */}
+                  {entityName && (
+                    <button onClick={() => navigateToEntity(task)}
+                      style={{ fontSize: 13, marginTop: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: entityType === 'lead' ? '#38bdf8' : '#4ade80', display: 'block' }}>
+                      {entityType === 'lead' ? '⬡' : '👤'} {entityName}
+                    </button>
+                  )}
+                  {/* Notes */}
+                  {task.notes && (
+                    <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>{task.notes}</div>
+                  )}
+                  {/* Completed timestamp */}
+                  {isCompleted && task.completed_at && (
+                    <div style={{ fontSize: 11, color: '#475569', marginTop: 6 }}>
+                      Completed {formatDateTime(task.completed_at)}
+                    </div>
+                  )}
+                  {/* Delete */}
+                  {role === 'admin' && (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1e3a4f' }}>
+                      <button onClick={() => handleDelete(task.id)}
+                        style={{ background: 'none', border: '1px solid #3f1a1a', borderRadius: 6, cursor: 'pointer', color: '#ef4444', fontSize: 12, fontWeight: 600, padding: '6px 12px' }}>
+                        🗑 Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         ) : (
+          /* ── DESKTOP: original row layout preserved exactly ── */
           <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12, overflow: 'hidden' }}>
             {displayTasks.map((task, idx) => {
               const days = daysUntil(task.due_date);
@@ -582,12 +758,13 @@ function CreateFollowUpModal({ onClose, onCreate, userId }: {
     }}>
       <div style={{
         background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12,
-        width: '100%', maxWidth: 440,
+        width: '100%', maxWidth: 440, maxHeight: '90vh', overflowY: 'auto',
       }}>
         {/* Header */}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '20px 24px', borderBottom: '1px solid #1e3a4f',
+          position: 'sticky', top: 0, background: '#162232', zIndex: 1,
         }}>
           <div>
             <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 18 }}>New Follow-Up</div>
@@ -715,6 +892,7 @@ function CreateFollowUpModal({ onClose, onCreate, userId }: {
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12,
           padding: '16px 24px', borderTop: '1px solid #1e3a4f',
+          position: 'sticky', bottom: 0, background: '#162232',
         }}>
           <button onClick={onClose} style={{
             padding: '8px 16px', fontSize: 13, color: '#64748b', background: 'none', border: 'none', cursor: 'pointer',
