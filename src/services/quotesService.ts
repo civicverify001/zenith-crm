@@ -390,3 +390,107 @@ export const TYPE_COLORS: Record<CommercialType, string> = {
   purchase: '#4ade80',
   financed: '#f472b6',
 }
+
+// ─── Financing status ─────────────────────────────────────────
+
+export type FinancingStatus = 'pending' | 'approved' | 'declined'
+
+export async function updateLeadFinancingStatus(
+  leadId: string,
+  status: FinancingStatus
+): Promise<void> {
+  const { error } = await supabase
+    .from('leads')
+    .update({ financing_status: status })
+    .eq('id', leadId)
+  if (error) throw error
+}
+
+// ─── Clone quote (for financing declined → resend as rental/purchase) ──
+
+export async function cloneQuote(
+  originalQuoteId: string,
+  newCommercialType: 'rental' | 'purchase',
+  leadId: string
+): Promise<string> {
+  // 1. Fetch original quote
+  const { data: orig, error: origErr } = await supabase
+    .from('quotes')
+    .select('*')
+    .eq('id', originalQuoteId)
+    .single()
+  if (origErr || !orig) throw new Error('Original quote not found')
+
+  // 2. Fetch next quote number
+  const { data: lastQuote } = await supabase
+    .from('quotes')
+    .select('quote_number')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  let nextNum = 1
+  if (lastQuote?.quote_number) {
+    const parts = lastQuote.quote_number.split('-')
+    nextNum = (parseInt(parts[parts.length - 1], 10) || 0) + 1
+  }
+  const year = new Date().getFullYear()
+  const quote_number = `Q-${year}-${String(nextNum).padStart(4, '0')}`
+
+  // 3. Insert new quote (draft)
+  const quote_type_db = newCommercialType === 'rental' ? 'rental' : 'purchase'
+  const { data: newQuote, error: insertErr } = await supabase
+    .from('quotes')
+    .insert({
+      quote_number,
+      lead_id:          leadId,
+      customer_id:      orig.customer_id,
+      commercial_type:  newCommercialType,
+      quote_type:       quote_type_db,
+      status:           'draft',
+      subtotal:         orig.subtotal,
+      tax_amount:       orig.tax_amount ?? 0,
+      total:            orig.total,
+      monthly_amount:   newCommercialType === 'rental' ? orig.monthly_amount : null,
+      install_fee:      orig.install_fee,
+      valid_until:      new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      notes:            orig.notes,
+      parent_quote_id:  originalQuoteId,
+      reissue_reason:   'financing_declined',
+    })
+    .select('id')
+    .single()
+  if (insertErr || !newQuote) throw new Error('Failed to create cloned quote: ' + insertErr?.message)
+
+  // 4. Clone document_line_items (same prices — rep reviews in QuoteBuilder before sending)
+  const { data: lineItems } = await supabase
+    .from('document_line_items')
+    .select('*')
+    .eq('document_id', originalQuoteId)
+    .order('sort_order')
+
+  if (lineItems?.length) {
+    const clonedItems = lineItems.map(({ id: _id, created_at: _ca, document_id: _di, ...rest }: any) => ({
+      ...rest,
+      document_id: newQuote.id,
+    }))
+    await supabase.from('document_line_items').insert(clonedItems)
+  }
+
+  // 5. Also clone quote_line_items for backward compat
+  const { data: qli } = await supabase
+    .from('quote_line_items')
+    .select('*')
+    .eq('quote_id', originalQuoteId)
+    .order('sort_order')
+
+  if (qli?.length) {
+    const clonedQli = qli.map(({ id: _id, created_at: _ca, quote_id: _qi, ...rest }: any) => ({
+      ...rest,
+      quote_id: newQuote.id,
+    }))
+    await supabase.from('quote_line_items').insert(clonedQli)
+  }
+
+  return newQuote.id
+}
