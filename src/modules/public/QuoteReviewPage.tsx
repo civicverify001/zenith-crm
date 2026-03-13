@@ -37,7 +37,7 @@ interface Quote {
   id: string
   quote_number: string
   quote_type: string
-  commercial_type: string   // ← AUTHORITATIVE field for flow branching
+  commercial_type: string
   status: string
   monthly_amount: number
   install_fee: number
@@ -701,26 +701,81 @@ export function QuoteReviewPage() {
     }
   }
 
+  // ─── UPDATED: jsPDF download (true PDF, no print dialog) ──────
   async function handleDownloadAgreement() {
     setDownloading(true)
+    setError('')
     try {
       let ag = agreement
       if (!ag && quote) {
         const { data } = await supabase.from('agreements').select('*').eq('quote_id', quote.id).maybeSingle()
         if (data) { ag = data; setAgreement(data) }
       }
-      if (!ag) { setError('Agreement not found. Please contact (317) 690-4172.'); setDownloading(false); return }
+      if (!ag) {
+        setError('Agreement not found. Please contact (317) 690-4172.')
+        setDownloading(false)
+        return
+      }
+
       const terms: TermBlock[] = ag.terms_snapshot?.blocks || rentalTerms
       const html = generateAgreementHTML(ag, quote?.customer, terms)
-      const win = window.open('', '_blank')
-      if (win) { win.document.write(html); win.document.close(); setTimeout(() => win.print(), 600) }
-      else {
-        const blob = new Blob([html], { type: 'text/html' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a'); a.href = url; a.download = `${ag.agreement_number}.html`; a.click()
-        URL.revokeObjectURL(url)
+
+      // Render HTML in hidden iframe so all CSS loads correctly
+      const iframe = document.createElement('iframe')
+      iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;height:3000px;border:none;visibility:hidden;'
+      document.body.appendChild(iframe)
+
+      await new Promise<void>((resolve) => {
+        iframe.onload = () => resolve()
+        iframe.srcdoc = html
+        setTimeout(resolve, 3000) // fallback timeout
+      })
+
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
+      if (!iframeDoc) throw new Error('Could not access iframe document')
+
+      // Hide the print button from the PDF
+      const noPrint = iframeDoc.querySelector('.no-print') as HTMLElement | null
+      if (noPrint) noPrint.style.display = 'none'
+
+      // Dynamically import jsPDF + html2canvas (lazy — only loads when button clicked)
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf'),
+      ])
+
+      const canvas = await html2canvas(iframeDoc.body, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        windowWidth: 900,
+      })
+
+      document.body.removeChild(iframe)
+
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+      const pageW = pdf.internal.pageSize.getWidth()
+      const pageH = pdf.internal.pageSize.getHeight()
+      const imgW  = pageW
+      const imgH  = (canvas.height * imgW) / canvas.width
+
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, imgW, imgH)
+
+      // Add extra pages if agreement is longer than one page
+      let heightLeft = imgH - pageH
+      let offset = -pageH
+      while (heightLeft > 0) {
+        pdf.addPage()
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, offset, imgW, imgH)
+        offset    -= pageH
+        heightLeft -= pageH
       }
-    } catch (e: any) { setError(e.message || 'Could not generate agreement.') }
+
+      pdf.save(`${ag.agreement_number}.pdf`)
+
+    } catch (e: any) {
+      setError(e.message || 'Could not generate PDF. Please try again.')
+    }
     setDownloading(false)
   }
 
@@ -875,10 +930,7 @@ export function QuoteReviewPage() {
         setInvoice(inv); setStep('view_invoice'); scrollTop()
 
       } else {
-        // ── FINANCE FLOW — record application + redirect to Hearth ──
         await convertLeadToCustomer(quote.lead_id, quote.customer_id)
-
-        // Record financing application in DB
         try {
           await supabase.from('financing_applications').insert({
             customer_id: quote.customer_id,
@@ -888,10 +940,8 @@ export function QuoteReviewPage() {
             submitted_at: new Date().toISOString(),
           })
         } catch (e) {
-          // Non-blocking — don't fail the flow if this insert errors
           console.error('financing_applications insert error:', e)
         }
-
         const hearthUrl = buildHearthUrl(quote.customer, quote.total)
         setStep('hearth_redirect')
         setTimeout(() => { window.location.href = hearthUrl }, 1800)
@@ -992,7 +1042,6 @@ export function QuoteReviewPage() {
     </div>
   )
 
-  // ── FINANCE: Hearth redirect screen ──────────────────────────
   if (step === 'hearth_redirect') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
@@ -1014,10 +1063,7 @@ export function QuoteReviewPage() {
           <span className="text-sm text-gray-500">Redirecting to Hearth...</span>
         </div>
         <button
-          onClick={() => {
-            const url = buildHearthUrl(quote?.customer, quote?.total || 0)
-            window.location.href = url
-          }}
+          onClick={() => { const url = buildHearthUrl(quote?.customer, quote?.total || 0); window.location.href = url }}
           className="w-full py-3 rounded-xl text-white font-semibold text-sm"
           style={{ backgroundColor: '#0a2540' }}
         >
@@ -1028,7 +1074,6 @@ export function QuoteReviewPage() {
     </div>
   )
 
-  // ── RENTAL: Save card ─────────────────────────────────────────
   if (step === 'stripe_card_save') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
@@ -1075,7 +1120,6 @@ export function QuoteReviewPage() {
     </div>
   )
 
-  // ── PURCHASE: Payment choice ──────────────────────────────────
   if (step === 'payment_choice') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full">
@@ -1085,10 +1129,7 @@ export function QuoteReviewPage() {
           <p className="text-sm text-gray-500 mt-1">Choose your payment option below.</p>
         </div>
         <div className="space-y-3 mb-6">
-          <button
-            onClick={() => handlePaymentChoice('50_percent')}
-            className="w-full border-2 border-gray-200 hover:border-blue-400 rounded-xl p-4 text-left transition-colors group"
-          >
+          <button onClick={() => handlePaymentChoice('50_percent')} className="w-full border-2 border-gray-200 hover:border-blue-400 rounded-xl p-4 text-left transition-colors group">
             <div className="flex justify-between items-center">
               <div>
                 <div className="font-bold text-gray-900 group-hover:text-blue-700">Pay 50% Deposit Today</div>
@@ -1097,10 +1138,7 @@ export function QuoteReviewPage() {
               <div className="text-xl font-black" style={{ color: '#0a2540' }}>{fmt((invoice?.total || 0) / 2)}</div>
             </div>
           </button>
-          <button
-            onClick={() => handlePaymentChoice('full')}
-            className="w-full border-2 border-gray-200 hover:border-green-400 rounded-xl p-4 text-left transition-colors group"
-          >
+          <button onClick={() => handlePaymentChoice('full')} className="w-full border-2 border-gray-200 hover:border-green-400 rounded-xl p-4 text-left transition-colors group">
             <div className="flex justify-between items-center">
               <div>
                 <div className="font-bold text-gray-900 group-hover:text-green-700">Pay Full Amount</div>
@@ -1116,7 +1154,6 @@ export function QuoteReviewPage() {
     </div>
   )
 
-  // ── PURCHASE: Redirecting to Stripe ──────────────────────────
   if (step === 'stripe_purchase_payment') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
@@ -1151,11 +1188,11 @@ export function QuoteReviewPage() {
               style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', color: '#0369a1' }}
             >
               {downloading
-                ? <><div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#0369a1', borderTopColor: 'transparent' }} />Preparing...</>
+                ? <><div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#0369a1', borderTopColor: 'transparent' }} />Generating PDF...</>
                 : <>📄 Download Your Signed Agreement</>
               }
             </button>
-            <p className="text-xs text-gray-400 mt-2">Opens a printable copy — use "Save as PDF" in your browser</p>
+            <p className="text-xs text-gray-400 mt-2">Downloads as a PDF file directly to your device</p>
           </div>
         )}
         {error && <p className="text-red-500 text-xs mb-4">{error}</p>}
@@ -1180,7 +1217,6 @@ export function QuoteReviewPage() {
           current={currentStep}
         />
 
-        {/* ── VIEW QUOTE ────────────────────────────── */}
         {step === 'view_quote' && quote && (
           <div className="space-y-5">
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
@@ -1244,7 +1280,6 @@ export function QuoteReviewPage() {
               {quote.notes && <p className="text-sm text-gray-600 mt-2">{quote.notes}</p>}
             </div>
 
-            {/* Finance notice banner */}
             {flowType === 'finance' && (
               <div className="rounded-xl p-4 border" style={{ backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' }}>
                 <div className="text-xs font-bold mb-1" style={{ color: '#15803d' }}>💚 Financing Available via Hearth</div>
@@ -1351,12 +1386,10 @@ export function QuoteReviewPage() {
           </div>
         )}
 
-        {/* ── RENTAL: AGREEMENT ─────────────────────── */}
         {step === 'view_agreement' && quote && agreement && (
           <AgreementDocument agreement={agreement} customer={quote.customer} terms={rentalTerms} onSign={handleSignAgreement} signing={signing} error={error} />
         )}
 
-        {/* ── PURCHASE: INVOICE ─────────────────────── */}
         {step === 'view_invoice' && quote && invoice && (
           <InvoiceDocument invoice={invoice} customer={quote.customer} terms={purchaseTerms} onSign={handleSignInvoice} signing={signing} error={error} />
         )}
