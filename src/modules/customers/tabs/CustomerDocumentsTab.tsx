@@ -39,7 +39,208 @@ const QUOTE_TYPE_LABELS: Record<string, string> = {
   financing: 'Financing Agreement',
 }
 
-// ─── Agreement HTML generator (unchanged) ────────────────────────
+// ─── Shared PDF styles ────────────────────────────────────────────
+const PDF_BASE_STYLES = `
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Georgia, serif; color: #1a1a2e; background: white; padding: 40px; max-width: 800px; margin: 0 auto; }
+  .header { background: #0a2540; color: white; padding: 32px; text-align: center; border-radius: 8px 8px 0 0; }
+  .header h1 { font-size: 20px; font-weight: bold; letter-spacing: 1px; }
+  .header p { font-size: 12px; color: #93c5fd; margin-top: 4px; }
+  .subheader { background: #f8fafc; border: 1px solid #e2e8f0; border-top: none; padding: 20px; text-align: center; }
+  .subheader h2 { font-size: 20px; font-weight: bold; }
+  .subheader .sub { color: #64748b; font-size: 13px; margin-top: 4px; }
+  .body-section { border: 1px solid #e2e8f0; border-top: none; padding: 24px; }
+  .body-section p { font-size: 13px; line-height: 1.7; color: #374151; margin-bottom: 12px; }
+  .body-section ul { margin: 12px 0 12px 20px; }
+  .body-section li { font-size: 13px; line-height: 1.7; color: #374151; margin-bottom: 6px; }
+  .body-section strong { color: #1a1a2e; }
+  .confirm-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 14px 18px; margin: 16px 0; font-size: 13px; font-weight: 600; color: #166534; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+  .info-item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 16px; }
+  .info-label { font-size: 10px; font-weight: bold; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .info-value { font-size: 14px; font-weight: 600; color: #1e293b; }
+  .tds-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 20px; text-align: center; margin: 16px 0; }
+  .tds-label { font-size: 11px; font-weight: bold; color: #3b82f6; text-transform: uppercase; letter-spacing: 1px; }
+  .tds-value { font-size: 36px; font-weight: bold; color: #1e3a8a; margin-top: 4px; }
+  .tds-unit { font-size: 14px; color: #64748b; margin-top: 2px; }
+  .sig-section { border: 2px solid #e2e8f0; border-radius: 8px; padding: 24px; margin-top: 24px; }
+  .sig-label { font-size: 10px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .sig-img { max-height: 80px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; }
+  .sig-meta { font-size: 11px; color: #64748b; margin-top: 8px; }
+  .footer { margin-top: 32px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 16px; }
+  .no-print { margin-bottom: 20px; text-align: center; }
+  @media print { .no-print { display: none !important; } body { padding: 20px; } }
+`
+
+const PDF_PRINT_BTN = `
+  <div class="no-print">
+    <button onclick="window.print()" style="background:#0a2540;color:white;border:none;padding:10px 28px;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">
+      🖨️ Print / Save as PDF
+    </button>
+    <p style="margin-top:8px;font-size:11px;color:#64748b;">Use your browser's "Save as PDF" option when printing</p>
+  </div>
+`
+
+const PDF_HEADER = `
+  <div class="header">
+    <h1>ZENITH PURE SOLUTIONS LLC</h1>
+    <p>6951 E 30th St, Suite B · Indianapolis, IN 46219</p>
+    <p>(317) 690-4172 · zenithpuresolutions.com</p>
+  </div>
+`
+
+const PDF_FOOTER = `
+  <div class="footer">
+    <p>Zenith Pure Solutions LLC · 6951 E 30th St, Suite B, Indianapolis, IN 46219</p>
+    <p>(317) 690-4172 · info@zenithpuresolutions.com · zenithpuresolutions.com</p>
+  </div>
+`
+
+// ─── RO Drilling Consent PDF ──────────────────────────────────────
+function generateDrillingConsentHTML(form: any, signatureUrl: string | null): string {
+  const rd = form.response_data || {}
+  const customerName = rd.customer_name || rd.signed_name || '—'
+  const consentDate  = rd.consent_date ? new Date(rd.consent_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : today()
+  const jobRef       = rd.job_reference || rd.job_id || '—'
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>RO Drilling Consent — ${customerName}</title>
+  <style>${PDF_BASE_STYLES}</style>
+</head>
+<body>
+  ${PDF_PRINT_BTN}
+  ${PDF_HEADER}
+  <div class="subheader">
+    <div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">Customer Acknowledgement</div>
+    <h2>Reverse Osmosis Drilling Consent Form</h2>
+    <div class="sub">Completed ${consentDate}</div>
+  </div>
+  <div class="body-section">
+    <div class="info-grid">
+      <div class="info-item">
+        <div class="info-label">Customer Name</div>
+        <div class="info-value">${customerName}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Date Signed</div>
+        <div class="info-value">${consentDate}</div>
+      </div>
+      ${jobRef !== '—' ? `<div class="info-item">
+        <div class="info-label">Job Reference</div>
+        <div class="info-value">${jobRef}</div>
+      </div>` : ''}
+    </div>
+
+    <p>I authorize <strong>Zenith Pure Solutions</strong> to drill a hole for installation of the RO faucet when an existing opening is not available.</p>
+    <p>I understand and acknowledge that:</p>
+    <ul>
+      <li>Final pricing may vary if unforeseen material conditions or installation complexities are identified on site.</li>
+      <li>Natural and manufactured sink or countertop materials may contain hidden variations or stress points.</li>
+      <li>Minor cosmetic variations may occur despite proper installation methods.</li>
+      <li>Zenith Pure Solutions is not responsible for pre-existing conditions and does not include repair or replacement of sinks, countertops, or cabinetry.</li>
+    </ul>
+    <div class="confirm-box">✓ I confirm that I am the property owner or have authorization to approve this work.</div>
+    <div class="confirm-box">✓ I have read and understand the above terms. I acknowledge and agree to the conditions stated in this Reverse Osmosis Drilling Consent Form.</div>
+  </div>
+
+  <div class="sig-section">
+    <div class="sig-label">Customer Signature</div>
+    ${signatureUrl ? `<img src="${signatureUrl}" class="sig-img" alt="Customer signature" />` : '<div style="height:60px;border-bottom:1px solid #334155;"></div>'}
+    <div class="sig-meta">${customerName} · Signed ${consentDate}</div>
+  </div>
+
+  ${PDF_FOOTER}
+</body>
+</html>`
+}
+
+// ─── RO Handover PDF ──────────────────────────────────────────────
+function generateHandoverHTML(form: any, signatureUrl: string | null, customer: any): string {
+  const rd          = form.response_data || {}
+  const tdsReading  = rd.tds_reading || '—'
+  const submittedAt = rd.submitted_at
+    ? new Date(rd.submitted_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : today()
+  const customerName = rd.customer_name || rd.signed_name || customer?.full_name || '—'
+  const jobRef       = rd.job_reference || rd.job_id || '—'
+
+  const tdsColor = Number(tdsReading) < 50 ? '#166534' : Number(tdsReading) < 150 ? '#1e3a8a' : '#7c2d12'
+  const tdsNote  = Number(tdsReading) < 50
+    ? 'Excellent — pure water output'
+    : Number(tdsReading) < 150
+    ? 'Good — within healthy range'
+    : 'Elevated — system may need service'
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>RO System Handover — ${customerName}</title>
+  <style>${PDF_BASE_STYLES}</style>
+</head>
+<body>
+  ${PDF_PRINT_BTN}
+  ${PDF_HEADER}
+  <div class="subheader">
+    <div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">Installation Record</div>
+    <h2>Reverse Osmosis System Handover</h2>
+    <div class="sub">Completed ${submittedAt}</div>
+  </div>
+  <div class="body-section">
+    <div class="info-grid">
+      <div class="info-item">
+        <div class="info-label">Customer</div>
+        <div class="info-value">${customerName}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Handover Date</div>
+        <div class="info-value">${submittedAt}</div>
+      </div>
+      ${customer?.address ? `<div class="info-item">
+        <div class="info-label">Service Address</div>
+        <div class="info-value">${customer.address}${customer.city ? ', ' + customer.city : ''}</div>
+      </div>` : ''}
+      ${jobRef !== '—' ? `<div class="info-item">
+        <div class="info-label">Job Reference</div>
+        <div class="info-value">${jobRef}</div>
+      </div>` : ''}
+    </div>
+
+    <div class="tds-box">
+      <div class="tds-label">Post-Install TDS Reading</div>
+      <div class="tds-value" style="color:${tdsColor};">${tdsReading}</div>
+      <div class="tds-unit">ppm (parts per million)</div>
+      <div style="font-size:12px;color:#64748b;margin-top:6px;">${tdsNote}</div>
+    </div>
+
+    <p style="margin-top:16px;"><strong>System Handover Checklist — Completed at Installation:</strong></p>
+    <ul>
+      <li>RO system installed and tested — all connections checked for leaks</li>
+      <li>TDS meter reading taken and recorded (${tdsReading} ppm post-filter)</li>
+      <li>Customer shown faucet operation, tank fill time, and daily output expectations</li>
+      <li>Filter replacement schedule explained (annual — Zenith will contact you)</li>
+      <li>Emergency shutoff valve location demonstrated</li>
+      <li>Customer questions answered before technician departure</li>
+    </ul>
+
+    <div class="confirm-box" style="margin-top:20px;">✓ Customer confirms the system was demonstrated and is operating correctly at time of handover.</div>
+  </div>
+
+  <div class="sig-section">
+    <div class="sig-label">Customer Signature</div>
+    ${signatureUrl ? `<img src="${signatureUrl}" class="sig-img" alt="Customer signature" />` : '<div style="height:60px;border-bottom:1px solid #334155;"></div>'}
+    <div class="sig-meta">${customerName} · Signed ${submittedAt}</div>
+  </div>
+
+  ${PDF_FOOTER}
+</body>
+</html>`
+}
+
+// ─── Agreement HTML generator ─────────────────────────────────────
 function generateAgreementHTML(agreement: any, customer: any, terms: any[]): string {
   const termBlocksHTML = terms.map((block: any) => `
     <div class="section">
@@ -153,6 +354,22 @@ function generateAgreementHTML(agreement: any, customer: any, terms: any[]): str
 </html>`
 }
 
+// ─── Open print window helper ─────────────────────────────────────
+function openPrintWindow(html: string, filename: string) {
+  const win = window.open('', '_blank')
+  if (win) {
+    win.document.write(html)
+    win.document.close()
+    setTimeout(() => win.print(), 600)
+  } else {
+    const blob = new Blob([html], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  }
+}
+
 // ─── Data hooks ──────────────────────────────────────────────────
 
 function useCustomerJobAndLead(customerId: string) {
@@ -170,7 +387,6 @@ function useCustomerJobAndLead(customerId: string) {
   })
 }
 
-// Dual-query helper — avoids duplicating the merge pattern
 async function mergeByIdDesc<T extends { id: string; created_at: string }>(
   queries: Promise<{ data: T[] | null }>[]
 ): Promise<T[]> {
@@ -178,7 +394,7 @@ async function mergeByIdDesc<T extends { id: string; created_at: string }>(
   const results: T[] = []
   const responses = await Promise.all(queries)
   for (const res of responses) {
-    for (const row of res.data || []) {
+    for (const row of (res.data || [])) {
       if (!seen.has(row.id)) { seen.add(row.id); results.push(row) }
     }
   }
@@ -186,7 +402,6 @@ async function mergeByIdDesc<T extends { id: string; created_at: string }>(
   return results
 }
 
-// Agreements — by customer_id AND lead_id
 function useAgreements(customerId: string, leadId: string | null) {
   return useQuery({
     queryKey: ['customer_agreements', customerId, leadId],
@@ -198,49 +413,23 @@ function useAgreements(customerId: string, leadId: string | null) {
   })
 }
 
-// Quotes — by customer_id AND lead_id (lead flow sets lead_id, not customer_id)
 function useAcceptedQuotes(customerId: string, leadId: string | null) {
   return useQuery({
     queryKey: ['customer_accepted_quotes', customerId, leadId],
     queryFn: () => mergeByIdDesc([
-      supabase
-        .from('quotes')
-        .select('id, quote_number, lead_id, created_at, status, commercial_type, monthly_amount, total, install_fee')
-        .eq('customer_id', customerId)
-        .in('status', ['accepted', 'signed'])
-        .order('created_at', { ascending: false }) as any,
-      ...(leadId ? [
-        supabase
-          .from('quotes')
-          .select('id, quote_number, lead_id, created_at, status, commercial_type, monthly_amount, total, install_fee')
-          .eq('lead_id', leadId)
-          .in('status', ['accepted', 'signed'])
-          .order('created_at', { ascending: false }) as any,
-      ] : []),
+      supabase.from('quotes').select('id, quote_number, lead_id, created_at, status, commercial_type, monthly_amount, total, install_fee').eq('customer_id', customerId).in('status', ['accepted', 'signed']).order('created_at', { ascending: false }) as any,
+      ...(leadId ? [supabase.from('quotes').select('id, quote_number, lead_id, created_at, status, commercial_type, monthly_amount, total, install_fee').eq('lead_id', leadId).in('status', ['accepted', 'signed']).order('created_at', { ascending: false }) as any] : []),
     ]),
     enabled: !!customerId,
   })
 }
 
-// Invoices — by customer_id AND lead_id
 function usePaidInvoices(customerId: string, leadId: string | null) {
   return useQuery({
     queryKey: ['customer_paid_invoices', customerId, leadId],
     queryFn: () => mergeByIdDesc([
-      supabase
-        .from('invoices')
-        .select('id, invoice_number, lead_id, created_at, paid_at, status, total, amount_paid')
-        .eq('customer_id', customerId)
-        .in('status', ['paid', 'partial'])
-        .order('paid_at', { ascending: false }) as any,
-      ...(leadId ? [
-        supabase
-          .from('invoices')
-          .select('id, invoice_number, lead_id, created_at, paid_at, status, total, amount_paid')
-          .eq('lead_id', leadId)
-          .in('status', ['paid', 'partial'])
-          .order('paid_at', { ascending: false }) as any,
-      ] : []),
+      supabase.from('invoices').select('id, invoice_number, lead_id, created_at, paid_at, status, total, amount_paid').eq('customer_id', customerId).in('status', ['paid', 'partial']).order('paid_at', { ascending: false }) as any,
+      ...(leadId ? [supabase.from('invoices').select('id, invoice_number, lead_id, created_at, paid_at, status, total, amount_paid').eq('lead_id', leadId).in('status', ['paid', 'partial']).order('paid_at', { ascending: false }) as any] : []),
     ]),
     enabled: !!customerId,
   })
@@ -251,11 +440,7 @@ function useJobFormResponses(jobId: string | null) {
     queryKey: ['customer_job_forms', jobId],
     queryFn: async () => {
       if (!jobId) return []
-      const { data } = await supabase
-        .from('job_form_responses')
-        .select('*')
-        .eq('job_id', jobId)
-        .order('submitted_at', { ascending: false })
+      const { data } = await supabase.from('job_form_responses').select('*').eq('job_id', jobId).order('submitted_at', { ascending: false })
       return data || []
     },
     enabled: !!jobId,
@@ -267,11 +452,7 @@ function useJobSignatures(jobId: string | null) {
     queryKey: ['customer_job_signatures', jobId],
     queryFn: async () => {
       if (!jobId) return []
-      const { data } = await supabase
-        .from('job_signatures')
-        .select('*')
-        .eq('job_id', jobId)
-        .order('signed_at', { ascending: false })
+      const { data } = await supabase.from('job_signatures').select('*').eq('job_id', jobId).order('signed_at', { ascending: false })
       return data || []
     },
     enabled: !!jobId,
@@ -283,12 +464,7 @@ function useApprovedJobPhotos(jobId: string | null) {
     queryKey: ['customer_approved_photos', jobId],
     queryFn: async () => {
       if (!jobId) return []
-      const { data } = await supabase
-        .from('job_photos')
-        .select('*')
-        .eq('job_id', jobId)
-        .eq('review_status', 'approved')
-        .order('created_at', { ascending: true })
+      const { data } = await supabase.from('job_photos').select('*').eq('job_id', jobId).eq('review_status', 'approved').order('created_at', { ascending: true })
       return data || []
     },
     enabled: !!jobId,
@@ -311,43 +487,36 @@ export function CustomerDocumentsTab({ customerId }: Props) {
   const { data: signatures     = [] } = useJobSignatures(refs?.job_id || null)
   const { data: approvedPhotos = [] } = useApprovedJobPhotos(refs?.job_id || null)
 
-  const [reviewModal, setReviewModal]   = useState<any>(null)
-  const [lightboxUrl, setLightboxUrl]   = useState<string | null>(null)
+  const [reviewModal, setReviewModal]     = useState<any>(null)
+  const [lightboxUrl, setLightboxUrl]     = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
 
+  // ─── Agreement download ───────────────────────────────────────
   async function handleDownloadAgreement(agr: any) {
     setDownloadingId(agr.id)
     try {
       let terms: any[] = agr.terms_snapshot?.blocks || []
       if (!terms.length) {
-        const { data: fetchedTerms } = await supabase
-          .from('term_blocks')
-          .select('slug, display_title, content, version')
-          .like('slug', 'ra-%')
-          .eq('is_active', true)
-          .order('sort_order')
+        const { data: fetchedTerms } = await supabase.from('term_blocks').select('slug, display_title, content, version').like('slug', 'ra-%').eq('is_active', true).order('sort_order')
         terms = fetchedTerms || []
       }
-      const html = generateAgreementHTML(agr, refs, terms)
-      const win = window.open('', '_blank')
-      if (win) {
-        win.document.write(html)
-        win.document.close()
-        setTimeout(() => win.print(), 600)
-      } else {
-        const blob = new Blob([html], { type: 'text/html' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `${agr.agreement_number}.html`
-        a.click()
-        URL.revokeObjectURL(url)
+      openPrintWindow(generateAgreementHTML(agr, refs, terms), `${agr.agreement_number}.html`)
+    } catch (e: any) { console.error('Download failed:', e.message) }
+    finally { setDownloadingId(null) }
+  }
+
+  // ─── Form PDF download ────────────────────────────────────────
+  function handleDownloadForm(form: any) {
+    setDownloadingId(form.id)
+    try {
+      const signatureUrl = form.customer_signature_url || null
+      if (form.form_type === 'ro_drilling_consent') {
+        openPrintWindow(generateDrillingConsentHTML(form, signatureUrl), `RO-Drilling-Consent-${form.id}.html`)
+      } else if (form.form_type === 'ro_handover') {
+        openPrintWindow(generateHandoverHTML(form, signatureUrl, refs), `RO-Handover-${form.id}.html`)
       }
-    } catch (e: any) {
-      console.error('Download failed:', e.message)
-    } finally {
-      setDownloadingId(null)
-    }
+    } catch (e: any) { console.error('Download failed:', e) }
+    finally { setDownloadingId(null) }
   }
 
   if (proofsLoading) return <p className="text-sm text-muted text-center py-8">Loading documents...</p>
@@ -364,10 +533,15 @@ export function CustomerDocumentsTab({ customerId }: Props) {
   const hasPhotos      = approvedPhotos.length > 0
   const hasAnything    = allProofs.length > 0 || hasAgreements || hasQuotes || hasInvoices || hasForms || hasSignatures || hasPhotos
 
+  const FORM_LABELS: Record<string, string> = {
+    ro_handover:          'RO System Handover',
+    ro_drilling_consent:  'RO Drilling Consent',
+  }
+
   return (
     <div className="space-y-5">
 
-      {/* ─── Agreements ──────────────────────────────────── */}
+      {/* ─── Agreements ────────────────────────────────── */}
       {hasAgreements && (
         <DocSection title="Agreements" icon="📝" count={agreements.length}>
           {agreements.map((agr: any) => (
@@ -380,19 +554,13 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                    agr.signed_at ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'
-                  }`}>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${agr.signed_at ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
                     {agr.signed_at ? 'Signed' : 'Pending'}
                   </span>
                   {agr.signed_at && (
-                    <button
-                      onClick={() => handleDownloadAgreement(agr)}
-                      disabled={downloadingId === agr.id}
-                      className="text-xs px-2 py-0.5 rounded-lg font-semibold disabled:opacity-50 transition-all"
-                      style={{ backgroundColor: 'rgba(56,189,248,0.12)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.25)' }}
-                      title="Download signed agreement as PDF"
-                    >
+                    <button onClick={() => handleDownloadAgreement(agr)} disabled={downloadingId === agr.id}
+                      className="text-xs px-2 py-0.5 rounded-lg font-semibold disabled:opacity-50"
+                      style={{ backgroundColor: 'rgba(56,189,248,0.12)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.25)' }}>
                       {downloadingId === agr.id ? '…' : '⬇ PDF'}
                     </button>
                   )}
@@ -401,22 +569,15 @@ export function CustomerDocumentsTab({ customerId }: Props) {
               <div className="text-xs text-muted space-y-0.5">
                 {agr.agreement_number    && <div className="text-slate-400 font-medium">{agr.agreement_number}</div>}
                 {agr.signed_at          && <div>Signed: {formatDateTime(agr.signed_at)}</div>}
-                {agr.signed_by_rep      && <div>Rep: {agr.signed_by_rep}</div>}
                 {agr.monthly_amount     && <div>Monthly: ${agr.monthly_amount}</div>}
-                {agr.total_amount && <div>Total: ${agr.total_amount}</div>}
+                {agr.total_amount       && <div>Total: ${agr.total_amount}</div>}
                 {agr.rental_term_months && <div>Term: {agr.rental_term_months} months</div>}
-                {agr.deposit_amount     && <div>Deposit: ${agr.deposit_amount} ({agr.deposit_method || 'N/A'})</div>}
                 {agr.install_address    && <div>Install: {agr.install_address}</div>}
               </div>
               {agr.customer_signature && (
                 <div className="mt-2">
                   <div className="text-xs text-gray-500 mb-1">Customer signature:</div>
-                  <img
-                    src={agr.customer_signature}
-                    alt="Signature"
-                    className="h-12 bg-white rounded px-2 py-1 cursor-pointer"
-                    onClick={() => setLightboxUrl(agr.customer_signature)}
-                  />
+                  <img src={agr.customer_signature} alt="Signature" className="h-12 bg-white rounded px-2 py-1 cursor-pointer" onClick={() => setLightboxUrl(agr.customer_signature)} />
                 </div>
               )}
             </DocCard>
@@ -424,7 +585,7 @@ export function CustomerDocumentsTab({ customerId }: Props) {
         </DocSection>
       )}
 
-      {/* ─── Accepted Quotes ─────────────────────────────── */}
+      {/* ─── Accepted Quotes ───────────────────────────── */}
       {hasQuotes && (
         <DocSection title="Accepted Quotes" icon="📋" count={acceptedQuotes.length}>
           {(acceptedQuotes as any[]).map((q: any) => (
@@ -443,17 +604,17 @@ export function CustomerDocumentsTab({ customerId }: Props) {
               </div>
               <div className="text-xs text-muted space-y-0.5">
                 {q.quote_number && <div className="text-slate-400 font-medium">{q.quote_number}</div>}
-                {q.created_at       && <div>Date: {formatDateTime(q.created_at)}</div>}
-                {q.monthly_amount   && <div>Monthly: ${q.monthly_amount}/mo</div>}
-                {q.total         && <div>Total: ${q.total}</div>}
-                {q.install_fee      && <div>Install fee: ${q.install_fee}</div>}
+                {q.created_at   && <div>Date: {formatDateTime(q.created_at)}</div>}
+                {q.monthly_amount && <div>Monthly: ${q.monthly_amount}/mo</div>}
+                {q.total        && <div>Total: ${q.total}</div>}
+                {q.install_fee  && <div>Install fee: ${q.install_fee}</div>}
               </div>
             </DocCard>
           ))}
         </DocSection>
       )}
 
-      {/* ─── Paid Invoices ───────────────────────────────── */}
+      {/* ─── Paid Invoices ─────────────────────────────── */}
       {hasInvoices && (
         <DocSection title="Paid Invoices" icon="🧾" count={paidInvoices.length}>
           {(paidInvoices as any[]).map((inv: any) => (
@@ -470,52 +631,65 @@ export function CustomerDocumentsTab({ customerId }: Props) {
               </div>
               <div className="text-xs text-muted space-y-0.5">
                 {inv.invoice_number && <div className="text-slate-400 font-medium">{inv.invoice_number}</div>}
-                {inv.paid_at          && <div>Paid: {formatDateTime(inv.paid_at)}</div>}
-                {inv.total         && <div>Total: ${inv.total}</div>}
-                {inv.amount_paid      && <div>Amount paid: ${inv.amount_paid}</div>}
+                {inv.paid_at        && <div>Paid: {formatDateTime(inv.paid_at)}</div>}
+                {inv.total          && <div>Total: ${inv.total}</div>}
+                {inv.amount_paid    && <div>Amount paid: ${inv.amount_paid}</div>}
               </div>
             </DocCard>
           ))}
         </DocSection>
       )}
 
-      {/* ─── Customer Handover Records ───────────────────── */}
+      {/* ─── Customer Handover Records ─────────────────── */}
       {hasForms && (
         <DocSection title="Customer Handover" icon="🤝" count={formResponses.length}>
-          {formResponses.map((form: any) => (
-            <DocCard key={form.id}>
-              <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">🤝</span>
-                  <span className="text-sm font-medium text-white">
-                    {form.form_type?.replace(/_/g, ' ') || 'Handover Form'}
-                  </span>
+          {formResponses.map((form: any) => {
+            const rd = form.response_data || {}
+            const canDownload = form.form_type === 'ro_drilling_consent' || form.form_type === 'ro_handover'
+            return (
+              <DocCard key={form.id}>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">🤝</span>
+                    <span className="text-sm font-medium text-white">
+                      {FORM_LABELS[form.form_type] || form.form_type?.replace(/_/g, ' ') || 'Handover Form'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-green-500/20 text-green-400">Completed</span>
+                    {canDownload && (
+                      <button onClick={() => handleDownloadForm(form)} disabled={downloadingId === form.id}
+                        className="text-xs px-2 py-0.5 rounded-lg font-semibold disabled:opacity-50"
+                        style={{ backgroundColor: 'rgba(56,189,248,0.12)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.25)' }}>
+                        {downloadingId === form.id ? '…' : '⬇ PDF'}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-green-500/20 text-green-400">
-                  Completed
-                </span>
-              </div>
-              <div className="text-xs text-muted space-y-0.5">
-                <div>Submitted: {formatDateTime(form.submitted_at)}</div>
-                {form.response_data?.customer_name && <div>Signed by: {form.response_data.customer_name}</div>}
-              </div>
-              {form.customer_signature_url && (
-                <div className="mt-2">
-                  <div className="text-xs text-gray-500 mb-1">Customer signature:</div>
-                  <img
-                    src={form.customer_signature_url}
-                    alt="Signature"
-                    className="h-12 bg-white rounded px-2 py-1 cursor-pointer"
-                    onClick={() => setLightboxUrl(form.customer_signature_url)}
-                  />
+                <div className="text-xs text-muted space-y-0.5">
+                  <div>Submitted: {formatDateTime(form.submitted_at)}</div>
+                  {rd.customer_name && <div>Signed by: {rd.customer_name}</div>}
+                  {rd.tds_reading   && (
+                    <div className="flex items-center gap-1 mt-1">
+                      <span className="text-blue-400 font-semibold">TDS: {rd.tds_reading} ppm</span>
+                      <span className="text-gray-500">post-filter reading</span>
+                    </div>
+                  )}
+                  {rd.consent_date  && <div>Consent date: {formatDateTime(rd.consent_date)}</div>}
                 </div>
-              )}
-            </DocCard>
-          ))}
+                {form.customer_signature_url && (
+                  <div className="mt-2">
+                    <div className="text-xs text-gray-500 mb-1">Customer signature:</div>
+                    <img src={form.customer_signature_url} alt="Signature" className="h-12 bg-white rounded px-2 py-1 cursor-pointer" onClick={() => setLightboxUrl(form.customer_signature_url)} />
+                  </div>
+                )}
+              </DocCard>
+            )
+          })}
         </DocSection>
       )}
 
-      {/* ─── Consent Signatures ──────────────────────────── */}
+      {/* ─── Consent Signatures ────────────────────────── */}
       {hasSignatures && (
         <DocSection title="Consent Signatures" icon="✍️" count={signatures.length}>
           {signatures.map((sig: any) => (
@@ -525,9 +699,7 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                   <span className="text-sm">✍️</span>
                   <span className="text-sm font-medium text-white">Customer Consent</span>
                 </div>
-                <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-green-500/20 text-green-400">
-                  Signed
-                </span>
+                <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-green-500/20 text-green-400">Signed</span>
               </div>
               <div className="text-xs text-muted space-y-0.5">
                 <div>Signed: {formatDateTime(sig.signed_at)}</div>
@@ -535,12 +707,7 @@ export function CustomerDocumentsTab({ customerId }: Props) {
               </div>
               {sig.signature_url && (
                 <div className="mt-2">
-                  <img
-                    src={sig.signature_url}
-                    alt="Signature"
-                    className="h-12 bg-white rounded px-2 py-1 cursor-pointer"
-                    onClick={() => setLightboxUrl(sig.signature_url)}
-                  />
+                  <img src={sig.signature_url} alt="Signature" className="h-12 bg-white rounded px-2 py-1 cursor-pointer" onClick={() => setLightboxUrl(sig.signature_url)} />
                 </div>
               )}
             </DocCard>
@@ -548,7 +715,7 @@ export function CustomerDocumentsTab({ customerId }: Props) {
         </DocSection>
       )}
 
-      {/* ─── Compliance Proofs — Pending ─────────────────── */}
+      {/* ─── Compliance Proofs — Pending ───────────────── */}
       {pendingProofs.length > 0 && (
         <DocSection title="Pending Review" icon="📋" count={pendingProofs.length} urgentColor>
           {pendingProofs.map(proof => (
@@ -557,7 +724,7 @@ export function CustomerDocumentsTab({ customerId }: Props) {
         </DocSection>
       )}
 
-      {/* ─── Compliance Proofs — Reviewed ────────────────── */}
+      {/* ─── Compliance Proofs — Reviewed ──────────────── */}
       {reviewedProofs.length > 0 && (
         <DocSection title="Compliance Documents" icon="📄" count={reviewedProofs.length}>
           {reviewedProofs.map(proof => (
@@ -566,17 +733,13 @@ export function CustomerDocumentsTab({ customerId }: Props) {
         </DocSection>
       )}
 
-      {/* ─── Approved Install Photos ─────────────────────── */}
+      {/* ─── Approved Install Photos ───────────────────── */}
       {hasPhotos && (
         <DocSection title="Approved Install Photos" icon="📷" count={approvedPhotos.length}>
           <div className="grid grid-cols-3 gap-2 px-3 pb-3">
             {approvedPhotos.map((photo: any) => (
               <div key={photo.id} className="cursor-pointer" onClick={() => setLightboxUrl(photo.photo_url)}>
-                <img
-                  src={photo.photo_url}
-                  alt={photo.caption || 'Install photo'}
-                  className="w-full aspect-square object-cover rounded-lg"
-                />
+                <img src={photo.photo_url} alt={photo.caption || 'Install photo'} className="w-full aspect-square object-cover rounded-lg" />
                 <div className="text-[10px] text-gray-500 mt-1 capitalize">{photo.category?.replace(/_/g, ' ')}</div>
               </div>
             ))}
@@ -584,33 +747,21 @@ export function CustomerDocumentsTab({ customerId }: Props) {
         </DocSection>
       )}
 
-      {/* ─── Empty state ─────────────────────────────────── */}
+      {/* ─── Empty state ───────────────────────────────── */}
       {!hasAnything && (
         <div className="bg-card border border-border rounded-xl p-6 text-center">
           <div className="text-3xl mb-2">📎</div>
           <div className="text-sm text-muted">No documents on file yet.</div>
-          <div className="text-xs text-muted mt-1">
-            Agreements, quotes, invoices, handover records, consent signatures, and compliance proofs will appear here.
-          </div>
+          <div className="text-xs text-muted mt-1">Agreements, quotes, invoices, handover records, and compliance proofs will appear here.</div>
         </div>
       )}
 
-      {/* ─── Review modal ────────────────────────────────── */}
       {reviewModal && (
-        <ProofReviewModal
-          proof={reviewModal}
-          customerId={customerId}
-          onClose={() => setReviewModal(null)}
-          onCompleted={() => setReviewModal(null)}
-        />
+        <ProofReviewModal proof={reviewModal} customerId={customerId} onClose={() => setReviewModal(null)} onCompleted={() => setReviewModal(null)} />
       )}
 
-      {/* ─── Lightbox ────────────────────────────────────── */}
       {lightboxUrl && (
-        <div
-          className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-8 cursor-pointer"
-          onClick={() => setLightboxUrl(null)}
-        >
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-8 cursor-pointer" onClick={() => setLightboxUrl(null)}>
           <img src={lightboxUrl} alt="Document" className="max-w-full max-h-full object-contain rounded-lg" />
           <button className="absolute top-6 right-6 text-white text-2xl hover:text-gray-300" onClick={() => setLightboxUrl(null)}>×</button>
         </div>
@@ -631,9 +782,7 @@ function DocSection({ title, icon, count, urgentColor, children }: {
           <span className="text-sm">{icon}</span>
           <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wide">{title}</h4>
         </div>
-        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-          urgentColor ? 'bg-amber-500/20 text-amber-400' : 'bg-gray-700 text-gray-300'
-        }`}>{count}</span>
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${urgentColor ? 'bg-amber-500/20 text-amber-400' : 'bg-gray-700 text-gray-300'}`}>{count}</span>
       </div>
       <div className="divide-y divide-border/30">{children}</div>
     </div>
@@ -651,9 +800,7 @@ function ProofCard({ proof, canReview, onReview }: { proof: any; canReview: bool
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
           <span className="text-sm">📄</span>
-          <span className="text-sm font-medium text-white">
-            {proof.proof_type?.replace(/_/g, ' ') || 'Compliance Proof'}
-          </span>
+          <span className="text-sm font-medium text-white">{proof.proof_type?.replace(/_/g, ' ') || 'Compliance Proof'}</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
@@ -661,8 +808,7 @@ function ProofCard({ proof, canReview, onReview }: { proof: any; canReview: bool
             {reviewStyle.label}
           </span>
           {canReview && proof.review_status === 'pending' && onReview && (
-            <button onClick={onReview}
-              className="text-xs px-2 py-0.5 rounded-lg font-semibold"
+            <button onClick={onReview} className="text-xs px-2 py-0.5 rounded-lg font-semibold"
               style={{ backgroundColor: 'rgba(56,189,248,0.12)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.25)' }}>
               Review
             </button>
@@ -671,14 +817,11 @@ function ProofCard({ proof, canReview, onReview }: { proof: any; canReview: bool
       </div>
       <div className="text-xs text-muted space-y-0.5">
         <div>Submitted: {formatDate(proof.submitted_at)}</div>
-        {proof.reviewed_at && (
-          <div>Reviewed: {formatDate(proof.reviewed_at)} {proof.reviewed_by ? `by ${proof.reviewed_by}` : ''}</div>
-        )}
+        {proof.reviewed_at && <div>Reviewed: {formatDate(proof.reviewed_at)} {proof.reviewed_by ? `by ${proof.reviewed_by}` : ''}</div>}
         {proof.review_notes && <div className="text-slate-400 mt-1">Notes: {proof.review_notes}</div>}
       </div>
       {proof.proof_url && (
-        <a href={proof.proof_url} target="_blank" rel="noopener noreferrer"
-          className="text-xs mt-2 inline-block" style={{ color: '#38bdf8' }}>
+        <a href={proof.proof_url} target="_blank" rel="noopener noreferrer" className="text-xs mt-2 inline-block" style={{ color: '#38bdf8' }}>
           View document ↗
         </a>
       )}
