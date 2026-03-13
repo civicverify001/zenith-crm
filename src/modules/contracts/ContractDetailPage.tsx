@@ -153,8 +153,9 @@ export default function ContractDetailPage() {
   const [agreement,  setAgreement]  = useState<Agreement | null>(null)
   const [loading,    setLoading]    = useState(true)
   const [error,      setError]      = useState<string | null>(null)
-  const [cancelOpen, setCancelOpen] = useState(false)
-  const [cancelling, setCancelling] = useState(false)
+  const [cancelOpen,  setCancelOpen]  = useState(false)
+  const [cancelling,  setCancelling]  = useState(false)
+  const [activating,  setActivating]  = useState(false)
 
   useEffect(() => {
     if (!id || role === 'technician') return
@@ -256,6 +257,23 @@ export default function ContractDetailPage() {
     }
   }
 
+  async function handleActivate() {
+    if (!contract) return
+    setActivating(true)
+    try {
+      const { error } = await supabase
+        .from('contracts')
+        .update({ status: 'active', updated_at: new Date().toISOString() })
+        .eq('id', contract.id)
+      if (error) throw error
+      await loadAll(contract.id)
+    } catch (e: any) {
+      alert('Activate failed: ' + e.message)
+    } finally {
+      setActivating(false)
+    }
+  }
+
   if (role === 'technician') return null
 
   if (loading) return (
@@ -271,8 +289,9 @@ export default function ContractDetailPage() {
     </div>
   )
 
-  const displayId = contract.contract_number || contract.id.slice(0, 8).toUpperCase()
-  const canCancel = role === 'admin' && contract.status === 'active'
+  const displayId  = contract.contract_number || contract.id.slice(0, 8).toUpperCase()
+  const canCancel  = role === 'admin' && contract.status === 'active'
+  const canActivate = role === 'admin' && contract.status === 'pending'
 
   return (
     <div style={{ minHeight: '100vh', background: '#0f1923', color: '#e2e8f0', fontFamily: 'system-ui, sans-serif' }}>
@@ -295,6 +314,15 @@ export default function ContractDetailPage() {
           </div>
           <p style={{ margin: '2px 0 0', fontSize: 13, color: '#64748b' }}>{contract.customer_name}</p>
         </div>
+        {canActivate && (
+          <button onClick={handleActivate} disabled={activating} style={{
+            background: '#22c55e22', border: '1px solid #22c55e44', color: '#22c55e',
+            borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600,
+            cursor: activating ? 'not-allowed' : 'pointer', opacity: activating ? 0.6 : 1,
+          }}>
+            {activating ? 'Activating…' : 'Activate Contract'}
+          </button>
+        )}
         {canCancel && (
           <button onClick={() => setCancelOpen(true)} style={{
             background: '#ef444422', border: '1px solid #ef444444', color: '#ef4444',
