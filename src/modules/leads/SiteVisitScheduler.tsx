@@ -5,6 +5,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../hooks/useAuth'
+import { syncToCalendar } from '../../services/googleCalService'
 
 interface SiteVisit {
   id: string
@@ -88,7 +89,6 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
   // Load reps
   useEffect(() => {
     async function loadReps() {
-      // Fetch ALL user profiles — filter in JS to avoid any Supabase query issues
       const { data, error } = await supabase
         .from('user_profiles')
         .select('id, full_name, role')
@@ -99,7 +99,6 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
         return
       }
 
-      // Include salesrep and admin roles
       const filtered = (data || []).filter(r =>
         r.role === 'salesrep' || r.role === 'admin'
       )
@@ -171,6 +170,21 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
         })
 
       if (visitError) throw visitError
+
+      // Get the inserted visit ID for Google Calendar sync
+      const { data: insertedVisit } = await supabase
+        .from('site_visits')
+        .select('id')
+        .eq('lead_id', leadId)
+        .eq('assigned_rep_id', selectedRep)
+        .eq('visit_date', selectedDate)
+        .eq('visit_hour', selectedHour)
+        .maybeSingle()
+
+      // Push to Google Calendar (fire and forget — does not block visit creation)
+      if (insertedVisit?.id) {
+        syncToCalendar('site_visit', insertedVisit.id).catch(e => console.warn('Google Cal sync failed:', e))
+      }
 
       const repName = reps.find(r => r.id === selectedRep)?.full_name || 'Rep'
       onScheduled({ rep_name: repName, date: selectedDate, hour: selectedHour })
@@ -343,7 +357,6 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Notes */}
             {selectedRep && (
               <input
                 type="text"
@@ -369,4 +382,3 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
     </div>
   )
 }
-
