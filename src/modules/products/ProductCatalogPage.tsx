@@ -15,6 +15,16 @@ import {
   ProductUpdate,
 } from '../../services/productService';
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [])
+  return isMobile
+}
+
 const EMPTY_FORM: ProductInsert = {
   name: '',
   sku: '',
@@ -29,7 +39,6 @@ const EMPTY_FORM: ProductInsert = {
   warranty_months: 12,
   requires_survey_type: null,
   is_active: true,
-
   vendor_sku: null,
   vendor_cost: null,
   vendor_id: null,
@@ -66,8 +75,8 @@ function fmt(val: number | null): string {
 }
 
 export default function ProductCatalog() {
-  // ── Role guard — source of truth for all field-level visibility ──
   const { profile } = useAuth();
+  const isMobile = useIsMobile();
   const role = profile?.role ?? null;
   const showProcurement = canViewProcurementFields(role);
   const canEditProcurement = canEditProcurementFields(role);
@@ -119,8 +128,6 @@ export default function ProductCatalog() {
       warranty_months: product.warranty_months,
       requires_survey_type: product.requires_survey_type,
       is_active: product.is_active,
-      // vendor fields only populated when admin (product_safe returns null for others)
-
       vendor_sku:  product.vendor_sku  ?? null,
       vendor_cost: product.vendor_cost ?? null,
       vendor_id:   product.vendor_id   ?? null,
@@ -135,10 +142,8 @@ export default function ProductCatalog() {
     setSaving(true);
     setError(null);
     try {
-      // Strip vendor fields from payload if caller is not admin
       const payload: ProductUpdate = { ...form };
       if (!canEditProcurement) {
-  
         delete payload.vendor_sku;
         delete payload.vendor_cost;
         delete payload.vendor_id;
@@ -173,13 +178,11 @@ export default function ProductCatalog() {
     return (
       p.name.toLowerCase().includes(q) ||
       (p.sku && p.sku.toLowerCase().includes(q)) ||
-      // vendor_sku search only for admin (non-admin never has this data)
       (showProcurement && p.vendor_sku && p.vendor_sku.toLowerCase().includes(q)) ||
       (p.description && p.description.toLowerCase().includes(q))
     );
   });
 
-  // ── Table columns — vendor columns only rendered for admin ──
   const tableHeaders = [
     { label: 'Product',     align: 'left'   },
     { label: 'SKU',         align: 'left'   },
@@ -201,7 +204,7 @@ export default function ProductCatalog() {
       {/* ── Top bar ── */}
       <div style={{
         background: '#162232', borderBottom: '1px solid #1e3a4f',
-        padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+        padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 800, fontSize: 20, color: '#e2e8f0', lineHeight: 1.2 }}>Product Catalog</div>
@@ -209,38 +212,44 @@ export default function ProductCatalog() {
             {products.length} product{products.length !== 1 ? 's' : ''} · Prices feed quotes, contracts, and billing.
           </div>
         </div>
-        <input
-          placeholder={showProcurement ? 'Search name, SKU, or vendor SKU…' : 'Search name or SKU…'}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{
-            background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8,
-            color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none',
-            width: 240, flexShrink: 0,
-          }}
-        />
+        {!isMobile && (
+          <input
+            placeholder={showProcurement ? 'Search name, SKU, or vendor SKU…' : 'Search name or SKU…'}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none', width: 220, flexShrink: 0 }}
+          />
+        )}
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexShrink: 0 }}>
           <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} style={{ accentColor: '#0d7ea3' }} />
-          <span style={{ fontSize: 13, color: '#94a3b8' }}>Show inactive</span>
+          <span style={{ fontSize: 13, color: '#94a3b8' }}>Inactive</span>
         </label>
         {role === 'admin' && (
           <button
             onClick={openAddForm}
-            style={{
-              padding: '10px 22px', borderRadius: 8, border: 'none', cursor: 'pointer',
-              background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 14,
-              flexShrink: 0, whiteSpace: 'nowrap',
-            }}
+            style={{ padding: '10px 18px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 14, flexShrink: 0, whiteSpace: 'nowrap' }}
           >
             + Add Product
           </button>
         )}
       </div>
 
+      {/* Mobile search */}
+      {isMobile && (
+        <div style={{ padding: '10px 16px', background: '#0f1923', borderBottom: '1px solid #1e3a4f' }}>
+          <input
+            placeholder="Search name or SKU…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '10px 14px', fontSize: 14, outline: 'none', width: '100%', boxSizing: 'border-box' }}
+          />
+        </div>
+      )}
+
       {/* ── Category filter tabs ── */}
       <div style={{
         background: '#0c1a26', borderBottom: '1px solid #1e3a4f',
-        padding: '12px 24px', display: 'flex', gap: 8, flexShrink: 0, overflowX: 'auto',
+        padding: '10px 16px', display: 'flex', gap: 6, flexShrink: 0, overflowX: 'auto',
       }}>
         {CATEGORY_TABS.map(f => {
           const count = f.key === 'all' ? products.length : products.filter(p => p.category === f.key).length;
@@ -250,24 +259,26 @@ export default function ProductCatalog() {
               key={f.key}
               onClick={() => setFilterCategory(f.key)}
               style={{
-                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-                padding: '11px 8px', borderRadius: 10,
+                flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                padding: isMobile ? '8px 10px' : '11px 8px',
+                borderRadius: 10,
                 border: `1px solid ${isActive ? f.color + '60' : f.border}`,
                 background: isActive ? f.bg : 'rgba(255,255,255,0.02)',
                 color: isActive ? f.color : '#475569',
-                cursor: 'pointer', fontSize: 13, fontWeight: isActive ? 700 : 500,
-                transition: 'all 0.12s',
+                cursor: 'pointer', fontSize: isMobile ? 12 : 13,
+                fontWeight: isActive ? 700 : 500,
                 boxShadow: isActive ? `0 0 14px ${f.color}20` : 'none',
-                whiteSpace: 'nowrap', minWidth: 0,
+                whiteSpace: 'nowrap',
               }}
             >
-              <span style={{ fontSize: 14 }}>{f.icon}</span>
-              <span>{f.label}</span>
+              <span>{f.icon}</span>
+              {!isMobile && <span>{f.label}</span>}
               {count > 0 && (
                 <span style={{
                   background: isActive ? f.color + '30' : 'rgba(255,255,255,0.06)',
                   color: isActive ? f.color : '#64748b',
-                  borderRadius: 20, padding: '1px 7px', fontSize: 11, fontWeight: 700,
+                  borderRadius: 20, padding: '1px 6px', fontSize: 11, fontWeight: 700,
                 }}>
                   {count}
                 </span>
@@ -279,7 +290,7 @@ export default function ProductCatalog() {
 
       {/* ── Stats strip ── */}
       <div style={{
-        display: 'flex', gap: 12, padding: '14px 24px',
+        display: 'flex', gap: 10, padding: '12px 16px',
         borderBottom: '1px solid #1e3a4f', background: '#0f1923', flexShrink: 0, overflowX: 'auto',
       }}>
         {[
@@ -289,27 +300,23 @@ export default function ProductCatalog() {
         ].map(s => (
           <div key={s.label} style={{
             background: '#162232', border: '1px solid #1e3a4f', borderRadius: 10,
-            padding: '10px 18px', flexShrink: 0, minWidth: 110,
+            padding: '8px 14px', flexShrink: 0, minWidth: 90,
           }}>
             <div style={{ color: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{s.label}</div>
-            <div style={{ color: s.color, fontWeight: 800, fontSize: 20, marginTop: 3 }}>{s.val}</div>
+            <div style={{ color: s.color, fontWeight: 800, fontSize: 18, marginTop: 2 }}>{s.val}</div>
           </div>
         ))}
       </div>
 
       {error && !showForm && (
-        <div style={{
-          margin: '12px 24px 0', padding: '10px 14px', borderRadius: 8,
-          background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
-          color: '#f87171', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}>
+        <div style={{ margin: '12px 16px 0', padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>{error}</span>
           <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 16 }}>×</button>
         </div>
       )}
 
-      {/* ── Table ── */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+      {/* ── Content ── */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px 12px' : '16px 24px' }}>
         {loading ? (
           <div style={{ textAlign: 'center', padding: 60, color: '#64748b' }}>Loading products…</div>
         ) : filteredProducts.length === 0 ? (
@@ -319,25 +326,98 @@ export default function ProductCatalog() {
               {search ? 'No products matching your search' : 'No products found'}
             </div>
             {!search && role === 'admin' && (
-              <button onClick={openAddForm} style={{
-                marginTop: 16, padding: '10px 24px', borderRadius: 8, border: 'none',
-                cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700,
-              }}>
+              <button onClick={openAddForm} style={{ marginTop: 16, padding: '10px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700 }}>
                 Add First Product
               </button>
             )}
           </div>
+        ) : isMobile ? (
+          /* ── MOBILE CARD LAYOUT ── */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {filteredProducts.map(product => {
+              const catColor = CATEGORY_COLORS[product.category] || DEFAULT_CAT_COLOR;
+              return (
+                <div
+                  key={product.id}
+                  style={{
+                    background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12,
+                    padding: '14px 16px', opacity: product.is_active ? 1 : 0.5,
+                  }}
+                >
+                  {/* Row 1: Name + Status */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0' }}>{product.name}</div>
+                      {product.sku && <div style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace', marginTop: 2 }}>{product.sku}</div>}
+                    </div>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, flexShrink: 0,
+                      color: product.is_active ? '#4ade80' : '#f87171',
+                      background: product.is_active ? 'rgba(74,222,128,0.12)' : 'rgba(248,113,113,0.12)',
+                      border: `1px solid ${product.is_active ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`,
+                      padding: '3px 8px', borderRadius: 6,
+                    }}>
+                      {product.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                  {/* Row 2: Category */}
+                  <div style={{ marginBottom: 10 }}>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 6,
+                      color: catColor.text, background: catColor.bg, border: `1px solid ${catColor.border}`,
+                    }}>
+                      {CATEGORY_LABELS[product.category] || product.category}
+                    </span>
+                  </div>
+                  {/* Row 3: Pricing grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: role === 'admin' ? 12 : 0 }}>
+                    {[
+                      { label: 'Retail', val: fmt(product.retail_price), color: '#e2e8f0' },
+                      { label: 'Rental/mo', val: fmt(product.rental_price_monthly), color: product.rental_price_monthly ? '#22d3ee' : '#475569' },
+                      { label: 'Install Fee', val: fmt(product.install_fee), color: '#e2e8f0' },
+                      { label: 'Warranty', val: product.warranty_months ? `${product.warranty_months}mo` : '—', color: '#94a3b8' },
+                    ].map(item => (
+                      <div key={item.label} style={{ background: '#0f1923', borderRadius: 8, padding: '8px 10px', border: '1px solid #1a2a3a' }}>
+                        <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>{item.label}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: item.color, marginTop: 2 }}>{item.val}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Admin actions */}
+                  {role === 'admin' && (
+                    <div style={{ display: 'flex', gap: 8, paddingTop: 12, borderTop: '1px solid #1e3a4f' }}>
+                      <button
+                        onClick={() => openEditForm(product)}
+                        style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: '1px solid rgba(13,126,163,0.3)', background: 'transparent', color: '#22d3ee', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleToggleActive(product)}
+                        style={{
+                          flex: 1, padding: '8px 0', borderRadius: 8,
+                          border: `1px solid ${product.is_active ? 'rgba(248,113,113,0.25)' : 'rgba(74,222,128,0.25)'}`,
+                          background: 'transparent',
+                          color: product.is_active ? '#f87171' : '#4ade80',
+                          cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                        }}
+                      >
+                        {product.is_active ? 'Deactivate' : 'Reactivate'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         ) : (
+          /* ── DESKTOP TABLE LAYOUT ── */
           <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#0f1923', borderBottom: '1px solid #1e3a4f' }}>
                   {tableHeaders.map(h => (
-                    <th key={h.label} style={{
-                      padding: '10px 14px', fontSize: 11, fontWeight: 700, color: '#64748b',
-                      textTransform: 'uppercase', letterSpacing: '0.08em',
-                      textAlign: h.align as any,
-                    }}>{h.label}</th>
+                    <th key={h.label} style={{ padding: '10px 14px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em', textAlign: h.align as any }}>{h.label}</th>
                   ))}
                 </tr>
               </thead>
@@ -351,7 +431,6 @@ export default function ProductCatalog() {
                       onMouseEnter={e => { e.currentTarget.style.background = '#1a2e42'; }}
                       onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                     >
-                      {/* Product name */}
                       <td style={{ padding: '12px 14px' }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{product.name}</div>
                         {product.description && (
@@ -360,116 +439,47 @@ export default function ProductCatalog() {
                           </div>
                         )}
                       </td>
-
-                      {/* Internal SKU — always shown */}
-                      <td style={{ padding: '12px 14px', fontSize: 12, color: '#94a3b8', fontFamily: 'monospace' }}>
-                        {product.sku || '—'}
-                      </td>
-
-                      {/* Vendor SKU — admin only column */}
+                      <td style={{ padding: '12px 14px', fontSize: 12, color: '#94a3b8', fontFamily: 'monospace' }}>{product.sku || '—'}</td>
                       {showProcurement && (
                         <td style={{ padding: '12px 14px', fontSize: 12, fontFamily: 'monospace' }}>
                           {product.vendor_sku ? (
-                            <span style={{
-                              color: '#fbbf24',
-                              background: 'rgba(251,191,36,0.08)',
-                              border: '1px solid rgba(251,191,36,0.2)',
-                              borderRadius: 4, padding: '2px 7px',
-                            }}>
+                            <span style={{ color: '#fbbf24', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: 4, padding: '2px 7px' }}>
                               {product.vendor_sku}
                             </span>
-                          ) : (
-                            <span style={{ color: '#334155' }}>—</span>
-                          )}
+                          ) : <span style={{ color: '#334155' }}>—</span>}
                         </td>
                       )}
-
-                      {/* Category */}
                       <td style={{ padding: '12px 14px' }}>
-                        <span style={{
-                          display: 'inline-block', fontSize: 11, fontWeight: 700,
-                          padding: '3px 10px', borderRadius: 6,
-                          color: catColor.text, background: catColor.bg, border: `1px solid ${catColor.border}`,
-                        }}>
+                        <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, color: catColor.text, background: catColor.bg, border: `1px solid ${catColor.border}` }}>
                           {CATEGORY_LABELS[product.category] || product.category}
                         </span>
                       </td>
-
-                      {/* Retail — always shown */}
-                      <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>
-                        {fmt(product.retail_price)}
-                      </td>
-
-                      {/* Vendor cost — admin only column */}
+                      <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{fmt(product.retail_price)}</td>
                       {showProcurement && (
                         <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, color: product.vendor_cost ? '#4ade80' : '#334155' }}>
                           {product.vendor_cost != null ? fmt(product.vendor_cost) : '—'}
                         </td>
                       )}
-
-                      {/* Rental/mo */}
-                      <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: product.rental_price_monthly ? '#22d3ee' : '#475569' }}>
-                        {fmt(product.rental_price_monthly)}
-                      </td>
-
-                      {/* Install fee */}
-                      <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, color: '#e2e8f0' }}>
-                        {fmt(product.install_fee)}
-                      </td>
-
-                      {/* Maint/mo */}
-                      <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, color: product.maintenance_price_monthly ? '#a78bfa' : '#475569' }}>
-                        {fmt(product.maintenance_price_monthly)}
-                      </td>
-
-                      {/* Warranty */}
-                      <td style={{ padding: '12px 14px', textAlign: 'center', fontSize: 12, color: '#94a3b8' }}>
-                        {product.warranty_months ? `${product.warranty_months}mo` : '—'}
-                      </td>
-
-                      {/* Status */}
+                      <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: product.rental_price_monthly ? '#22d3ee' : '#475569' }}>{fmt(product.rental_price_monthly)}</td>
+                      <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, color: '#e2e8f0' }}>{fmt(product.install_fee)}</td>
+                      <td style={{ padding: '12px 14px', textAlign: 'right', fontSize: 13, color: product.maintenance_price_monthly ? '#a78bfa' : '#475569' }}>{fmt(product.maintenance_price_monthly)}</td>
+                      <td style={{ padding: '12px 14px', textAlign: 'center', fontSize: 12, color: '#94a3b8' }}>{product.warranty_months ? `${product.warranty_months}mo` : '—'}</td>
                       <td style={{ padding: '12px 14px', textAlign: 'center' }}>
-                        <span style={{
-                          display: 'inline-block', fontSize: 11, fontWeight: 700,
-                          padding: '3px 10px', borderRadius: 6,
-                          color: product.is_active ? '#4ade80' : '#f87171',
-                          background: product.is_active ? 'rgba(74,222,128,0.12)' : 'rgba(248,113,113,0.12)',
-                          border: `1px solid ${product.is_active ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`,
-                        }}>
+                        <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, color: product.is_active ? '#4ade80' : '#f87171', background: product.is_active ? 'rgba(74,222,128,0.12)' : 'rgba(248,113,113,0.12)', border: `1px solid ${product.is_active ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}` }}>
                           {product.is_active ? 'Active' : 'Inactive'}
                         </span>
                       </td>
-
-                      {/* Actions — edit/deactivate only for admin */}
                       <td style={{ padding: '12px 14px', textAlign: 'right' }}>
                         {role === 'admin' && (
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
-                            <button
-                              onClick={() => openEditForm(product)}
-                              style={{
-                                padding: '4px 12px', borderRadius: 6,
-                                border: '1px solid rgba(13,126,163,0.3)', background: 'transparent',
-                                color: '#22d3ee', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                              }}
+                            <button onClick={() => openEditForm(product)} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(13,126,163,0.3)', background: 'transparent', color: '#22d3ee', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
                               onMouseEnter={e => { e.currentTarget.style.background = 'rgba(13,126,163,0.15)'; }}
-                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                            >
+                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                               Edit
                             </button>
-                            <button
-                              onClick={() => handleToggleActive(product)}
-                              style={{
-                                padding: '4px 12px', borderRadius: 6,
-                                border: `1px solid ${product.is_active ? 'rgba(248,113,113,0.25)' : 'rgba(74,222,128,0.25)'}`,
-                                background: 'transparent',
-                                color: product.is_active ? '#f87171' : '#4ade80',
-                                cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                              }}
-                              onMouseEnter={e => {
-                                e.currentTarget.style.background = product.is_active ? 'rgba(248,113,113,0.12)' : 'rgba(74,222,128,0.12)';
-                              }}
-                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                            >
+                            <button onClick={() => handleToggleActive(product)} style={{ padding: '4px 12px', borderRadius: 6, border: `1px solid ${product.is_active ? 'rgba(248,113,113,0.25)' : 'rgba(74,222,128,0.25)'}`, background: 'transparent', color: product.is_active ? '#f87171' : '#4ade80', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+                              onMouseEnter={e => { e.currentTarget.style.background = product.is_active ? 'rgba(248,113,113,0.12)' : 'rgba(74,222,128,0.12)'; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                               {product.is_active ? 'Deactivate' : 'Reactivate'}
                             </button>
                           </div>
@@ -484,39 +494,18 @@ export default function ProductCatalog() {
         )}
       </div>
 
-      {/* ── Add/Edit Modal — vendor section only rendered for admin ── */}
+      {/* ── Add/Edit Modal ── */}
       {showForm && role === 'admin' && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16,
-        }}>
-          <div style={{
-            background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12,
-            width: '100%', maxWidth: 680, maxHeight: '92vh', overflowY: 'auto',
-          }}>
-            {/* Header */}
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '20px 24px', borderBottom: '1px solid #1e3a4f',
-            }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
+          <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12, width: '100%', maxWidth: 680, maxHeight: '92vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid #1e3a4f' }}>
               <div>
-                <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 18 }}>
-                  {editingId ? 'Edit Product' : 'Add New Product'}
-                </div>
-                <div style={{ color: '#64748b', fontSize: 13, marginTop: 2 }}>
-                  {editingId ? 'Update product details' : 'Fill in product information'}
-                </div>
+                <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 18 }}>{editingId ? 'Edit Product' : 'Add New Product'}</div>
+                <div style={{ color: '#64748b', fontSize: 13, marginTop: 2 }}>{editingId ? 'Update product details' : 'Fill in product information'}</div>
               </div>
-              <button
-                onClick={() => { setShowForm(false); setEditingId(null); }}
-                style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 20, cursor: 'pointer' }}
-              >×</button>
+              <button onClick={() => { setShowForm(false); setEditingId(null); }} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 20, cursor: 'pointer' }}>×</button>
             </div>
-
-            {/* Body */}
             <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-              {/* Row 1: Name + SKU */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <ModalField label="Product Name" required>
                   <ModalInput value={form.name} onChange={v => updateField('name', v)} placeholder="Zenith RO System" />
@@ -525,152 +514,58 @@ export default function ProductCatalog() {
                   <ModalInput value={form.sku || ''} onChange={v => updateField('sku', v || null)} placeholder="ZPS-RO-100" />
                 </ModalField>
               </div>
-
-              {/* Row 2: Category + Survey */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <ModalField label="Category">
-                  <ModalSelect
-                    value={form.category}
-                    onChange={v => updateField('category', v)}
-                    options={Object.entries(CATEGORY_LABELS).map(([k, l]) => ({ value: k, label: l }))}
-                  />
+                  <ModalSelect value={form.category} onChange={v => updateField('category', v)} options={Object.entries(CATEGORY_LABELS).map(([k, l]) => ({ value: k, label: l }))} />
                 </ModalField>
                 <ModalField label="Requires Survey Type">
-                  <ModalSelect
-                    value={form.requires_survey_type || ''}
-                    onChange={v => updateField('requires_survey_type', v || null)}
-                    options={[
-                      { value: '', label: 'None' },
-                      { value: 'ro', label: 'RO Survey' },
-                      { value: 'softener', label: 'Softener Survey' },
-                      { value: 'whole_home_filter', label: 'Whole Home Filter Survey' },
-                    ]}
-                  />
+                  <ModalSelect value={form.requires_survey_type || ''} onChange={v => updateField('requires_survey_type', v || null)} options={[{ value: '', label: 'None' }, { value: 'ro', label: 'RO Survey' }, { value: 'softener', label: 'Softener Survey' }, { value: 'whole_home_filter', label: 'Whole Home Filter Survey' }]} />
                 </ModalField>
               </div>
-
-              {/* Description */}
               <ModalField label="Description">
-                <textarea
-                  value={form.description || ''}
-                  onChange={e => updateField('description', e.target.value || null)}
-                  rows={2}
-                  placeholder="Customer-facing product description"
-                  style={{
-                    width: '100%', background: '#0f1923', border: '1px solid #1e3a4f',
-                    color: '#e2e8f0', fontSize: 14, borderRadius: 8, padding: '10px 14px',
-                    outline: 'none', boxSizing: 'border-box', resize: 'none',
-                  }}
-                />
+                <textarea value={form.description || ''} onChange={e => updateField('description', e.target.value || null)} rows={2} placeholder="Customer-facing product description"
+                  style={{ width: '100%', background: '#0f1923', border: '1px solid #1e3a4f', color: '#e2e8f0', fontSize: 14, borderRadius: 8, padding: '10px 14px', outline: 'none', boxSizing: 'border-box', resize: 'none' }} />
               </ModalField>
-
-              {/* ── VENDOR section — admin only ── */}
               {canEditProcurement && (
                 <div style={{ borderTop: '1px solid #1e3a4f', paddingTop: 16 }}>
-                  <div style={{
-                    fontSize: 13, fontWeight: 700, color: '#fbbf24', marginBottom: 12,
-                    display: 'flex', alignItems: 'center', gap: 8,
-                  }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#fbbf24', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span>🏭</span> VENDOR / ORDERING
-                    <span style={{
-                      fontSize: 10, fontWeight: 600, color: '#92400e',
-                      background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.2)',
-                      borderRadius: 4, padding: '2px 6px', marginLeft: 4,
-                    }}>ADMIN ONLY</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: '#92400e', background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: 4, padding: '2px 6px', marginLeft: 4 }}>ADMIN ONLY</span>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                     <ModalField label="Vendor Reorder Code / Vendor SKU">
-                      <ModalInput
-                        value={form.vendor_sku || ''}
-                        onChange={v => updateField('vendor_sku', v || null)}
-                        placeholder="e.g. KW-2056-B or MFR-PN-4412"
-                      />
+                      <ModalInput value={form.vendor_sku || ''} onChange={v => updateField('vendor_sku', v || null)} placeholder="e.g. KW-2056-B" />
                     </ModalField>
                     <ModalField label="Vendor Cost ($/unit)">
-                      <ModalInput
-                        type="number"
-                        value={form.vendor_cost ?? ''}
-                        onChange={v => updateField('vendor_cost', v ? parseFloat(v) : null)}
-                        placeholder="0.00"
-                      />
+                      <ModalInput type="number" value={form.vendor_cost ?? ''} onChange={v => updateField('vendor_cost', v ? parseFloat(v) : null)} placeholder="0.00" />
                     </ModalField>
-                  </div>
-                  <div style={{ marginTop: 8, fontSize: 11, color: '#475569' }}>
-                    Vendor SKU is your reorder code used when placing purchase orders. Vendor cost is your purchase price (not shown to customers or team members).
                   </div>
                 </div>
               )}
-
-              {/* ── PRICING section ── */}
               <div style={{ borderTop: '1px solid #1e3a4f', paddingTop: 16 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', marginBottom: 12 }}>PRICING</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                  <ModalField label="Retail Price ($)">
-                    <ModalInput type="number" value={form.retail_price ?? ''} onChange={v => updateField('retail_price', v ? parseFloat(v) : null)} placeholder="899.00" />
-                  </ModalField>
-                  <ModalField label="Rental ($/month)">
-                    <ModalInput type="number" value={form.rental_price_monthly ?? ''} onChange={v => updateField('rental_price_monthly', v ? parseFloat(v) : null)} placeholder="29.99" />
-                  </ModalField>
-                  <ModalField label="Install Fee ($)">
-                    <ModalInput type="number" value={form.install_fee ?? ''} onChange={v => updateField('install_fee', v ? parseFloat(v) : 0)} placeholder="150.00" />
-                  </ModalField>
-                  <ModalField label="Maintenance ($/month)">
-                    <ModalInput type="number" value={form.maintenance_price_monthly ?? ''} onChange={v => updateField('maintenance_price_monthly', v ? parseFloat(v) : null)} placeholder="9.99" />
-                  </ModalField>
+                  <ModalField label="Retail Price ($)"><ModalInput type="number" value={form.retail_price ?? ''} onChange={v => updateField('retail_price', v ? parseFloat(v) : null)} placeholder="899.00" /></ModalField>
+                  <ModalField label="Rental ($/month)"><ModalInput type="number" value={form.rental_price_monthly ?? ''} onChange={v => updateField('rental_price_monthly', v ? parseFloat(v) : null)} placeholder="29.99" /></ModalField>
+                  <ModalField label="Install Fee ($)"><ModalInput type="number" value={form.install_fee ?? ''} onChange={v => updateField('install_fee', v ? parseFloat(v) : 0)} placeholder="150.00" /></ModalField>
+                  <ModalField label="Maintenance ($/month)"><ModalInput type="number" value={form.maintenance_price_monthly ?? ''} onChange={v => updateField('maintenance_price_monthly', v ? parseFloat(v) : null)} placeholder="9.99" /></ModalField>
                 </div>
               </div>
-
-              {/* ── WARRANTY & FILTERS section ── */}
               <div style={{ borderTop: '1px solid #1e3a4f', paddingTop: 16 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', marginBottom: 12 }}>WARRANTY & FILTERS</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
-                  <ModalField label="Warranty (months)">
-                    <ModalInput type="number" value={form.warranty_months ?? ''} onChange={v => updateField('warranty_months', v ? parseInt(v) : 0)} placeholder="12" />
-                  </ModalField>
-                  <ModalField label="Filter Interval (months)">
-                    <ModalInput type="number" value={form.filter_interval_months ?? ''} onChange={v => updateField('filter_interval_months', v ? parseInt(v) : null)} placeholder="12" />
-                  </ModalField>
-                  <ModalField label="Buyout Formula">
-                    <ModalSelect
-                      value={form.buyout_formula || ''}
-                      onChange={v => updateField('buyout_formula', v || null)}
-                      options={[{ value: '', label: 'N/A' }, ...Object.entries(BUYOUT_LABELS).map(([k, l]) => ({ value: k, label: l }))]}
-                    />
-                  </ModalField>
+                  <ModalField label="Warranty (months)"><ModalInput type="number" value={form.warranty_months ?? ''} onChange={v => updateField('warranty_months', v ? parseInt(v) : 0)} placeholder="12" /></ModalField>
+                  <ModalField label="Filter Interval (months)"><ModalInput type="number" value={form.filter_interval_months ?? ''} onChange={v => updateField('filter_interval_months', v ? parseInt(v) : null)} placeholder="12" /></ModalField>
+                  <ModalField label="Buyout Formula"><ModalSelect value={form.buyout_formula || ''} onChange={v => updateField('buyout_formula', v || null)} options={[{ value: '', label: 'N/A' }, ...Object.entries(BUYOUT_LABELS).map(([k, l]) => ({ value: k, label: l }))]} /></ModalField>
                 </div>
               </div>
-
               {error && (
-                <div style={{
-                  padding: '10px 14px', borderRadius: 8,
-                  background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
-                  color: '#f87171', fontSize: 13,
-                }}>
-                  {error}
-                </div>
+                <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', fontSize: 13 }}>{error}</div>
               )}
             </div>
-
-            {/* Footer */}
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12,
-              padding: '16px 24px', borderTop: '1px solid #1e3a4f',
-            }}>
-              <button
-                onClick={() => { setShowForm(false); setEditingId(null); }}
-                style={{ padding: '8px 16px', fontSize: 13, color: '#64748b', background: 'none', border: 'none', cursor: 'pointer' }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                style={{
-                  padding: '10px 22px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                  background: saving ? '#0d7ea350' : '#0d7ea3',
-                  color: '#fff', fontWeight: 700, fontSize: 14, opacity: saving ? 0.5 : 1,
-                }}
-              >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, padding: '16px 24px', borderTop: '1px solid #1e3a4f' }}>
+              <button onClick={() => { setShowForm(false); setEditingId(null); }} style={{ padding: '8px 16px', fontSize: 13, color: '#64748b', background: 'none', border: 'none', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={handleSave} disabled={saving} style={{ padding: '10px 22px', borderRadius: 8, border: 'none', cursor: 'pointer', background: saving ? '#0d7ea350' : '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 14, opacity: saving ? 0.5 : 1 }}>
                 {saving ? 'Saving…' : editingId ? 'Update Product' : 'Create Product'}
               </button>
             </div>
@@ -680,8 +575,6 @@ export default function ProductCatalog() {
     </div>
   );
 }
-
-// ── Modal helpers ──────────────────────────────────────────────────────────────
 
 function ModalField({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (
@@ -694,38 +587,17 @@ function ModalField({ label, required, children }: { label: string; required?: b
   );
 }
 
-function ModalInput({ value, onChange, placeholder, type = 'text' }: {
-  value: any; onChange: (v: string) => void; placeholder?: string; type?: string;
-}) {
+function ModalInput({ value, onChange, placeholder, type = 'text' }: { value: any; onChange: (v: string) => void; placeholder?: string; type?: string }) {
   return (
-    <input
-      type={type}
-      step={type === 'number' ? '0.01' : undefined}
-      value={value}
-      onChange={e => onChange(e.target.value)}
-      placeholder={placeholder}
-      style={{
-        width: '100%', background: '#0f1923', border: '1px solid #1e3a4f',
-        color: '#e2e8f0', fontSize: 14, borderRadius: 8, padding: '10px 14px',
-        outline: 'none', boxSizing: 'border-box',
-      }}
-    />
+    <input type={type} step={type === 'number' ? '0.01' : undefined} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      style={{ width: '100%', background: '#0f1923', border: '1px solid #1e3a4f', color: '#e2e8f0', fontSize: 14, borderRadius: 8, padding: '10px 14px', outline: 'none', boxSizing: 'border-box' }} />
   );
 }
 
-function ModalSelect({ value, onChange, options }: {
-  value: string; onChange: (v: string) => void; options: { value: string; label: string }[];
-}) {
+function ModalSelect({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) {
   return (
-    <select
-      value={value}
-      onChange={e => onChange(e.target.value)}
-      style={{
-        width: '100%', background: '#0f1923', border: '1px solid #1e3a4f',
-        color: '#e2e8f0', fontSize: 14, borderRadius: 8, padding: '10px 14px',
-        outline: 'none', boxSizing: 'border-box',
-      }}
-    >
+    <select value={value} onChange={e => onChange(e.target.value)}
+      style={{ width: '100%', background: '#0f1923', border: '1px solid #1e3a4f', color: '#e2e8f0', fontSize: 14, borderRadius: 8, padding: '10px 14px', outline: 'none', boxSizing: 'border-box' }}>
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   );
