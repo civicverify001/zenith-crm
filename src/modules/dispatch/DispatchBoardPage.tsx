@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useJobsBoard } from './useJobs'
 import { JobCard } from './JobCard'
 import { JobDrawer } from './JobDrawer'
@@ -22,6 +22,17 @@ const STATUS_DOT: Record<JobStatus, string> = {
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
+
+// ── Mobile helper ─────────────────────────────────────────────
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [])
+  return isMobile
+}
 
 // ── Calendar Day Cell ─────────────────────────────────────────
 function CalendarDay({
@@ -330,9 +341,253 @@ function CalendarView({
   )
 }
 
+// ─────────────────────────────────────────────────────────────
+// MOBILE-ONLY COMPONENTS (desktop never sees these)
+// ─────────────────────────────────────────────────────────────
+
+// ── Mobile: kanban as tabbed single-column list ───────────────
+function MobileBoardView({
+  jobsByStatus,
+  searchQuery,
+  onJobClick,
+}: {
+  jobsByStatus: Partial<Record<JobStatus, Job[]>>
+  searchQuery: string
+  onJobClick: (job: Job) => void
+}) {
+  const [activeStatus, setActiveStatus] = useState<JobStatus>('scheduled')
+
+  const tabDef: { status: JobStatus; color: string; bg: string; border: string }[] = [
+    { status: 'scheduled',         color: '#0d7ea3', bg: 'rgba(13,126,163,0.15)',  border: 'rgba(13,126,163,0.4)'  },
+    { status: 'in_progress',       color: '#22d3ee', bg: 'rgba(34,211,238,0.15)', border: 'rgba(34,211,238,0.4)'  },
+    { status: 'waiting_for_stock', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.4)'  },
+    { status: 'complete',          color: '#22c55e', bg: 'rgba(34,197,94,0.15)',   border: 'rgba(34,197,94,0.4)'   },
+  ]
+
+  const jobs = jobsByStatus?.[activeStatus] || []
+  const filtered = searchQuery
+    ? jobs.filter(j =>
+        j.customer_name_snapshot.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        j.phone_snapshot.includes(searchQuery) ||
+        j.service_address_snapshot.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : jobs
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Scrollable status tabs */}
+      <div style={{ display: 'flex', gap: 6, overflowX: 'auto', flexShrink: 0, marginBottom: 12, paddingBottom: 2 }}>
+        {tabDef.map(({ status, color, bg, border }) => {
+          const count = (jobsByStatus?.[status] || []).length
+          const isActive = activeStatus === status
+          return (
+            <button
+              key={status}
+              onClick={() => setActiveStatus(status)}
+              style={{
+                flexShrink: 0,
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '8px 14px', borderRadius: 10,
+                border: `1px solid ${isActive ? border : '#1e3a4f'}`,
+                background: isActive ? bg : 'rgba(255,255,255,0.02)',
+                color: isActive ? color : '#475569',
+                cursor: 'pointer', fontSize: 12, fontWeight: isActive ? 700 : 500,
+                boxShadow: isActive ? `0 0 12px ${color}20` : 'none',
+              }}
+            >
+              <span>{JOB_STATUS_LABELS[status]}</span>
+              {count > 0 && (
+                <span style={{
+                  background: isActive ? color + '30' : 'rgba(255,255,255,0.06)',
+                  color: isActive ? color : '#64748b',
+                  borderRadius: 20, padding: '1px 6px', fontSize: 11, fontWeight: 700,
+                }}>
+                  {count}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Job list */}
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        {filtered.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '48px 0', color: '#64748b', fontSize: 13 }}>No jobs</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {filtered.map(job => (
+              <JobCard key={job.id} job={job} onClick={onJobClick} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Mobile: compact calendar grid + inline day list ───────────
+function MobileCalendarView({
+  allJobs,
+  onJobClick,
+}: {
+  allJobs: Job[]
+  onJobClick: (job: Job) => void
+}) {
+  const today = new Date()
+  const [viewDate, setViewDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1))
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null)
+
+  const year  = viewDate.getFullYear()
+  const month = viewDate.getMonth()
+
+  const firstDay     = new Date(year, month, 1).getDay()
+  const daysInMonth  = new Date(year, month + 1, 0).getDate()
+  const daysInPrev   = new Date(year, month, 0).getDate()
+
+  const cells: { date: Date; isCurrentMonth: boolean }[] = []
+  for (let i = firstDay - 1; i >= 0; i--)
+    cells.push({ date: new Date(year, month - 1, daysInPrev - i), isCurrentMonth: false })
+  for (let d = 1; d <= daysInMonth; d++)
+    cells.push({ date: new Date(year, month, d), isCurrentMonth: true })
+  const remaining = 42 - cells.length
+  for (let d = 1; d <= remaining; d++)
+    cells.push({ date: new Date(year, month + 1, d), isCurrentMonth: false })
+
+  const jobsByDate = useMemo(() => {
+    const map = new Map<string, Job[]>()
+    allJobs.forEach(job => {
+      if (!job.scheduled_date) return
+      const key = job.scheduled_date.split('T')[0]
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(job)
+    })
+    return map
+  }, [allJobs])
+
+  function dateKey(d: Date) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+  }
+
+  function isTodayFn(d: Date) {
+    return d.getFullYear() === today.getFullYear()
+      && d.getMonth() === today.getMonth()
+      && d.getDate() === today.getDate()
+  }
+
+  const monthJobs = allJobs.filter(j => {
+    if (!j.scheduled_date) return false
+    const d = new Date(j.scheduled_date)
+    return d.getFullYear() === year && d.getMonth() === month
+  })
+  const unassigned = monthJobs.filter(j => !j.assigned_technician_id && j.status === 'scheduled')
+  const selectedJobs = selectedDate ? (jobsByDate.get(dateKey(selectedDate)) || []) : []
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Month nav */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button onClick={() => setViewDate(new Date(year, month - 1, 1))}
+            style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 18, cursor: 'pointer', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 }}>←</button>
+          <span style={{ fontWeight: 700, fontSize: 14, color: '#e2e8f0', minWidth: 130, textAlign: 'center' }}>
+            {MONTHS[month]} {year}
+          </span>
+          <button onClick={() => setViewDate(new Date(year, month + 1, 1))}
+            style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 18, cursor: 'pointer', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 }}>→</button>
+        </div>
+        <button onClick={() => { setViewDate(new Date(today.getFullYear(), today.getMonth(), 1)); setSelectedDate(null) }}
+          style={{ fontSize: 11, padding: '4px 10px', background: '#1e3a4f', border: '1px solid #1e3a4f', borderRadius: 6, color: '#94a3b8', cursor: 'pointer' }}>Today</button>
+      </div>
+
+      {unassigned.length > 0 && (
+        <div style={{ marginBottom: 8, padding: '6px 12px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, fontSize: 12, color: '#f59e0b', fontWeight: 600, flexShrink: 0 }}>
+          ⚠ {unassigned.length} unassigned · {monthJobs.length} installs this month
+        </div>
+      )}
+
+      {/* Day-of-week headers */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 4, flexShrink: 0 }}>
+        {['S','M','T','W','T','F','S'].map((d, i) => (
+          <div key={i} style={{ fontSize: 10, fontWeight: 700, color: '#475569', textAlign: 'center', padding: '3px 0', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{d}</div>
+        ))}
+      </div>
+
+      {/* Compact grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, flexShrink: 0 }}>
+        {cells.map((cell, i) => {
+          const key = dateKey(cell.date)
+          const dayJobs = jobsByDate.get(key) || []
+          const isSelected = !!selectedDate && dateKey(selectedDate) === key
+          const isTod = isTodayFn(cell.date)
+          return (
+            <div
+              key={i}
+              onClick={() => setSelectedDate(prev => prev && dateKey(prev) === key ? null : cell.date)}
+              style={{
+                minHeight: 40, borderRadius: 8, cursor: 'pointer',
+                border: `1px solid ${isSelected ? '#22d3ee' : isTod ? '#0d7ea3' : dayJobs.length > 0 ? '#1e3a4f' : '#1a2535'}`,
+                background: isSelected ? 'rgba(34,211,238,0.08)' : isTod ? 'rgba(13,126,163,0.12)' : cell.isCurrentMonth ? '#162232' : 'rgba(22,34,50,0.4)',
+                padding: '4px 2px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                opacity: cell.isCurrentMonth ? 1 : 0.35,
+                boxShadow: isTod ? '0 0 0 2px rgba(13,126,163,0.4)' : isSelected ? '0 0 0 2px rgba(34,211,238,0.4)' : 'none',
+              }}
+            >
+              <span style={{
+                fontSize: 11, fontWeight: isTod ? 800 : 600,
+                color: isTod ? '#fff' : cell.isCurrentMonth ? '#cbd5e1' : '#475569',
+                width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                borderRadius: '50%', background: isTod ? '#0d7ea3' : 'transparent',
+              }}>
+                {cell.date.getDate()}
+              </span>
+              {dayJobs.length > 0 && (
+                <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
+                  {dayJobs.slice(0, 3).map((job, ji) => (
+                    <span key={ji} style={{
+                      width: 5, height: 5, borderRadius: '50%',
+                      background: job.status === 'scheduled' ? '#0d7ea3' : job.status === 'in_progress' ? '#22d3ee' : job.status === 'waiting_for_stock' ? '#f59e0b' : '#22c55e',
+                    }} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Selected day job list — scrolls below grid */}
+      <div style={{ flex: 1, overflowY: 'auto', marginTop: 14 }}>
+        {selectedDate ? (
+          <>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
+              {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+              {' · '}{selectedJobs.length} job{selectedJobs.length !== 1 ? 's' : ''}
+            </div>
+            {selectedJobs.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '24px 0', color: '#475569', fontSize: 13 }}>No installs scheduled</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {selectedJobs.map(job => (
+                  <JobCard key={job.id} job={job} onClick={onJobClick} />
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <div style={{ textAlign: 'center', padding: '20px 0', color: '#334155', fontSize: 13 }}>
+            Tap a day to see jobs
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────
 export function DispatchBoardPage() {
   const { role } = useAuth()
+  const isMobile = useIsMobile()
   const { data: jobsByStatus, isLoading, error } = useJobsBoard()
   const [selectedJob, setSelectedJob] = useState<Job | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -361,6 +616,78 @@ export function DispatchBoardPage() {
     )
   }
 
+  // ── MOBILE ────────────────────────────────────────────────
+  if (isMobile) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+        {/* Mobile header */}
+        <div style={{ flexShrink: 0, marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 18, color: '#e2e8f0' }}>Dispatch Board</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                {totalJobs} job{totalJobs !== 1 ? 's' : ''} total
+              </div>
+            </div>
+            {/* View toggle — same visual style as desktop */}
+            <div style={{ display: 'flex', alignItems: 'center', background: '#162232', border: '1px solid #1e3a4f', borderRadius: 8, padding: 3 }}>
+              <button
+                onClick={() => setView('board')}
+                style={{
+                  padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                  fontSize: 12, fontWeight: 600,
+                  background: view === 'board' ? '#0d7ea3' : 'transparent',
+                  color: view === 'board' ? '#fff' : '#64748b',
+                }}
+              >⠿ Board</button>
+              <button
+                onClick={() => setView('calendar')}
+                style={{
+                  padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                  fontSize: 12, fontWeight: 600,
+                  background: view === 'calendar' ? '#0d7ea3' : 'transparent',
+                  color: view === 'calendar' ? '#fff' : '#64748b',
+                }}
+              >📅 Cal</button>
+            </div>
+          </div>
+
+          {/* Search — board only */}
+          {view === 'board' && (
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search jobs..."
+              style={{
+                width: '100%', boxSizing: 'border-box' as const,
+                background: '#162232', border: '1px solid #1e3a4f', borderRadius: 8,
+                color: '#e2e8f0', padding: '10px 14px', fontSize: 13, outline: 'none',
+              }}
+            />
+          )}
+        </div>
+
+        {view === 'board' && (
+          <MobileBoardView
+            jobsByStatus={jobsByStatus || {}}
+            searchQuery={searchQuery}
+            onJobClick={setSelectedJob}
+          />
+        )}
+
+        {view === 'calendar' && (
+          <MobileCalendarView allJobs={allJobs} onJobClick={setSelectedJob} />
+        )}
+
+        {selectedJob && (
+          <JobDrawer job={selectedJob} onClose={() => setSelectedJob(null)} />
+        )}
+      </div>
+    )
+  }
+
+  // ── DESKTOP — original code preserved exactly ─────────────
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
