@@ -11,6 +11,7 @@ import { JOB_KEYS } from '../dispatch/useJobs'
 import { LEAD_KEYS } from './useLeads'
 import { supabase } from '../../lib/supabase'
 import { cloneQuote, updateLeadFinancingStatus, type FinancingStatus } from '../../services/quotesService'
+import { syncToCalendar } from '../../services/googleCalService'
 
 interface Props {
   lead: Lead
@@ -502,6 +503,8 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
       const newJob = await createInstallJobFromLead(lead, systemType, datetime, needsFaucetHole, { actor_id: user.id, actor_name: profile?.full_name })
       if (techId) await supabase.from('jobs').update({ assigned_technician_id: techId, assigned_at: new Date().toISOString() }).eq('id', newJob.id)
       if (notes) await supabase.from('jobs').update({ notes }).eq('id', newJob.id)
+      // Push to Google Calendar (fire and forget — does not block job creation)
+      syncToCalendar('job', newJob.id).catch(e => console.warn('Google Cal sync failed:', e))
       const actor = { actor_id: user.id, actor_name: profile?.full_name }
       const updatedLead = await moveStage(lead.id, lead.stage, 'won', actor)
       queryClient.invalidateQueries({ queryKey: JOB_KEYS.board() })
@@ -541,7 +544,6 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     setFinancingLoading(true)
     setCloneSuccess(null)
     try {
-      // Find original financed quote
       const { data: origQuote } = await supabase
         .from('quotes')
         .select('id')
@@ -562,7 +564,6 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     }
   }
 
-  // Derive display values
   const isRental = agreementData?.commercial_type === 'rental'
   const displayTotal = isRental
     ? `${formatCurrency(agreementData?.monthly_amount)}/mo`
@@ -659,9 +660,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                   className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all border"
                   style={{
                     background: financingStatus === 'pending' ? 'rgba(251,191,36,0.2)' : 'transparent',
-                    borderColor: '#fbbf24',
-                    color: '#fbbf24',
-                    opacity: financingLoading ? 0.5 : 1,
+                    borderColor: '#fbbf24', color: '#fbbf24', opacity: financingLoading ? 0.5 : 1,
                   }}
                 >
                   ⏳ Pending
@@ -694,13 +693,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 {cloneSuccess ? (
                   <div className="rounded-lg p-3 text-xs text-center" style={{ background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.3)', color: '#22d3ee' }}>
                     ✓ New {cloneSuccess.type} quote created as draft.{' '}
-                    <a
-                      href="/quotes"
-                      className="underline font-bold"
-                      style={{ color: '#22d3ee' }}
-                    >
-                      Go to Quotes →
-                    </a>
+                    <a href="/quotes" className="underline font-bold" style={{ color: '#22d3ee' }}>Go to Quotes →</a>
                   </div>
                 ) : (
                   <div className="flex gap-2">
