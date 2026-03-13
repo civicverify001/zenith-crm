@@ -507,7 +507,7 @@ function WeekCalendar({ userId, role }: { userId: string | undefined; role: stri
               {selectedEvents.visits.map((v: any) => (
                 <div
                   key={v.id}
-                  onClick={() => navigate('/leads')}
+                  onClick={() => navigate(`/leads?lead=${v.lead_id}`)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10,
                     padding: '8px 12px', borderRadius: 8, marginBottom: 4,
@@ -756,7 +756,7 @@ export function DashboardPage() {
             {upcomingVisits.slice(0, 6).map((visit: any) => {
               const isVisitToday = isToday(visit.visit_date)
               return (
-                <ActionRow key={visit.id} onClick={() => navigate('/leads')}
+                <ActionRow key={visit.id} onClick={() => navigate(`/leads?lead=${visit.lead_id}`)}
                   left={
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{visit.lead?.full_name || 'Unknown'}</div>
