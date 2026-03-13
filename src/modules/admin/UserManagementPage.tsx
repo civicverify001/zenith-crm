@@ -4,6 +4,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { ALL_PAGES, ROLE_DEFAULT_PAGES } from '../../hooks/usePermissions';
+import { fetchCalConnections, sendConnectLink, toggleCalSync, disconnectCal } from '../../services/googleCalService';
 
 interface CRMUser {
   id: string;
@@ -81,12 +82,17 @@ export default function UserManagementPage() {
   const [permSaving, setPermSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<CRMUser | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [calConnections, setCalConnections] = useState<Record<string, { email: string; is_enabled: boolean; connected_at: string }>>({});
+  const [calLoading, setCalLoading] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
       const { users } = await callAdminAPI('GET');
       setUsers(users);
+      // Load Google Calendar connections
+      const conns = await fetchCalConnections().catch(() => ({}));
+      setCalConnections(conns);
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
   }, []);
@@ -272,13 +278,14 @@ export default function UserManagementPage() {
                   <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Page Access</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Status</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Last Sign In</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Google Calendar</th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredUsers.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-16 text-slate-500">
+                    <td colSpan={7} className="text-center py-16 text-slate-500">
                       No users in this category
                     </td>
                   </tr>
@@ -349,6 +356,56 @@ export default function UserManagementPage() {
                       </td>
                       <td className="px-4 py-3 text-slate-400 text-xs">
                         {u.last_sign_in ? new Date(u.last_sign_in).toLocaleDateString() : 'Never'}
+                      </td>
+                      <td className="px-4 py-3">
+                        {(() => {
+                          const conn = calConnections[u.id];
+                          const isCalLoading = calLoading === u.id;
+                          if (conn) {
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: conn.is_enabled ? '#4ade80' : '#64748b', display: 'inline-block', flexShrink: 0 }} />
+                                  <span style={{ fontSize: 11, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
+                                    {conn.email || 'Connected'}
+                                  </span>
+                                </div>
+                                <div style={{ display: 'flex', gap: 4 }}>
+                                  <button
+                                    onClick={async () => { setCalLoading(u.id); try { await toggleCalSync(u.id); await load(); } catch(e: any) { setError(e.message); } finally { setCalLoading(null); } }}
+                                    disabled={isCalLoading}
+                                    style={{ fontSize: 10, padding: '2px 7px', borderRadius: 8, cursor: 'pointer', fontWeight: 600,
+                                      background: conn.is_enabled ? 'rgba(251,191,36,0.1)' : 'rgba(74,222,128,0.1)',
+                                      color: conn.is_enabled ? '#fbbf24' : '#4ade80',
+                                      border: `1px solid ${conn.is_enabled ? 'rgba(251,191,36,0.3)' : 'rgba(74,222,128,0.3)'}`,
+                                      opacity: isCalLoading ? 0.5 : 1 }}
+                                  >
+                                    {isCalLoading ? '...' : conn.is_enabled ? 'Pause' : 'Resume'}
+                                  </button>
+                                  <button
+                                    onClick={async () => { if (!confirm('Disconnect Google Calendar for ' + (u.full_name || u.email) + '?')) return; setCalLoading(u.id); try { await disconnectCal(u.id); await load(); } catch(e: any) { setError(e.message); } finally { setCalLoading(null); } }}
+                                    disabled={isCalLoading}
+                                    style={{ fontSize: 10, padding: '2px 7px', borderRadius: 8, cursor: 'pointer', fontWeight: 600,
+                                      background: 'rgba(248,113,113,0.08)', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)',
+                                      opacity: isCalLoading ? 0.5 : 1 }}
+                                  >
+                                    Disconnect
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return (
+                            <button
+                              onClick={() => sendConnectLink(u.id)}
+                              style={{ fontSize: 11, padding: '5px 10px', borderRadius: 8, cursor: 'pointer', fontWeight: 600,
+                                background: 'rgba(96,165,250,0.1)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.25)',
+                                whiteSpace: 'nowrap' }}
+                            >
+                              🔗 Connect
+                            </button>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-2">
