@@ -10,6 +10,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { JOB_KEYS } from '../dispatch/useJobs'
 import { LEAD_KEYS } from './useLeads'
 import { supabase } from '../../lib/supabase'
+import { cloneQuote, updateLeadFinancingStatus, type FinancingStatus } from '../../services/quotesService'
 
 interface Props {
   lead: Lead
@@ -266,6 +267,9 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   const [detectedProducts, setDetectedProducts] = useState<DetectedProduct[]>([])
   const [detectionSource, setDetectionSource] = useState<'invoice'|'quote'|'fallback'|null>(null)
   const [jobSlots, setJobSlots] = useState<JobSlot[]>([])
+  const [financingStatus, setFinancingStatus] = useState<FinancingStatus | null>(null)
+  const [financingLoading, setFinancingLoading] = useState(false)
+  const [cloneSuccess, setCloneSuccess] = useState<{ quoteId: string; type: 'rental' | 'purchase' } | null>(null)
 
   // Agreement data loaded from DB
   const [agreementData, setAgreementData] = useState<{
@@ -353,6 +357,14 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
         monthly_amount: qtData?.monthly_amount || null,
         commercial_type: agData?.commercial_type || qtData?.commercial_type || null,
       })
+
+      // Load financing_status from lead
+      const { data: leadData } = await supabase
+        .from('leads')
+        .select('financing_status')
+        .eq('id', lead.id)
+        .maybeSingle()
+      if (leadData?.financing_status) setFinancingStatus(leadData.financing_status as FinancingStatus)
     }
     loadAgreementData()
   }, [lead.id])
@@ -513,6 +525,43 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
 
   const canSubmit = !submitting && !loadingAgreement && !!scheduledDate && scheduledHour !== null
 
+  async function handleFinancingStatus(status: FinancingStatus) {
+    setFinancingLoading(true)
+    try {
+      await updateLeadFinancingStatus(lead.id, status)
+      setFinancingStatus(status)
+    } catch (e: any) {
+      alert('Failed to update financing status: ' + e.message)
+    } finally {
+      setFinancingLoading(false)
+    }
+  }
+
+  async function handleCloneQuote(newType: 'rental' | 'purchase') {
+    setFinancingLoading(true)
+    setCloneSuccess(null)
+    try {
+      // Find original financed quote
+      const { data: origQuote } = await supabase
+        .from('quotes')
+        .select('id')
+        .eq('lead_id', lead.id)
+        .eq('commercial_type', 'financed')
+        .in('status', ['signed', 'accepted'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (!origQuote) throw new Error('Original financed quote not found')
+      const newId = await cloneQuote(origQuote.id, newType, lead.id)
+      setCloneSuccess({ quoteId: newId, type: newType })
+    } catch (e: any) {
+      alert('Failed to clone quote: ' + e.message)
+    } finally {
+      setFinancingLoading(false)
+    }
+  }
+
   // Derive display values
   const isRental = agreementData?.commercial_type === 'rental'
   const displayTotal = isRental
@@ -578,6 +627,105 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
             </div>
           </div>
         </div>
+
+        {/* ── Financing Status Section (financed quotes only) ── */}
+        {agreementData?.commercial_type === 'financed' && !isSalesRep && (
+          <div className="border border-pink-500/20 rounded-xl p-3 space-y-3" style={{ background: 'rgba(244,114,182,0.05)' }}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold" style={{ color: '#f472b6' }}>🏦 Financing Status</span>
+              {financingStatus && (
+                <span className="text-xs px-2 py-0.5 rounded-full font-bold"
+                  style={{
+                    background: financingStatus === 'approved' ? 'rgba(74,222,128,0.15)'
+                      : financingStatus === 'declined' ? 'rgba(248,113,113,0.15)'
+                      : 'rgba(251,191,36,0.15)',
+                    color: financingStatus === 'approved' ? '#4ade80'
+                      : financingStatus === 'declined' ? '#f87171'
+                      : '#fbbf24',
+                  }}>
+                  {financingStatus === 'approved' ? '✓ Approved'
+                    : financingStatus === 'declined' ? '✗ Declined'
+                    : '⏳ Pending'}
+                </span>
+              )}
+            </div>
+
+            {/* Status buttons — only show if not yet set or to change */}
+            {financingStatus !== 'approved' && (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleFinancingStatus('pending')}
+                  disabled={financingLoading || financingStatus === 'pending'}
+                  className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all border"
+                  style={{
+                    background: financingStatus === 'pending' ? 'rgba(251,191,36,0.2)' : 'transparent',
+                    borderColor: '#fbbf24',
+                    color: '#fbbf24',
+                    opacity: financingLoading ? 0.5 : 1,
+                  }}
+                >
+                  ⏳ Pending
+                </button>
+                <button
+                  onClick={() => handleFinancingStatus('approved')}
+                  disabled={financingLoading}
+                  className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all border"
+                  style={{ background: 'rgba(74,222,128,0.1)', borderColor: '#4ade80', color: '#4ade80', opacity: financingLoading ? 0.5 : 1 }}
+                >
+                  ✓ Approved
+                </button>
+                <button
+                  onClick={() => handleFinancingStatus('declined')}
+                  disabled={financingLoading}
+                  className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all border"
+                  style={{ background: 'rgba(248,113,113,0.1)', borderColor: '#f87171', color: '#f87171', opacity: financingLoading ? 0.5 : 1 }}
+                >
+                  ✗ Declined
+                </button>
+              </div>
+            )}
+
+            {/* Resend buttons — only when declined */}
+            {financingStatus === 'declined' && (
+              <div>
+                <div className="text-xs mb-2" style={{ color: '#94a3b8' }}>
+                  Financing declined — resend customer a new quote:
+                </div>
+                {cloneSuccess ? (
+                  <div className="rounded-lg p-3 text-xs text-center" style={{ background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.3)', color: '#22d3ee' }}>
+                    ✓ New {cloneSuccess.type} quote created as draft.{' '}
+                    <a
+                      href="/quotes"
+                      className="underline font-bold"
+                      style={{ color: '#22d3ee' }}
+                    >
+                      Go to Quotes →
+                    </a>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleCloneQuote('rental')}
+                      disabled={financingLoading}
+                      className="flex-1 py-2 rounded-lg text-xs font-bold transition-all border"
+                      style={{ background: 'rgba(34,211,238,0.1)', borderColor: '#22d3ee', color: '#22d3ee', opacity: financingLoading ? 0.5 : 1 }}
+                    >
+                      {financingLoading ? '…' : '🔄 Resend as Rental'}
+                    </button>
+                    <button
+                      onClick={() => handleCloneQuote('purchase')}
+                      disabled={financingLoading}
+                      className="flex-1 py-2 rounded-lg text-xs font-bold transition-all border"
+                      style={{ background: 'rgba(74,222,128,0.1)', borderColor: '#4ade80', color: '#4ade80', opacity: financingLoading ? 0.5 : 1 }}
+                    >
+                      {financingLoading ? '…' : '💰 Resend as Purchase'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center gap-2 pt-2 border-t border-green/10">
           <StatusBadge active={!!lead.job_created} activeLabel="Job Created" inactiveLabel="Job Pending" />
