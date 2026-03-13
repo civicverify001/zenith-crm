@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useLeadsKanban, usePipelineCounts } from './useLeads'
 import { LeadCard } from './LeadCard'
 import { CreateLeadModal } from './CreateLeadModal'
@@ -24,10 +25,26 @@ export function LeadPipelinePage() {
   const { can } = usePermissions(role)
   const { data: leadsByStage, isLoading, error } = useLeadsKanban()
   const { data: counts } = usePipelineCounts()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [showCreate, setShowCreate] = useState(false)
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+
+  // Auto-open lead panel when ?lead=<id> is in the URL
+  useEffect(() => {
+    const leadId = searchParams.get('lead')
+    if (!leadId || !leadsByStage) return
+
+    // Search all stages for this lead
+    const allLeads = Object.values(leadsByStage).flat()
+    const found = allLeads.find((l: Lead) => l.id === leadId)
+    if (found) {
+      setSelectedLead(found)
+      // Clean the param from URL without triggering navigation
+      setSearchParams({}, { replace: true })
+    }
+  }, [searchParams, leadsByStage])
 
   const totalActive = Object.values(counts || {}).reduce((a, b) => a + b, 0)
 
