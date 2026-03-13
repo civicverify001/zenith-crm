@@ -8,6 +8,8 @@ import type { UserRole } from '../types/domain.types'
 // ─── Nav items config ─────────────────────────────────────────────
 const NAV_ITEMS = [
   { path: '/dashboard',     label: 'Dashboard',      icon: '◉',  hex: '#60a5fa', soon: false, roles: ['admin','frontdesk','salesrep','technician'] as UserRole[] },
+  { path: '/schedule',      label: 'My Schedule',    icon: '🗓️', hex: '#34d399', soon: false, roles: ['admin','salesrep','technician'] as UserRole[] },
+  { path: '/schedule',      label: 'My Schedule',     icon: '🗓️', hex: '#34d399', soon: false, roles: ['admin','salesrep','technician'] as UserRole[] },
   { path: '/leads',         label: 'Pipeline',        icon: '⬡',  hex: '#22d3ee', soon: false, roles: ['admin','frontdesk','salesrep'] as UserRole[] },
   { path: '/quotes',        label: 'Quotes',          icon: '📋', hex: '#22d3ee', soon: false, roles: ['admin','frontdesk','salesrep'] as UserRole[] },
   { path: '/invoices',      label: 'Invoices',        icon: '🧾', hex: '#34d399', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
@@ -297,7 +299,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6">
+        <div className="flex-1 overflow-hidden flex flex-col min-h-0 p-4 md:p-6">
           {children}
         </div>
       </main>
