@@ -39,7 +39,7 @@ const QUOTE_TYPE_LABELS: Record<string, string> = {
   financing: 'Financing Agreement',
 }
 
-// ─── Agreement HTML generator (unchanged from original) ──────────
+// ─── Agreement HTML generator (unchanged) ────────────────────────
 function generateAgreementHTML(agreement: any, customer: any, terms: any[]): string {
   const termBlocksHTML = terms.map((block: any) => `
     <div class="section">
@@ -153,7 +153,7 @@ function generateAgreementHTML(agreement: any, customer: any, terms: any[]): str
 </html>`
 }
 
-// ─── Data hooks ─────────────────────────────────────────────
+// ─── Data hooks ──────────────────────────────────────────────────
 
 function useCustomerJobAndLead(customerId: string) {
   return useQuery({
@@ -170,68 +170,78 @@ function useCustomerJobAndLead(customerId: string) {
   })
 }
 
-// ─── FIX: query by BOTH customer_id AND lead_id, deduplicate ─────
-// Original only queried by lead_id — missed agreements written with customer_id directly
+// Dual-query helper — avoids duplicating the merge pattern
+async function mergeByIdDesc<T extends { id: string; created_at: string }>(
+  queries: Promise<{ data: T[] | null }>[]
+): Promise<T[]> {
+  const seen = new Set<string>()
+  const results: T[] = []
+  const responses = await Promise.all(queries)
+  for (const res of responses) {
+    for (const row of res.data || []) {
+      if (!seen.has(row.id)) { seen.add(row.id); results.push(row) }
+    }
+  }
+  results.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  return results
+}
+
+// Agreements — by customer_id AND lead_id
 function useAgreements(customerId: string, leadId: string | null) {
   return useQuery({
     queryKey: ['customer_agreements', customerId, leadId],
-    queryFn: async () => {
-      const seen = new Set<string>()
-      const results: any[] = []
-
-      const { data: byCustomer } = await supabase
-        .from('agreements')
-        .select('*')
-        .eq('customer_id', customerId)
-        .order('created_at', { ascending: false })
-      ;(byCustomer || []).forEach((r: any) => { if (!seen.has(r.id)) { seen.add(r.id); results.push(r) } })
-
-      if (leadId) {
-        const { data: byLead } = await supabase
-          .from('agreements')
-          .select('*')
-          .eq('lead_id', leadId)
-          .order('created_at', { ascending: false })
-        ;(byLead || []).forEach((r: any) => { if (!seen.has(r.id)) { seen.add(r.id); results.push(r) } })
-      }
-
-      results.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      return results
-    },
+    queryFn: () => mergeByIdDesc([
+      supabase.from('agreements').select('*').eq('customer_id', customerId).order('created_at', { ascending: false }) as any,
+      ...(leadId ? [supabase.from('agreements').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }) as any] : []),
+    ]),
     enabled: !!customerId,
   })
 }
 
-// ─── NEW: Accepted / signed quotes ───────────────────────────────
-function useAcceptedQuotes(customerId: string) {
+// Quotes — by customer_id AND lead_id (lead flow sets lead_id, not customer_id)
+function useAcceptedQuotes(customerId: string, leadId: string | null) {
   return useQuery({
-    queryKey: ['customer_accepted_quotes', customerId],
-    queryFn: async () => {
-      const { data } = await supabase
+    queryKey: ['customer_accepted_quotes', customerId, leadId],
+    queryFn: () => mergeByIdDesc([
+      supabase
         .from('quotes')
         .select('id, reference_number, created_at, status, commercial_type, monthly_amount, total_amount, install_fee')
         .eq('customer_id', customerId)
         .in('status', ['accepted', 'signed'])
-        .order('created_at', { ascending: false })
-      return data || []
-    },
+        .order('created_at', { ascending: false }) as any,
+      ...(leadId ? [
+        supabase
+          .from('quotes')
+          .select('id, reference_number, created_at, status, commercial_type, monthly_amount, total_amount, install_fee')
+          .eq('lead_id', leadId)
+          .in('status', ['accepted', 'signed'])
+          .order('created_at', { ascending: false }) as any,
+      ] : []),
+    ]),
     enabled: !!customerId,
   })
 }
 
-// ─── NEW: Paid invoices ───────────────────────────────────────────
-function usePaidInvoices(customerId: string) {
+// Invoices — by customer_id AND lead_id
+function usePaidInvoices(customerId: string, leadId: string | null) {
   return useQuery({
-    queryKey: ['customer_paid_invoices', customerId],
-    queryFn: async () => {
-      const { data } = await supabase
+    queryKey: ['customer_paid_invoices', customerId, leadId],
+    queryFn: () => mergeByIdDesc([
+      supabase
         .from('invoices')
         .select('id, reference_number, created_at, paid_at, status, total_amount, amount_paid')
         .eq('customer_id', customerId)
         .in('status', ['paid', 'partial'])
-        .order('paid_at', { ascending: false })
-      return data || []
-    },
+        .order('paid_at', { ascending: false }) as any,
+      ...(leadId ? [
+        supabase
+          .from('invoices')
+          .select('id, reference_number, created_at, paid_at, status, total_amount, amount_paid')
+          .eq('lead_id', leadId)
+          .in('status', ['paid', 'partial'])
+          .order('paid_at', { ascending: false }) as any,
+      ] : []),
+    ]),
     enabled: !!customerId,
   })
 }
@@ -292,15 +302,17 @@ export function CustomerDocumentsTab({ customerId }: Props) {
   const { data: proofs, isLoading: proofsLoading } = useComplianceProofs(customerId)
   const { data: refs } = useCustomerJobAndLead(customerId)
 
-  const { data: agreements    = [] } = useAgreements(customerId, refs?.lead_id || null)
-  const { data: acceptedQuotes = [] } = useAcceptedQuotes(customerId)
-  const { data: paidInvoices   = [] } = usePaidInvoices(customerId)
+  const leadId = refs?.lead_id || null
+
+  const { data: agreements     = [] } = useAgreements(customerId, leadId)
+  const { data: acceptedQuotes = [] } = useAcceptedQuotes(customerId, leadId)
+  const { data: paidInvoices   = [] } = usePaidInvoices(customerId, leadId)
   const { data: formResponses  = [] } = useJobFormResponses(refs?.job_id || null)
   const { data: signatures     = [] } = useJobSignatures(refs?.job_id || null)
   const { data: approvedPhotos = [] } = useApprovedJobPhotos(refs?.job_id || null)
 
-  const [reviewModal, setReviewModal] = useState<any>(null)
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
+  const [reviewModal, setReviewModal]   = useState<any>(null)
+  const [lightboxUrl, setLightboxUrl]   = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
 
   async function handleDownloadAgreement(agr: any) {
@@ -344,13 +356,13 @@ export function CustomerDocumentsTab({ customerId }: Props) {
   const pendingProofs  = allProofs.filter(p => p.review_status === 'pending')
   const reviewedProofs = allProofs.filter(p => p.review_status !== 'pending')
 
-  const hasAgreements   = agreements.length > 0
-  const hasQuotes       = acceptedQuotes.length > 0
-  const hasInvoices     = paidInvoices.length > 0
-  const hasForms        = formResponses.length > 0
-  const hasSignatures   = signatures.length > 0
-  const hasPhotos       = approvedPhotos.length > 0
-  const hasAnything     = allProofs.length > 0 || hasAgreements || hasQuotes || hasInvoices || hasForms || hasSignatures || hasPhotos
+  const hasAgreements  = agreements.length > 0
+  const hasQuotes      = acceptedQuotes.length > 0
+  const hasInvoices    = paidInvoices.length > 0
+  const hasForms       = formResponses.length > 0
+  const hasSignatures  = signatures.length > 0
+  const hasPhotos      = approvedPhotos.length > 0
+  const hasAnything    = allProofs.length > 0 || hasAgreements || hasQuotes || hasInvoices || hasForms || hasSignatures || hasPhotos
 
   return (
     <div className="space-y-5">
@@ -607,7 +619,7 @@ export function CustomerDocumentsTab({ customerId }: Props) {
   )
 }
 
-// ─── Sub-components ─────────────────────────────────────────────
+// ─── Sub-components ──────────────────────────────────────────────
 
 function DocSection({ title, icon, count, urgentColor, children }: {
   title: string; icon: string; count: number; urgentColor?: boolean; children: React.ReactNode
