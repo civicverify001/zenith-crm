@@ -782,7 +782,8 @@ export function QuoteReviewPage() {
   useEffect(() => {
     if (searchParams.get('paid') === '1') {
       if (token) {
-        supabase.from('quotes').select('*, customer:customers(full_name, email, phone, address, city, state, zip)')
+        supabase.from('quotes').select('*')
+  .eq('public_token', token).maybeSingle()
           .eq('public_token', token).maybeSingle()
           .then(async ({ data }) => {
             if (data) {
