@@ -34,12 +34,12 @@ const REVIEW_STYLES: Record<string, { color: string; label: string }> = {
 }
 
 const QUOTE_TYPE_LABELS: Record<string, string> = {
-  rental: 'Rental Agreement',
-  purchase: 'Purchase Agreement',
+  rental:    'Rental Agreement',
+  purchase:  'Purchase Agreement',
   financing: 'Financing Agreement',
 }
 
-// ─── Agreement HTML generator (mirrors QuoteReviewPage) ──────────
+// ─── Agreement HTML generator (unchanged from original) ──────────
 function generateAgreementHTML(agreement: any, customer: any, terms: any[]): string {
   const termBlocksHTML = terms.map((block: any) => `
     <div class="section">
@@ -85,10 +85,7 @@ function generateAgreementHTML(agreement: any, customer: any, terms: any[]): str
     .sig-name { font-size: 22px; font-style: italic; font-family: Georgia, serif; color: #0a2540; border-bottom: 1px solid #334155; padding-bottom: 6px; margin-bottom: 8px; min-height: 36px; }
     .sig-meta { font-size: 11px; color: #64748b; }
     .footer { margin-top: 32px; text-align: center; font-size: 10px; color: #94a3b8; }
-    @media print {
-      body { padding: 20px; }
-      .no-print { display: none !important; }
-    }
+    @media print { body { padding: 20px; } .no-print { display: none !important; } }
   </style>
 </head>
 <body>
@@ -98,19 +95,16 @@ function generateAgreementHTML(agreement: any, customer: any, terms: any[]): str
     </button>
     <p style="margin-top:8px;font-size:11px;color:#64748b;">Use your browser's "Save as PDF" option when printing</p>
   </div>
-
   <div class="header">
     <h1>ZENITH PURE SOLUTIONS LLC</h1>
     <p>6951 E 30th St, Suite B · Indianapolis, IN 46219</p>
     <p>(317) 690-4172 · zenithpuresolutions.com</p>
   </div>
-
   <div class="subheader">
     <div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">Legal Agreement</div>
     <h2>Residential Equipment Rental Agreement</h2>
     <div class="agnum">${agreement.agreement_number}</div>
   </div>
-
   <div class="parties">
     <div>
       <div class="party-label">Company</div>
@@ -123,31 +117,17 @@ function generateAgreementHTML(agreement: any, customer: any, terms: any[]): str
       <div class="party-address">${customer?.address || ''}<br/>${customer?.city || ''}, ${customer?.state || ''} ${customer?.zip || ''}</div>
     </div>
   </div>
-
   <div class="financials">
-    <div>
-      <div class="fin-label">Monthly Payment</div>
-      <div class="fin-value">${fmt(agreement.monthly_amount || 0)}/mo</div>
-    </div>
-    <div>
-      <div class="fin-label">Setup Fee (one-time)</div>
-      <div class="fin-value">${fmt(agreement.install_fee || 0)}</div>
-    </div>
-    <div>
-      <div class="fin-label">Initial Term</div>
-      <div class="fin-value">36 months</div>
-    </div>
+    <div><div class="fin-label">Monthly Payment</div><div class="fin-value">${fmt(agreement.monthly_amount || 0)}/mo</div></div>
+    <div><div class="fin-label">Setup Fee (one-time)</div><div class="fin-value">${fmt(agreement.install_fee || 0)}</div></div>
+    <div><div class="fin-label">Initial Term</div><div class="fin-value">36 months</div></div>
   </div>
-
   <div class="notice">By signing, you agree to all terms including the binding arbitration clause in Article IX.</div>
-
   <div class="intro">
     This Agreement is entered into as of <strong>${today()}</strong> between
     <strong>Zenith Pure Solutions LLC</strong> ("Company") and <strong>${customer?.full_name || ''}</strong> ("Customer").
   </div>
-
   ${termBlocksHTML}
-
   <div class="signatures">
     <div style="font-weight:bold;font-size:13px;margin-bottom:4px;">IN WITNESS WHEREOF</div>
     <p style="font-size:11px;color:#64748b;margin-bottom:24px;">Executed as of ${today()}.</p>
@@ -164,7 +144,6 @@ function generateAgreementHTML(agreement: any, customer: any, terms: any[]): str
       </div>
     </div>
   </div>
-
   <div class="footer">
     <p>Zenith Pure Solutions LLC · 6951 E 30th St, Suite B, Indianapolis, IN 46219</p>
     <p>(317) 690-4172 · info@zenithpuresolutions.com · zenithpuresolutions.com</p>
@@ -191,19 +170,69 @@ function useCustomerJobAndLead(customerId: string) {
   })
 }
 
-function useAgreements(leadId: string | null) {
+// ─── FIX: query by BOTH customer_id AND lead_id, deduplicate ─────
+// Original only queried by lead_id — missed agreements written with customer_id directly
+function useAgreements(customerId: string, leadId: string | null) {
   return useQuery({
-    queryKey: ['customer_agreements', leadId],
+    queryKey: ['customer_agreements', customerId, leadId],
     queryFn: async () => {
-      if (!leadId) return []
-      const { data } = await supabase
+      const seen = new Set<string>()
+      const results: any[] = []
+
+      const { data: byCustomer } = await supabase
         .from('agreements')
         .select('*')
-        .eq('lead_id', leadId)
+        .eq('customer_id', customerId)
+        .order('created_at', { ascending: false })
+      ;(byCustomer || []).forEach((r: any) => { if (!seen.has(r.id)) { seen.add(r.id); results.push(r) } })
+
+      if (leadId) {
+        const { data: byLead } = await supabase
+          .from('agreements')
+          .select('*')
+          .eq('lead_id', leadId)
+          .order('created_at', { ascending: false })
+        ;(byLead || []).forEach((r: any) => { if (!seen.has(r.id)) { seen.add(r.id); results.push(r) } })
+      }
+
+      results.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      return results
+    },
+    enabled: !!customerId,
+  })
+}
+
+// ─── NEW: Accepted / signed quotes ───────────────────────────────
+function useAcceptedQuotes(customerId: string) {
+  return useQuery({
+    queryKey: ['customer_accepted_quotes', customerId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('quotes')
+        .select('id, reference_number, created_at, status, commercial_type, monthly_amount, total_amount, install_fee')
+        .eq('customer_id', customerId)
+        .in('status', ['accepted', 'signed'])
         .order('created_at', { ascending: false })
       return data || []
     },
-    enabled: !!leadId,
+    enabled: !!customerId,
+  })
+}
+
+// ─── NEW: Paid invoices ───────────────────────────────────────────
+function usePaidInvoices(customerId: string) {
+  return useQuery({
+    queryKey: ['customer_paid_invoices', customerId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('invoices')
+        .select('id, reference_number, created_at, paid_at, status, total_amount, amount_paid')
+        .eq('customer_id', customerId)
+        .in('status', ['paid', 'partial'])
+        .order('paid_at', { ascending: false })
+      return data || []
+    },
+    enabled: !!customerId,
   })
 }
 
@@ -256,16 +285,20 @@ function useApprovedJobPhotos(jobId: string | null) {
   })
 }
 
-// ─── Component ──────────────────────────────────────────────
+// ─── Main component ──────────────────────────────────────────────
 
 export function CustomerDocumentsTab({ customerId }: Props) {
   const { role } = useAuth()
   const { data: proofs, isLoading: proofsLoading } = useComplianceProofs(customerId)
   const { data: refs } = useCustomerJobAndLead(customerId)
-  const { data: agreements = [] } = useAgreements(refs?.lead_id || null)
-  const { data: formResponses = [] } = useJobFormResponses(refs?.job_id || null)
-  const { data: signatures = [] } = useJobSignatures(refs?.job_id || null)
+
+  const { data: agreements    = [] } = useAgreements(customerId, refs?.lead_id || null)
+  const { data: acceptedQuotes = [] } = useAcceptedQuotes(customerId)
+  const { data: paidInvoices   = [] } = usePaidInvoices(customerId)
+  const { data: formResponses  = [] } = useJobFormResponses(refs?.job_id || null)
+  const { data: signatures     = [] } = useJobSignatures(refs?.job_id || null)
   const { data: approvedPhotos = [] } = useApprovedJobPhotos(refs?.job_id || null)
+
   const [reviewModal, setReviewModal] = useState<any>(null)
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
@@ -273,7 +306,6 @@ export function CustomerDocumentsTab({ customerId }: Props) {
   async function handleDownloadAgreement(agr: any) {
     setDownloadingId(agr.id)
     try {
-      // Use terms_snapshot if available, otherwise fetch from DB
       let terms: any[] = agr.terms_snapshot?.blocks || []
       if (!terms.length) {
         const { data: fetchedTerms } = await supabase
@@ -284,18 +316,13 @@ export function CustomerDocumentsTab({ customerId }: Props) {
           .order('sort_order')
         terms = fetchedTerms || []
       }
-
-      // Customer data from refs (already has address fields)
-      const customer = refs
-
-      const html = generateAgreementHTML(agr, customer, terms)
+      const html = generateAgreementHTML(agr, refs, terms)
       const win = window.open('', '_blank')
       if (win) {
         win.document.write(html)
         win.document.close()
         setTimeout(() => win.print(), 600)
       } else {
-        // Fallback: blob download
         const blob = new Blob([html], { type: 'text/html' })
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
@@ -313,15 +340,17 @@ export function CustomerDocumentsTab({ customerId }: Props) {
 
   if (proofsLoading) return <p className="text-sm text-muted text-center py-8">Loading documents...</p>
 
-  const allProofs = (proofs || []) as any[]
-  const pendingProofs = allProofs.filter(p => p.review_status === 'pending')
+  const allProofs      = (proofs || []) as any[]
+  const pendingProofs  = allProofs.filter(p => p.review_status === 'pending')
   const reviewedProofs = allProofs.filter(p => p.review_status !== 'pending')
 
-  const hasAgreements = agreements.length > 0
-  const hasForms = formResponses.length > 0
-  const hasSignatures = signatures.length > 0
-  const hasPhotos = approvedPhotos.length > 0
-  const hasAnything = allProofs.length > 0 || hasAgreements || hasForms || hasSignatures || hasPhotos
+  const hasAgreements   = agreements.length > 0
+  const hasQuotes       = acceptedQuotes.length > 0
+  const hasInvoices     = paidInvoices.length > 0
+  const hasForms        = formResponses.length > 0
+  const hasSignatures   = signatures.length > 0
+  const hasPhotos       = approvedPhotos.length > 0
+  const hasAnything     = allProofs.length > 0 || hasAgreements || hasQuotes || hasInvoices || hasForms || hasSignatures || hasPhotos
 
   return (
     <div className="space-y-5">
@@ -344,17 +373,12 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                   }`}>
                     {agr.signed_at ? 'Signed' : 'Pending'}
                   </span>
-                  {/* ── Download button — signed agreements only ── */}
                   {agr.signed_at && (
                     <button
                       onClick={() => handleDownloadAgreement(agr)}
                       disabled={downloadingId === agr.id}
                       className="text-xs px-2 py-0.5 rounded-lg font-semibold disabled:opacity-50 transition-all"
-                      style={{
-                        backgroundColor: 'rgba(56,189,248,0.12)',
-                        color: '#38bdf8',
-                        border: '1px solid rgba(56,189,248,0.25)',
-                      }}
+                      style={{ backgroundColor: 'rgba(56,189,248,0.12)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.25)' }}
                       title="Download signed agreement as PDF"
                     >
                       {downloadingId === agr.id ? '…' : '⬇ PDF'}
@@ -363,14 +387,14 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                 </div>
               </div>
               <div className="text-xs text-muted space-y-0.5">
-                {agr.agreement_number && <div className="text-slate-400 font-medium">{agr.agreement_number}</div>}
-                {agr.signed_at && <div>Signed: {formatDateTime(agr.signed_at)}</div>}
-                {agr.signed_by_rep && <div>Rep: {agr.signed_by_rep}</div>}
-                {agr.monthly_amount && <div>Monthly: ${agr.monthly_amount}</div>}
-                {agr.total_amount && <div>Total: ${agr.total_amount}</div>}
+                {agr.agreement_number    && <div className="text-slate-400 font-medium">{agr.agreement_number}</div>}
+                {agr.signed_at          && <div>Signed: {formatDateTime(agr.signed_at)}</div>}
+                {agr.signed_by_rep      && <div>Rep: {agr.signed_by_rep}</div>}
+                {agr.monthly_amount     && <div>Monthly: ${agr.monthly_amount}</div>}
+                {agr.total_amount       && <div>Total: ${agr.total_amount}</div>}
                 {agr.rental_term_months && <div>Term: {agr.rental_term_months} months</div>}
-                {agr.deposit_amount && <div>Deposit: ${agr.deposit_amount} ({agr.deposit_method || 'N/A'})</div>}
-                {agr.install_address && <div>Install: {agr.install_address}</div>}
+                {agr.deposit_amount     && <div>Deposit: ${agr.deposit_amount} ({agr.deposit_method || 'N/A'})</div>}
+                {agr.install_address    && <div>Install: {agr.install_address}</div>}
               </div>
               {agr.customer_signature && (
                 <div className="mt-2">
@@ -383,6 +407,61 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                   />
                 </div>
               )}
+            </DocCard>
+          ))}
+        </DocSection>
+      )}
+
+      {/* ─── Accepted Quotes ─────────────────────────────── */}
+      {hasQuotes && (
+        <DocSection title="Accepted Quotes" icon="📋" count={acceptedQuotes.length}>
+          {(acceptedQuotes as any[]).map((q: any) => (
+            <DocCard key={q.id}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">📋</span>
+                  <span className="text-sm font-medium text-white">
+                    {q.commercial_type === 'rental' ? 'Rental Quote' : q.commercial_type === 'financed' ? 'Financed Quote' : 'Purchase Quote'}
+                  </span>
+                </div>
+                <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                  style={{ backgroundColor: 'rgba(56,189,248,0.15)', color: '#38bdf8' }}>
+                  {q.status === 'signed' ? 'Signed' : 'Accepted'}
+                </span>
+              </div>
+              <div className="text-xs text-muted space-y-0.5">
+                {q.reference_number && <div className="text-slate-400 font-medium">{q.reference_number}</div>}
+                {q.created_at       && <div>Date: {formatDateTime(q.created_at)}</div>}
+                {q.monthly_amount   && <div>Monthly: ${q.monthly_amount}/mo</div>}
+                {q.total_amount     && <div>Total: ${q.total_amount}</div>}
+                {q.install_fee      && <div>Install fee: ${q.install_fee}</div>}
+              </div>
+            </DocCard>
+          ))}
+        </DocSection>
+      )}
+
+      {/* ─── Paid Invoices ───────────────────────────────── */}
+      {hasInvoices && (
+        <DocSection title="Paid Invoices" icon="🧾" count={paidInvoices.length}>
+          {(paidInvoices as any[]).map((inv: any) => (
+            <DocCard key={inv.id}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">🧾</span>
+                  <span className="text-sm font-medium text-white">Invoice</span>
+                </div>
+                <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                  style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80' }}>
+                  {inv.status === 'partial' ? 'Partial' : 'Paid'}
+                </span>
+              </div>
+              <div className="text-xs text-muted space-y-0.5">
+                {inv.reference_number && <div className="text-slate-400 font-medium">{inv.reference_number}</div>}
+                {inv.paid_at          && <div>Paid: {formatDateTime(inv.paid_at)}</div>}
+                {inv.total_amount     && <div>Total: ${inv.total_amount}</div>}
+                {inv.amount_paid      && <div>Amount paid: ${inv.amount_paid}</div>}
+              </div>
             </DocCard>
           ))}
         </DocSection>
@@ -406,9 +485,7 @@ export function CustomerDocumentsTab({ customerId }: Props) {
               </div>
               <div className="text-xs text-muted space-y-0.5">
                 <div>Submitted: {formatDateTime(form.submitted_at)}</div>
-                {form.response_data?.customer_name && (
-                  <div>Signed by: {form.response_data.customer_name}</div>
-                )}
+                {form.response_data?.customer_name && <div>Signed by: {form.response_data.customer_name}</div>}
               </div>
               {form.customer_signature_url && (
                 <div className="mt-2">
@@ -501,7 +578,7 @@ export function CustomerDocumentsTab({ customerId }: Props) {
           <div className="text-3xl mb-2">📎</div>
           <div className="text-sm text-muted">No documents on file yet.</div>
           <div className="text-xs text-muted mt-1">
-            Agreements, handover records, consent signatures, and compliance proofs will appear here.
+            Agreements, quotes, invoices, handover records, consent signatures, and compliance proofs will appear here.
           </div>
         </div>
       )}
@@ -530,7 +607,7 @@ export function CustomerDocumentsTab({ customerId }: Props) {
   )
 }
 
-// ─── Sub-components ─────────────────────────────────────────
+// ─── Sub-components ─────────────────────────────────────────────
 
 function DocSection({ title, icon, count, urgentColor, children }: {
   title: string; icon: string; count: number; urgentColor?: boolean; children: React.ReactNode
@@ -546,9 +623,7 @@ function DocSection({ title, icon, count, urgentColor, children }: {
           urgentColor ? 'bg-amber-500/20 text-amber-400' : 'bg-gray-700 text-gray-300'
         }`}>{count}</span>
       </div>
-      <div className="divide-y divide-border/30">
-        {children}
-      </div>
+      <div className="divide-y divide-border/30">{children}</div>
     </div>
   )
 }
@@ -559,7 +634,6 @@ function DocCard({ children }: { children: React.ReactNode }) {
 
 function ProofCard({ proof, canReview, onReview }: { proof: any; canReview: boolean; onReview?: () => void }) {
   const reviewStyle = REVIEW_STYLES[proof.review_status] || REVIEW_STYLES.pending
-
   return (
     <DocCard>
       <div className="flex items-center justify-between mb-1">
@@ -570,9 +644,8 @@ function ProofCard({ proof, canReview, onReview }: { proof: any; canReview: bool
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{
-            backgroundColor: `${reviewStyle.color}20`, color: reviewStyle.color,
-          }}>
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+            style={{ backgroundColor: `${reviewStyle.color}20`, color: reviewStyle.color }}>
             {reviewStyle.label}
           </span>
           {canReview && proof.review_status === 'pending' && onReview && (
