@@ -12,6 +12,7 @@ import PublicTermsPage from '../modules/public/PublicTermsPage'
 import InventoryPage from '../modules/inventory/InventoryPage'
 import UserManagementPage from '../modules/admin/UserManagementPage'
 import { MySchedulePage } from '../modules/schedule/MySchedulePage'
+import { ConnectCalendarPage } from '../modules/schedule/ConnectCalendarPage'
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
@@ -155,6 +156,7 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
 
         {/* Schedule — all roles */}
         <Route path="/schedule" element={<MySchedulePage />} />
+        <Route path="/connect-calendar" element={<ConnectCalendarPage />} />
 
         {/* Pipeline */}
         <Route path="/leads" element={guard('/leads', <LeadPipelinePage />)} />
