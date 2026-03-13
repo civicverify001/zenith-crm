@@ -8,8 +8,7 @@ import type { UserRole } from '../types/domain.types'
 // ─── Nav items config ─────────────────────────────────────────────
 const NAV_ITEMS = [
   { path: '/dashboard',     label: 'Dashboard',      icon: '◉',  hex: '#60a5fa', soon: false, roles: ['admin','frontdesk','salesrep','technician'] as UserRole[] },
-  { path: '/schedule',      label: 'My Schedule',    icon: '🗓️', hex: '#34d399', soon: false, roles: ['admin','salesrep','technician'] as UserRole[] },
-  { path: '/schedule',      label: 'My Schedule',     icon: '🗓️', hex: '#34d399', soon: false, roles: ['admin','salesrep','technician'] as UserRole[] },
+  { path: '/schedule',      label: 'My Schedule',    icon: '🗓️', hex: '#34d399', soon: false, roles: ['admin','frontdesk','salesrep','technician'] as UserRole[] },
   { path: '/leads',         label: 'Pipeline',        icon: '⬡',  hex: '#22d3ee', soon: false, roles: ['admin','frontdesk','salesrep'] as UserRole[] },
   { path: '/quotes',        label: 'Quotes',          icon: '📋', hex: '#22d3ee', soon: false, roles: ['admin','frontdesk','salesrep'] as UserRole[] },
   { path: '/invoices',      label: 'Invoices',        icon: '🧾', hex: '#34d399', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
