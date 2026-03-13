@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useJob, useJobActivity, useUpdateJobStatus } from '../dispatch/useJobs'
 import { useAuth } from '../../hooks/useAuth'
@@ -36,11 +36,18 @@ function formatDate(str: string | null) {
   })
 }
 
+function useIsMobile() {
+  const [v, setV] = useState(window.innerWidth < 768)
+  useEffect(() => { const h = () => setV(window.innerWidth < 768); window.addEventListener('resize', h); return () => window.removeEventListener('resize', h) }, [])
+  return v
+}
+
 export function InstallationDetailPage() {
   const { jobId } = useParams<{ jobId: string }>()
   const navigate = useNavigate()
   const { user, profile } = useAuth()
   const qc = useQueryClient()
+  const mob = useIsMobile()
 
   const { data: fetchedJob, isLoading, error } = useJob(jobId || '')
   const { mutateAsync: updateStatus, isPending: statusPending } = useUpdateJobStatus()
@@ -236,6 +243,7 @@ export function InstallationDetailPage() {
         flexWrap: 'wrap',
         gap: 8,
         alignItems: 'center',
+        flexDirection: mob ? 'column' : 'row',
         background: '#0f1923',
       }}>
         {currentJob.status === 'scheduled' && (
@@ -246,6 +254,7 @@ export function InstallationDetailPage() {
               fontSize: 13, padding: '9px 18px', borderRadius: 8, fontWeight: 600, cursor: 'pointer',
               backgroundColor: 'rgba(6,182,212,0.15)', color: '#22d3ee', border: '1px solid rgba(6,182,212,0.3)',
               opacity: statusPending ? 0.5 : 1, whiteSpace: 'nowrap',
+              ...(mob ? { alignSelf: 'stretch', textAlign: 'center' } : {}),
             }}
           >
             🔧 Start Installation
@@ -253,7 +262,7 @@ export function InstallationDetailPage() {
         )}
 
         {currentJob.status === 'in_progress' && canMarkComplete && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', ...(mob ? { width: '100%' } : {}) }}>
             {canComplete ? (
               <MarkCompleteButton
                 jobId={currentJob.id}
@@ -287,7 +296,7 @@ export function InstallationDetailPage() {
         )}
 
         {currentJob.status === 'in_progress' && !canMarkComplete && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', ...(mob ? { width: '100%' } : {}) }}>
             <button
               onClick={() => handleStatusChange('complete')}
               disabled={statusPending || !canComplete}
@@ -313,7 +322,7 @@ export function InstallationDetailPage() {
         )}
 
         {currentJob.status === 'complete' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', ...(mob ? { width: '100%' } : {}) }}>
             <div style={{ color: '#4ade80', fontSize: 13, fontWeight: 600 }}>
               ✅ Complete — {formatDate(currentJob.completed_at)}
             </div>
@@ -361,7 +370,7 @@ export function InstallationDetailPage() {
         )}
 
         {/* Date chips */}
-        <div style={{ display: 'flex', gap: 8, marginLeft: 'auto', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, marginLeft: mob ? 0 : 'auto', flexWrap: 'wrap', alignItems: 'center' }}>
           {currentJob.scheduled_date && (
             <span style={{ color: '#64748b', fontSize: 12 }}>
               📅 {new Date(currentJob.scheduled_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
