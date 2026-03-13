@@ -11,6 +11,7 @@ import AdminSettingsPage from '../modules/admin/AdminSettingsPage'
 import PublicTermsPage from '../modules/public/PublicTermsPage'
 import InventoryPage from '../modules/inventory/InventoryPage'
 import UserManagementPage from '../modules/admin/UserManagementPage'
+import { MySchedulePage } from '../modules/schedule/MySchedulePage'
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
@@ -151,6 +152,9 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+
+        {/* Schedule — all roles */}
+        <Route path="/schedule" element={<MySchedulePage />} />
 
         {/* Pipeline */}
         <Route path="/leads" element={guard('/leads', <LeadPipelinePage />)} />
