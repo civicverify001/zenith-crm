@@ -6,6 +6,23 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 
+// ─── Hearth apply URL (pre-filled via query params) ───────────
+const HEARTH_APPLY_URL = 'https://app.gethearth.com/partners/zenith-pure-solutions-llc/kuldeep/apply'
+
+function buildHearthUrl(customer: Customer | undefined, amount: number): string {
+  if (!customer) return HEARTH_APPLY_URL
+  const nameParts = (customer.full_name || '').trim().split(' ')
+  const firstName = nameParts[0] || ''
+  const lastName = nameParts.slice(1).join(' ') || ''
+  const params = new URLSearchParams()
+  if (firstName) params.set('firstName', firstName)
+  if (lastName) params.set('lastName', lastName)
+  if (customer.email) params.set('email', customer.email)
+  if (customer.phone) params.set('phone', customer.phone.replace(/\D/g, ''))
+  if (amount > 0) params.set('amount', String(Math.round(amount)))
+  return `${HEARTH_APPLY_URL}?${params.toString()}`
+}
+
 // ─── Types ───────────────────────────────────────────────────────
 interface LineItem {
   id: string
@@ -85,9 +102,9 @@ interface Invoice {
 type FlowStep =
   | 'loading' | 'error' | 'expired' | 'already_complete'
   | 'view_quote' | 'view_agreement' | 'view_invoice'
-  | 'payment_choice'          // purchase only — customer picks 50% or full
-  | 'stripe_card_save'        // rental only — save card, no charge
-  | 'stripe_purchase_payment' // purchase only — redirect to Stripe
+  | 'payment_choice'
+  | 'stripe_card_save'
+  | 'stripe_purchase_payment'
   | 'hearth_redirect' | 'complete'
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -157,19 +174,16 @@ function generateAgreementHTML(agreement: Agreement, customer: Customer | undefi
     </button>
     <p style="margin-top:8px;font-size:11px;color:#64748b;">Use your browser's "Save as PDF" option when printing</p>
   </div>
-
   <div class="header">
     <h1>ZENITH PURE SOLUTIONS LLC</h1>
     <p>6951 E 30th St, Suite B · Indianapolis, IN 46219</p>
     <p>(317) 690-4172 · zenithpuresolutions.com</p>
   </div>
-
   <div class="subheader">
     <div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">Legal Agreement</div>
     <h2>Residential Equipment Rental Agreement</h2>
     <div class="agnum">${agreement.agreement_number}</div>
   </div>
-
   <div class="parties">
     <div>
       <div class="party-label">Company</div>
@@ -182,31 +196,17 @@ function generateAgreementHTML(agreement: Agreement, customer: Customer | undefi
       <div class="party-address">${customer?.address || ''}<br/>${customer?.city || ''}, ${customer?.state || ''} ${customer?.zip || ''}</div>
     </div>
   </div>
-
   <div class="financials">
-    <div>
-      <div class="fin-label">Monthly Payment</div>
-      <div class="fin-value">${fmt(agreement.monthly_amount)}/mo</div>
-    </div>
-    <div>
-      <div class="fin-label">Setup Fee (one-time)</div>
-      <div class="fin-value">${fmt(agreement.install_fee)}</div>
-    </div>
-    <div>
-      <div class="fin-label">Initial Term</div>
-      <div class="fin-value">36 months</div>
-    </div>
+    <div><div class="fin-label">Monthly Payment</div><div class="fin-value">${fmt(agreement.monthly_amount)}/mo</div></div>
+    <div><div class="fin-label">Setup Fee (one-time)</div><div class="fin-value">${fmt(agreement.install_fee)}</div></div>
+    <div><div class="fin-label">Initial Term</div><div class="fin-value">36 months</div></div>
   </div>
-
   <div class="notice">By signing, you agree to all terms including the binding arbitration clause in Article IX.</div>
-
   <div class="intro">
     This Agreement is entered into as of <strong>${today()}</strong> between
     <strong>Zenith Pure Solutions LLC</strong> ("Company") and <strong>${customer?.full_name || ''}</strong> ("Customer").
   </div>
-
   ${termBlocksHTML}
-
   <div class="signatures">
     <div style="font-weight:bold;font-size:13px;margin-bottom:4px;">IN WITNESS WHEREOF</div>
     <p style="font-size:11px;color:#64748b;margin-bottom:24px;">Executed as of ${today()}.</p>
@@ -223,7 +223,6 @@ function generateAgreementHTML(agreement: Agreement, customer: Customer | undefi
       </div>
     </div>
   </div>
-
   <div class="footer">
     <p>Zenith Pure Solutions LLC · 6951 E 30th St, Suite B, Indianapolis, IN 46219</p>
     <p>(317) 690-4172 · info@zenithpuresolutions.com · zenithpuresolutions.com</p>
@@ -640,20 +639,21 @@ export function QuoteReviewPage() {
   const [downloading, setDownloading] = useState(false)
   const topRef = useRef<HTMLDivElement>(null)
 
-  // ── SINGLE SOURCE OF TRUTH for flow branching ──────────────────
   const flowType: 'rental' | 'purchase' | 'finance' =
     quote?.commercial_type === 'rental' ? 'rental'
     : quote?.commercial_type === 'financed' ? 'finance'
     : 'purchase'
 
-  // ── Step bar config per flow ───────────────────────────────────
-  const rentalSteps  = ['Review Quote', 'Sign Quote', 'Sign Agreement', 'Save Card']
+  const rentalSteps   = ['Review Quote', 'Sign Quote', 'Sign Agreement', 'Save Card']
   const purchaseSteps = ['Review Quote', 'Sign Quote', 'Sign Invoice', 'Payment']
+  const financeSteps  = ['Review Quote', 'Sign Quote', 'Apply for Financing']
+
   const currentStep =
     step === 'view_quote'    ? 1
     : step === 'view_agreement' || step === 'view_invoice' ? 2
     : step === 'payment_choice' || step === 'stripe_card_save' || step === 'stripe_purchase_payment' ? 3
-    : step === 'complete' ? 4
+    : step === 'hearth_redirect' ? 2
+    : step === 'complete' ? (flowType === 'finance' ? 3 : 4)
     : 0
 
   async function redirectToStripe(params: {
@@ -701,51 +701,26 @@ export function QuoteReviewPage() {
     }
   }
 
-  // ── Download signed agreement ─────────────────────────────────
   async function handleDownloadAgreement() {
     setDownloading(true)
     try {
-      // Use already-loaded agreement or fetch it
       let ag = agreement
       if (!ag && quote) {
-        const { data } = await supabase
-          .from('agreements')
-          .select('*')
-          .eq('quote_id', quote.id)
-          .maybeSingle()
-        if (data) {
-          ag = data
-          setAgreement(data)
-        }
+        const { data } = await supabase.from('agreements').select('*').eq('quote_id', quote.id).maybeSingle()
+        if (data) { ag = data; setAgreement(data) }
       }
-      if (!ag) {
-        setError('Agreement not found. Please contact (317) 690-4172.')
-        setDownloading(false)
-        return
-      }
-
-      // Use terms from snapshot (already baked in at signing time)
+      if (!ag) { setError('Agreement not found. Please contact (317) 690-4172.'); setDownloading(false); return }
       const terms: TermBlock[] = ag.terms_snapshot?.blocks || rentalTerms
-
       const html = generateAgreementHTML(ag, quote?.customer, terms)
       const win = window.open('', '_blank')
-      if (win) {
-        win.document.write(html)
-        win.document.close()
-        setTimeout(() => win.print(), 600)
-      } else {
-        // Fallback: create a blob and download
+      if (win) { win.document.write(html); win.document.close(); setTimeout(() => win.print(), 600) }
+      else {
         const blob = new Blob([html], { type: 'text/html' })
         const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `${ag.agreement_number}.html`
-        a.click()
+        const a = document.createElement('a'); a.href = url; a.download = `${ag.agreement_number}.html`; a.click()
         URL.revokeObjectURL(url)
       }
-    } catch (e: any) {
-      setError(e.message || 'Could not generate agreement.')
-    }
+    } catch (e: any) { setError(e.message || 'Could not generate agreement.') }
     setDownloading(false)
   }
 
@@ -757,7 +732,6 @@ export function QuoteReviewPage() {
           .then(async ({ data }) => {
             if (data) {
               setQuote(data)
-              // Mark lead as won
               if (data.lead_id) {
                 await supabase.from('leads').update({
                   stage: 'won',
@@ -765,30 +739,17 @@ export function QuoteReviewPage() {
                   stage_changed_at: new Date().toISOString(),
                 }).eq('id', data.lead_id)
               }
-              // Load agreement for rental so download is available
               if (data.commercial_type === 'rental') {
-                const { data: ag } = await supabase
-                  .from('agreements')
-                  .select('*')
-                  .eq('quote_id', data.id)
-                  .maybeSingle()
+                const { data: ag } = await supabase.from('agreements').select('*').eq('quote_id', data.id).maybeSingle()
                 if (ag) setAgreement(ag)
-                // Load rental terms for download
-                const { data: allTerms } = await supabase
-                  .from('term_blocks')
-                  .select('slug, display_title, content, version')
-                  .like('slug', 'ra-%')
-                  .eq('is_active', true)
-                  .order('sort_order')
+                const { data: allTerms } = await supabase.from('term_blocks')
+                  .select('slug, display_title, content, version').like('slug', 'ra-%').eq('is_active', true).order('sort_order')
                 if (allTerms) setRentalTerms(allTerms)
               }
             }
-            // ✅ setStep AFTER quote + agreement are loaded so flowType resolves correctly
             setStep('complete')
           })
-      } else {
-        setStep('complete')
-      }
+      } else { setStep('complete') }
       return
     }
     if (token) loadQuote(token)
@@ -844,18 +805,12 @@ export function QuoteReviewPage() {
       if (q.signed_at) {
         if (ct === 'rental') {
           const { data: ag } = await supabase.from('agreements').select('*').eq('quote_id', q.id).maybeSingle()
-          if (ag) {
-            setAgreement(ag)
-            setStep(ag.signed_at ? 'stripe_card_save' : 'view_agreement')
-            return
-          }
+          if (ag) { setAgreement(ag); setStep(ag.signed_at ? 'stripe_card_save' : 'view_agreement'); return }
+        } else if (ct === 'financed') {
+          setStep('hearth_redirect'); return
         } else {
           const { data: inv } = await supabase.from('invoices').select('*').eq('quote_id', q.id).maybeSingle()
-          if (inv) {
-            setInvoice(inv)
-            setStep(inv.signed_at ? 'payment_choice' : 'view_invoice')
-            return
-          }
+          if (inv) { setInvoice(inv); setStep(inv.signed_at ? 'payment_choice' : 'view_invoice'); return }
         }
       }
       setStep('view_quote')
@@ -866,7 +821,6 @@ export function QuoteReviewPage() {
     return fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip).catch(() => 'unknown')
   }
 
-  // ── Sign Quote ────────────────────────────────────────────────
   async function handleSignQuote(signedName: string) {
     if (!quote) return
     setSigning(true); setError('')
@@ -921,9 +875,26 @@ export function QuoteReviewPage() {
         setInvoice(inv); setStep('view_invoice'); scrollTop()
 
       } else {
+        // ── FINANCE FLOW — record application + redirect to Hearth ──
         await convertLeadToCustomer(quote.lead_id, quote.customer_id)
+
+        // Record financing application in DB
+        try {
+          await supabase.from('financing_applications').insert({
+            customer_id: quote.customer_id,
+            provider: 'hearth',
+            application_status: 'started',
+            approved_amount: quote.total,
+            submitted_at: new Date().toISOString(),
+          })
+        } catch (e) {
+          // Non-blocking — don't fail the flow if this insert errors
+          console.error('financing_applications insert error:', e)
+        }
+
+        const hearthUrl = buildHearthUrl(quote.customer, quote.total)
         setStep('hearth_redirect')
-        if (quote.finance_redirect_url) setTimeout(() => window.location.href = quote.finance_redirect_url!, 2000)
+        setTimeout(() => { window.location.href = hearthUrl }, 1800)
       }
     } catch (e: any) { setError(e.message) }
     setSigning(false)
@@ -935,25 +906,14 @@ export function QuoteReviewPage() {
     try {
       const ip = await getIp()
       const now = new Date().toISOString()
-
-      // 1. Mark agreement signed
       const { error: e } = await supabase.from('agreements').update({
         status: 'signed', signed_at: now, signed_name: signedName, signed_ip: ip,
       }).eq('id', agreement.id)
       if (e) throw e
-
-      // 2. Activate the linked contract so autopay can charge it
-      // billing_day = today's date so monthly charge falls on this day each month
-      await supabase
-        .from('contracts')
-        .update({
-          status: 'active',
-          signed_at: now,
-          billing_day: new Date().getDate(),
-        })
+      await supabase.from('contracts')
+        .update({ status: 'active', signed_at: now, billing_day: new Date().getDate() })
         .eq('quote_id', agreement.quote_id)
         .eq('status', 'pending_signature')
-
       setAgreement(prev => prev ? { ...prev, status: 'signed', signed_at: now, signed_name: signedName } : prev)
       setStep('stripe_card_save'); scrollTop()
     } catch (e: any) { setError(e.message) }
@@ -982,21 +942,14 @@ export function QuoteReviewPage() {
     const description = type === 'full'
       ? `Full Payment — ${invoice.invoice_number}`
       : `Purchase Deposit (50%) — ${invoice.invoice_number}`
-
     if (type === 'full') {
       await supabase.from('invoices').update({ deposit_percent: 100, deposit_amount: invoice.total, amount_due: invoice.total }).eq('id', invoice.id)
     }
-
     setStep('stripe_purchase_payment')
-    await redirectToStripe({
-      amount_cents: amountCents,
-      description,
-      flow: 'purchase',
-      invoice_id: invoice.id,
-    })
+    await redirectToStripe({ amount_cents: amountCents, description, flow: 'purchase', invoice_id: invoice.id })
   }
 
-  // ── Terminal screens ──────────────────────────────────────────
+  // ── Terminal screens ─────────────────────────────────────────
   if (step === 'loading') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <div className="text-center">
@@ -1039,12 +992,38 @@ export function QuoteReviewPage() {
     </div>
   )
 
+  // ── FINANCE: Hearth redirect screen ──────────────────────────
   if (step === 'hearth_redirect') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
-        <div className="text-4xl mb-4">🏦</div>
-        <h2 className="text-xl font-bold mb-2">Redirecting to Hearth...</h2>
-        <div className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin mx-auto mt-4" style={{ borderColor: '#0a2540', borderTopColor: 'transparent' }} />
+        <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl" style={{ backgroundColor: '#f0fdf4' }}>
+          🏦
+        </div>
+        <h2 className="text-xl font-bold mb-2">Quote Signed!</h2>
+        <p className="text-sm text-gray-500 mb-5">
+          You're being redirected to Hearth to complete your financing application.
+          Your information has been pre-filled to save you time.
+        </p>
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-5 text-left space-y-1.5 text-sm">
+          {quote?.customer?.full_name && <div className="flex justify-between"><span className="text-gray-500">Name</span><span className="font-medium text-gray-800">{quote.customer.full_name}</span></div>}
+          {quote?.customer?.email && <div className="flex justify-between"><span className="text-gray-500">Email</span><span className="font-medium text-gray-800">{quote.customer.email}</span></div>}
+          {quote?.total > 0 && <div className="flex justify-between"><span className="text-gray-500">Amount</span><span className="font-medium text-gray-800">{fmt(quote.total)}</span></div>}
+        </div>
+        <div className="flex items-center justify-center gap-2 mb-4">
+          <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#0a2540', borderTopColor: 'transparent' }} />
+          <span className="text-sm text-gray-500">Redirecting to Hearth...</span>
+        </div>
+        <button
+          onClick={() => {
+            const url = buildHearthUrl(quote?.customer, quote?.total || 0)
+            window.location.href = url
+          }}
+          className="w-full py-3 rounded-xl text-white font-semibold text-sm"
+          style={{ backgroundColor: '#0a2540' }}
+        >
+          Continue to Hearth →
+        </button>
+        <p className="text-xs text-gray-400 mt-4">(317) 690-4172</p>
       </div>
     </div>
   )
@@ -1096,7 +1075,7 @@ export function QuoteReviewPage() {
     </div>
   )
 
-  // ── PURCHASE: Payment choice ───────────────────────────────────
+  // ── PURCHASE: Payment choice ──────────────────────────────────
   if (step === 'payment_choice') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full">
@@ -1137,7 +1116,7 @@ export function QuoteReviewPage() {
     </div>
   )
 
-  // ── PURCHASE: Redirecting to Stripe ───────────────────────────
+  // ── PURCHASE: Redirecting to Stripe ──────────────────────────
   if (step === 'stripe_purchase_payment') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
@@ -1150,7 +1129,7 @@ export function QuoteReviewPage() {
     </div>
   )
 
-  // ── Complete ───────────────────────────────────────────────────
+  // ── Complete ──────────────────────────────────────────────────
   if (step === 'complete') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
@@ -1163,35 +1142,22 @@ export function QuoteReviewPage() {
             ? "Your payment method has been saved. Autopay will begin after your installation is completed. We'll be in touch to schedule."
             : 'Documents signed and payment received. Zenith will be in touch soon.'}
         </p>
-
-        {/* ── Download Agreement (rental only) ── */}
         {flowType === 'rental' && (
           <div className="mb-5">
             <button
               onClick={handleDownloadAgreement}
               disabled={downloading}
-              className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-              style={{
-                backgroundColor: '#f0f9ff',
-                border: '1.5px solid #bae6fd',
-                color: '#0369a1',
-              }}
+              className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', color: '#0369a1' }}
             >
-              {downloading ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#0369a1', borderTopColor: 'transparent' }} />
-                  Preparing...
-                </>
-              ) : (
-                <>
-                  📄 Download Your Signed Agreement
-                </>
-              )}
+              {downloading
+                ? <><div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#0369a1', borderTopColor: 'transparent' }} />Preparing...</>
+                : <>📄 Download Your Signed Agreement</>
+              }
             </button>
             <p className="text-xs text-gray-400 mt-2">Opens a printable copy — use "Save as PDF" in your browser</p>
           </div>
         )}
-
         {error && <p className="text-red-500 text-xs mb-4">{error}</p>}
         <p className="text-xs text-gray-400">(317) 690-4172</p>
       </div>
@@ -1209,7 +1175,10 @@ export function QuoteReviewPage() {
       </div>
 
       <div className="max-w-3xl mx-auto px-4 py-8">
-        <StepBar steps={flowType === 'rental' ? rentalSteps : purchaseSteps} current={currentStep} />
+        <StepBar
+          steps={flowType === 'rental' ? rentalSteps : flowType === 'finance' ? financeSteps : purchaseSteps}
+          current={currentStep}
+        />
 
         {/* ── VIEW QUOTE ────────────────────────────── */}
         {step === 'view_quote' && quote && (
@@ -1275,6 +1244,17 @@ export function QuoteReviewPage() {
               {quote.notes && <p className="text-sm text-gray-600 mt-2">{quote.notes}</p>}
             </div>
 
+            {/* Finance notice banner */}
+            {flowType === 'finance' && (
+              <div className="rounded-xl p-4 border" style={{ backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' }}>
+                <div className="text-xs font-bold mb-1" style={{ color: '#15803d' }}>💚 Financing Available via Hearth</div>
+                <p className="text-xs" style={{ color: '#166534' }}>
+                  After signing this quote you'll be redirected to Hearth to complete a 60-second pre-qualification.
+                  Does not affect your credit score.
+                </p>
+              </div>
+            )}
+
             {lineItems.length > 0 && (
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="px-6 py-3 bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-400 uppercase tracking-wide">Equipment & Services</div>
@@ -1307,7 +1287,9 @@ export function QuoteReviewPage() {
                       <div className="flex justify-between text-sm text-gray-600"><span>Subtotal</span><span>{fmt(quote.subtotal)}</span></div>
                       <div className="flex justify-between text-sm text-gray-600"><span>Tax</span><span>{fmt(quote.tax_amount)}</span></div>
                       <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-200"><span>Total</span><span>{fmt(quote.total)}</span></div>
-                      <div className="flex justify-between text-sm font-semibold pt-1" style={{ color: '#0a2540' }}><span>50% Deposit Option</span><span>{fmt(quote.total * 0.5)}</span></div>
+                      {flowType === 'purchase' && (
+                        <div className="flex justify-between text-sm font-semibold pt-1" style={{ color: '#0a2540' }}><span>50% Deposit Option</span><span>{fmt(quote.total * 0.5)}</span></div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1355,9 +1337,15 @@ export function QuoteReviewPage() {
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
               <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Customer Authorization</div>
               <p className="text-xs text-gray-600 leading-relaxed mb-5">
-                This is a good-faith estimate. By signing, I authorize Zenith Pure Solutions to proceed as outlined and agree to pay for all services rendered.
+                {flowType === 'finance'
+                  ? 'By signing, I authorize Zenith Pure Solutions to proceed as outlined and agree to complete a Hearth financing application for the amount shown.'
+                  : 'This is a good-faith estimate. By signing, I authorize Zenith Pure Solutions to proceed as outlined and agree to pay for all services rendered.'}
               </p>
-              <SignaturePad onSign={handleSignQuote} label="Sign & Accept Quote" loading={signing} />
+              <SignaturePad
+                onSign={handleSignQuote}
+                label={flowType === 'finance' ? 'Sign & Continue to Hearth →' : 'Sign & Accept Quote'}
+                loading={signing}
+              />
               {error && <p className="text-red-500 text-xs mt-3">{error}</p>}
             </div>
           </div>
