@@ -5,6 +5,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 
+// ─── Mobile hook ──────────────────────────────────────────────────────────────
+function useIsMobile() {
+  const [v, setV] = useState(window.innerWidth < 768)
+  useEffect(() => { const h = () => setV(window.innerWidth < 768); window.addEventListener('resize', h); return () => window.removeEventListener('resize', h) }, [])
+  return v
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface InventoryRow {
@@ -147,6 +154,7 @@ interface MergedRow {
 // ─── Tab: Stock Levels ────────────────────────────────────────────────────────
 
 function StockLevelsTab() {
+  const isMobile = useIsMobile()
   const [merged, setMerged] = useState<MergedRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -284,7 +292,10 @@ function StockLevelsTab() {
       {/* Full-width colorful filter tabs */}
       <div
         className="grid mb-5"
-        style={{ gridTemplateColumns: `repeat(${FILTER_TABS.length}, 1fr)`, gap: '3px' }}
+        style={isMobile
+          ? { display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' as const, marginBottom: 16 }
+          : { gridTemplateColumns: `repeat(${FILTER_TABS.length}, 1fr)`, gap: '3px' }
+        }
       >
         {FILTER_TABS.map(tab => {
           const isActive = activeFilter === tab.id
@@ -293,7 +304,15 @@ function StockLevelsTab() {
               key={tab.id}
               onClick={() => setActiveFilter(tab.id as typeof activeFilter)}
               className="relative flex items-center justify-between px-5 py-3 rounded-xl transition-all duration-150 text-left"
-              style={{
+              style={isMobile ? {
+                flexShrink: 0,
+                background: isActive ? `${tab.color}20` : 'rgba(255,255,255,0.03)',
+                border: `1px solid ${isActive ? tab.color + '50' : 'rgba(255,255,255,0.06)'}`,
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 12px', borderRadius: 20,
+                color: isActive ? tab.color : '#64748b',
+                fontSize: 12, fontWeight: isActive ? 700 : 500,
+              } : {
                 background: isActive
                   ? `linear-gradient(135deg, ${tab.color}22, ${tab.color}0a)`
                   : 'rgba(255,255,255,0.03)',
@@ -301,16 +320,29 @@ function StockLevelsTab() {
                 boxShadow: isActive ? `0 0 18px ${tab.color}18` : 'none',
               }}
             >
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: isActive ? tab.color : '#64748b' }}>
-                  {tab.label}
-                </div>
-                <div className="text-2xl font-bold" style={{ color: isActive ? tab.color : '#94a3b8' }}>
-                  {tab.count}
-                </div>
-              </div>
-              {isActive && (
-                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: tab.color, boxShadow: `0 0 8px ${tab.color}` }} />
+              {isMobile ? (
+                <>
+                  <span>{tab.label}</span>
+                  <span style={{
+                    background: isActive ? `${tab.color}30` : '#1e3a4f',
+                    color: isActive ? tab.color : '#64748b',
+                    borderRadius: 10, padding: '1px 6px', fontSize: 11, fontWeight: 700,
+                  }}>{tab.count}</span>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: isActive ? tab.color : '#64748b' }}>
+                      {tab.label}
+                    </div>
+                    <div className="text-2xl font-bold" style={{ color: isActive ? tab.color : '#94a3b8' }}>
+                      {tab.count}
+                    </div>
+                  </div>
+                  {isActive && (
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: tab.color, boxShadow: `0 0 8px ${tab.color}` }} />
+                  )}
+                </>
               )}
             </button>
           )
@@ -318,7 +350,7 @@ function StockLevelsTab() {
       </div>
 
       {/* Stats strip */}
-      <div className="grid grid-cols-4 gap-3 mb-5">
+      <div className={`grid gap-3 mb-5 ${isMobile ? 'grid-cols-2' : 'grid-cols-4'}`}>
         {[
           { label: 'Total On Hand',     value: tracked.reduce((s, m) => s + m.inv!.quantity_on_hand, 0),       color: '#60a5fa' },
           { label: 'Reserved for Jobs', value: tracked.reduce((s, m) => s + m.inv!.quantity_reserved, 0),      color: '#a78bfa' },
@@ -357,7 +389,8 @@ function StockLevelsTab() {
 
       {/* Table */}
       <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
-        <table className="w-full text-sm">
+        <div style={{ overflowX: 'auto' }}>
+        <table className="w-full text-sm" style={{ minWidth: 640 }}>
           <thead>
             <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
               <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Product</th>
@@ -444,6 +477,7 @@ function StockLevelsTab() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Adjust Modal */}
@@ -581,14 +615,14 @@ function ReorderTab() {
     <div>
       {/* Tab bar */}
       <div
-        className="flex gap-1 mb-5 p-1 rounded-xl w-fit"
-        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+        className="flex gap-1 mb-5 p-1 rounded-xl"
+        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', overflowX: 'auto', scrollbarWidth: 'none' }}
       >
         {STATUS_TABS.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className="px-4 py-2 rounded-lg text-sm font-medium transition-all"
+            className="px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap flex-shrink-0"
             style={
               activeTab === tab.id
                 ? { background: `${tab.color}18`, color: tab.color, border: `1px solid ${tab.color}35` }
@@ -626,7 +660,8 @@ function ReorderTab() {
 
       {/* Table */}
       <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
-        <table className="w-full text-sm">
+        <div style={{ overflowX: 'auto' }}>
+        <table className="w-full text-sm" style={{ minWidth: 600 }}>
           <thead>
             <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
               <th className="px-4 py-3 w-8"></th>
@@ -688,6 +723,7 @@ function ReorderTab() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )
@@ -742,14 +778,14 @@ function PurchaseOrdersTab() {
     <div>
       {/* Tab bar */}
       <div
-        className="flex gap-1 mb-5 p-1 rounded-xl w-fit"
-        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+        className="flex gap-1 mb-5 p-1 rounded-xl"
+        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', overflowX: 'auto', scrollbarWidth: 'none' }}
       >
         {STATUS_TABS.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className="px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all"
+            className="px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all whitespace-nowrap flex-shrink-0"
             style={
               activeTab === tab.id
                 ? { background: `${tab.color}18`, color: tab.color, border: `1px solid ${tab.color}35` }
@@ -1134,7 +1170,8 @@ function TransactionsTab() {
       </div>
 
       <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
-        <table className="w-full text-sm">
+        <div style={{ overflowX: 'auto' }}>
+        <table className="w-full text-sm" style={{ minWidth: 560 }}>
           <thead>
             <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
               <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Date</th>
@@ -1190,6 +1227,7 @@ function TransactionsTab() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )
@@ -1222,14 +1260,14 @@ export default function InventoryPage() {
 
       {/* Module nav — pill tabs matching FollowUpsPage */}
       <div
-        className="flex gap-1 mb-6 p-1 rounded-xl w-fit"
-        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+        className="flex gap-1 mb-6 p-1 rounded-xl"
+        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', overflowX: 'auto', scrollbarWidth: 'none' }}
       >
         {MAIN_TABS.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap flex-shrink-0"
             style={
               activeTab === tab.id
                 ? { background: 'rgba(96,165,250,0.15)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.3)' }
