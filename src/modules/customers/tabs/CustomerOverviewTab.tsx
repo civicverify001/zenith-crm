@@ -19,7 +19,7 @@ async function fetchLeadOrigin(leadId: string) {
   if (!leadId) return null
   const { data } = await supabase
     .from('leads')
-    .select('source, source_detail, utm_source, utm_medium, utm_campaign, created_at, assigned_to')
+    .select('source, source_detail, utm_source, utm_medium, utm_campaign, created_at, assigned_rep_id')
     .eq('id', leadId)
     .maybeSingle()
   return data
@@ -93,9 +93,9 @@ export function CustomerOverviewTab({ customer }: Props) {
 
   // Resolve assigned rep name from UUID
   const { data: repName } = useQuery({
-    queryKey: ['rep-name', leadOrigin?.assigned_to],
-    queryFn: () => fetchRepName(leadOrigin?.assigned_to || null),
-    enabled: !!leadOrigin?.assigned_to,
+    queryKey: ['rep-name', leadOrigin?.assigned_rep_id],
+    queryFn: () => fetchRepName(leadOrigin?.assigned_rep_id || null),
+    enabled: !!leadOrigin?.assigned_rep_id,
   })
 
   const { data: notes = [] } = useQuery({
