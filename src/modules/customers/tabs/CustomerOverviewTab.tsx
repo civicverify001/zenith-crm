@@ -5,7 +5,7 @@ import {
   useMaintenancePlans, useCustomerAddresses,
 } from '../useCustomers'
 import { supabase } from '../../../lib/supabase'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 interface Props { customer: any }
 
@@ -14,18 +14,29 @@ function formatDate(d: string | null) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-// ─── Fetch lead origin data ──────────────────────────────────
+// ─── Fetch lead origin — uses leads table, not opportunities ──
 async function fetchLeadOrigin(leadId: string) {
   if (!leadId) return null
   const { data } = await supabase
-    .from('opportunities')
+    .from('leads')
     .select('source, source_detail, utm_source, utm_medium, utm_campaign, created_at, assigned_to')
     .eq('id', leadId)
     .maybeSingle()
   return data
 }
 
-// ─── Fetch entity notes ──────────────────────────────────────
+// ─── Fetch rep name from user_profiles ────────────────────────
+async function fetchRepName(userId: string | null) {
+  if (!userId) return null
+  const { data } = await supabase
+    .from('user_profiles')
+    .select('full_name')
+    .eq('id', userId)
+    .maybeSingle()
+  return data?.full_name || null
+}
+
+// ─── Fetch entity notes ───────────────────────────────────────
 async function fetchEntityNotes(customerId: string) {
   const { data } = await supabase
     .from('entity_notes')
@@ -48,7 +59,6 @@ async function addEntityNote(customerId: string, content: string, noteType: stri
   if (error) throw error
 }
 
-// ─── Source label map ────────────────────────────────────────
 const SOURCE_LABELS: Record<string, string> = {
   website_form: 'Website Form',
   landing_page: 'Landing Page',
@@ -81,6 +91,13 @@ export function CustomerOverviewTab({ customer }: Props) {
     enabled: !!customer.lead_id,
   })
 
+  // Resolve assigned rep name from UUID
+  const { data: repName } = useQuery({
+    queryKey: ['rep-name', leadOrigin?.assigned_to],
+    queryFn: () => fetchRepName(leadOrigin?.assigned_to || null),
+    enabled: !!leadOrigin?.assigned_to,
+  })
+
   const { data: notes = [] } = useQuery({
     queryKey: ['entity-notes', 'customer', customer.id],
     queryFn: () => fetchEntityNotes(customer.id),
@@ -91,12 +108,23 @@ export function CustomerOverviewTab({ customer }: Props) {
   const [addingNote, setAddingNote] = useState(false)
   const [savingNote, setSavingNote] = useState(false)
 
-  const activeSystems = (systems || []).filter((s: any) => s.is_active !== false)
-  const purchasedCount = activeSystems.filter((s: any) => s.ownership_type === 'purchased').length
-  const rentedCount = activeSystems.filter((s: any) => s.ownership_type === 'rented').length
-  const activePlan = (plans || []).find((p: any) => p.status === 'active')
-  const activeContract = (contracts || []).find((c: any) => c.status === 'active')
-  const currentAddress = (addresses || []).find((a: any) => a.is_current) || (addresses || [])[0]
+  const activeSystems   = (systems || []).filter((s: any) => s.is_active !== false)
+  const purchasedCount  = activeSystems.filter((s: any) => s.ownership_type === 'purchased').length
+  const rentedCount     = activeSystems.filter((s: any) => s.ownership_type === 'rented').length
+  const activePlan      = (plans || []).find((p: any) => p.status === 'active')
+  const activeContract  = (contracts || []).find((c: any) => c.status === 'active')
+  const currentAddress  = (addresses || []).find((a: any) => a.is_current) || (addresses || [])[0]
+
+  // ─── Service address: addresses table → customer fields → '—'
+  const serviceAddress = (() => {
+    if (currentAddress) {
+      return [currentAddress.address_line, currentAddress.city, currentAddress.state, currentAddress.zip_code]
+        .filter(Boolean).join(', ')
+    }
+    // Fall back to flat fields on the customer record
+    const parts = [customer.address, customer.city, customer.state, customer.zip].filter(Boolean)
+    return parts.length > 0 ? parts.join(', ') : '—'
+  })()
 
   async function handleAddNote() {
     if (!newNote.trim()) return
@@ -136,21 +164,28 @@ export function CustomerOverviewTab({ customer }: Props) {
         </div>
       </div>
 
-      {/* ── Active rental ─────────────────────────────────── */}
+      {/* ── Active rental contract ────────────────────────── */}
       {activeContract && (
-        <div className="rounded-xl p-3" style={{ backgroundColor: 'rgba(245, 158, 11, 0.06)', border: '1px solid rgba(245, 158, 11, 0.2)' }}>
-          <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: '#fbbf24' }}>Active Rental Contract</div>
-          <div className="text-sm text-slate-200">
+        <div className="rounded-xl p-3" style={{ backgroundColor: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)' }}>
+          <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: '#fbbf24' }}>Active Rental Contract</div>
+          <div className="text-sm text-slate-200 mb-1">
             ${Number(activeContract.monthly_amount).toFixed(2)}/month · {activeContract.payments_made || 0} payments made
           </div>
-          <div className="text-xs text-muted">
-            Contract {activeContract.contract_number} · Ends {formatDate(activeContract.end_date)}
+          <div className="text-xs text-muted space-y-0.5">
+            {activeContract.contract_number && <div>Contract · {activeContract.contract_number}</div>}
+            <div className="flex gap-3">
+              {activeContract.start_date && <span>Start: {formatDate(activeContract.start_date)}</span>}
+              {activeContract.end_date
+                ? <span>Ends: {formatDate(activeContract.end_date)}</span>
+                : <span>End date: —</span>
+              }
+            </div>
+            {activeContract.total_paid > 0 && (
+              <div>Total paid: ${Number(activeContract.total_paid).toLocaleString()}</div>
+            )}
           </div>
-          {activeContract.total_paid > 0 && (
-            <div className="text-xs text-muted mt-1">Total paid: ${Number(activeContract.total_paid).toLocaleString()}</div>
-          )}
           {activeContract.rental_risk_status && (
-            <div className="text-xs font-semibold mt-1" style={{ color: '#f87171' }}>
+            <div className="text-xs font-semibold mt-2" style={{ color: '#f87171' }}>
               ⚠️ Risk: {activeContract.rental_risk_status.replace(/_/g, ' ')}
             </div>
           )}
@@ -159,7 +194,7 @@ export function CustomerOverviewTab({ customer }: Props) {
 
       {/* ── Maintenance plan ──────────────────────────────── */}
       {activePlan ? (
-        <div className="rounded-xl p-3" style={{ backgroundColor: 'rgba(34, 197, 94, 0.06)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
+        <div className="rounded-xl p-3" style={{ backgroundColor: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)' }}>
           <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: '#4ade80' }}>Maintenance Plan</div>
           <div className="text-sm text-slate-200">
             {(activePlan as any).included_in_rental ? 'Included in Rental' : `$${(activePlan as any).price_snapshot}/year`}
@@ -169,7 +204,7 @@ export function CustomerOverviewTab({ customer }: Props) {
           </div>
         </div>
       ) : (
-        <div className="rounded-xl p-3" style={{ backgroundColor: 'rgba(148, 163, 184, 0.06)', border: '1px solid rgba(148, 163, 184, 0.15)' }}>
+        <div className="rounded-xl p-3" style={{ backgroundColor: 'rgba(148,163,184,0.06)', border: '1px solid rgba(148,163,184,0.15)' }}>
           <div className="text-xs font-bold uppercase tracking-wide mb-1 text-muted">Maintenance Plan</div>
           <div className="text-sm text-muted">No active maintenance plan — warranty may be affected</div>
         </div>
@@ -178,14 +213,11 @@ export function CustomerOverviewTab({ customer }: Props) {
       {/* ── Contact Information ───────────────────────────── */}
       <div className="bg-card border border-border rounded-xl p-4 space-y-3">
         <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">Contact Information</div>
-        <InfoRow label="Phone" value={customer.phone} />
+        <InfoRow label="Phone" value={customer.phone || '—'} />
         {customer.email && <InfoRow label="Email" value={customer.email} />}
-        <InfoRow label="Service Address" value={
-          currentAddress
-            ? [currentAddress.address_line, currentAddress.city, currentAddress.state, currentAddress.zip_code].filter(Boolean).join(', ') || customer.service_address
-            : customer.service_address || '—'
-        } />
+        <InfoRow label="Service Address" value={serviceAddress} />
         <InfoRow label="Customer Since" value={formatDate(customer.created_at)} />
+        {repName && <InfoRow label="Sales Rep" value={repName} />}
         {customer.preferred_contact_method && (
           <InfoRow
             label="Preferred Contact"
@@ -198,14 +230,8 @@ export function CustomerOverviewTab({ customer }: Props) {
       <div className="bg-card border border-border rounded-xl p-4 space-y-3">
         <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">Communication Consent</div>
         <div className="grid grid-cols-2 gap-3">
-          <ConsentBadge
-            label="Email Marketing"
-            enabled={customer.email_opt_in !== false}
-          />
-          <ConsentBadge
-            label="SMS / Text"
-            enabled={customer.sms_opt_in === true}
-          />
+          <ConsentBadge label="Email Marketing" enabled={customer.email_opt_in !== false} />
+          <ConsentBadge label="SMS / Text" enabled={customer.sms_opt_in === true} />
         </div>
         {customer.consent_source && (
           <InfoRow label="Consent Source" value={customer.consent_source} />
@@ -222,17 +248,11 @@ export function CustomerOverviewTab({ customer }: Props) {
       {customer.lead_id && (
         <div className="bg-card border border-border rounded-xl p-4 space-y-3">
           <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">Lead History</div>
-          <InfoRow
-            label="Converted"
-            value={formatDate(customer.created_at)}
-          />
+          <InfoRow label="Converted" value={formatDate(customer.created_at)} />
           {leadOrigin ? (
             <>
               {leadOrigin.source && (
-                <InfoRow
-                  label="Lead Source"
-                  value={SOURCE_LABELS[leadOrigin.source] || leadOrigin.source}
-                />
+                <InfoRow label="Lead Source" value={SOURCE_LABELS[leadOrigin.source] || leadOrigin.source} />
               )}
               {leadOrigin.source_detail && (
                 <InfoRow label="Source Detail" value={leadOrigin.source_detail} />
@@ -262,7 +282,7 @@ export function CustomerOverviewTab({ customer }: Props) {
           {!addingNote && (
             <button
               onClick={() => setAddingNote(true)}
-              className="text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors"
+              className="text-xs font-semibold px-2.5 py-1 rounded-lg"
               style={{ backgroundColor: 'rgba(96,165,250,0.12)', color: '#60a5fa' }}
             >
               + Add Note
@@ -270,7 +290,6 @@ export function CustomerOverviewTab({ customer }: Props) {
           )}
         </div>
 
-        {/* Add note form */}
         {addingNote && (
           <div className="mb-3 space-y-2">
             <textarea
@@ -279,11 +298,7 @@ export function CustomerOverviewTab({ customer }: Props) {
               placeholder="Write a note..."
               rows={3}
               className="w-full text-sm rounded-lg px-3 py-2 resize-none outline-none"
-              style={{
-                backgroundColor: '#0f172a',
-                border: '1px solid rgba(148,163,184,0.2)',
-                color: '#e2e8f0',
-              }}
+              style={{ backgroundColor: '#0f172a', border: '1px solid rgba(148,163,184,0.2)', color: '#e2e8f0' }}
               autoFocus
             />
             <div className="flex items-center gap-2">
@@ -299,14 +314,14 @@ export function CustomerOverviewTab({ customer }: Props) {
               <div className="flex gap-2 ml-auto">
                 <button
                   onClick={() => { setAddingNote(false); setNewNote('') }}
-                  className="text-xs px-3 py-1 rounded-lg text-muted hover:text-slate-300 transition-colors"
+                  className="text-xs px-3 py-1 rounded-lg text-muted hover:text-slate-300"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleAddNote}
                   disabled={savingNote || !newNote.trim()}
-                  className="text-xs px-3 py-1 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                  className="text-xs px-3 py-1 rounded-lg font-semibold disabled:opacity-50"
                   style={{ backgroundColor: 'rgba(96,165,250,0.15)', color: '#60a5fa' }}
                 >
                   {savingNote ? 'Saving...' : 'Save Note'}
@@ -316,7 +331,6 @@ export function CustomerOverviewTab({ customer }: Props) {
           </div>
         )}
 
-        {/* Notes list */}
         {notes.length === 0 && !addingNote ? (
           <div className="text-xs text-muted italic">No notes yet</div>
         ) : (
@@ -326,19 +340,12 @@ export function CustomerOverviewTab({ customer }: Props) {
                 key={note.id}
                 className="rounded-lg px-3 py-2.5"
                 style={{
-                  backgroundColor: note.note_type === 'customer-facing'
-                    ? 'rgba(34,211,238,0.05)'
-                    : 'rgba(148,163,184,0.06)',
-                  border: note.note_type === 'customer-facing'
-                    ? '1px solid rgba(34,211,238,0.15)'
-                    : '1px solid rgba(148,163,184,0.12)',
+                  backgroundColor: note.note_type === 'customer-facing' ? 'rgba(34,211,238,0.05)' : 'rgba(148,163,184,0.06)',
+                  border: note.note_type === 'customer-facing' ? '1px solid rgba(34,211,238,0.15)' : '1px solid rgba(148,163,184,0.12)',
                 }}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span
-                    className="text-xs font-semibold"
-                    style={{ color: note.note_type === 'customer-facing' ? '#22d3ee' : '#64748b' }}
-                  >
+                  <span className="text-xs font-semibold" style={{ color: note.note_type === 'customer-facing' ? '#22d3ee' : '#64748b' }}>
                     {note.note_type === 'customer-facing' ? 'Customer-Facing' : 'Internal'}
                   </span>
                   <span className="text-xs text-muted">{formatDate(note.created_at)}</span>
@@ -350,7 +357,7 @@ export function CustomerOverviewTab({ customer }: Props) {
         )}
       </div>
 
-      {/* ── Legacy notes field ────────────────────────────── */}
+      {/* ── Legacy notes ─────────────────────────────────── */}
       {customer.notes && (
         <div className="bg-card border border-border rounded-xl p-4">
           <div className="text-xs font-bold text-slate-300 uppercase tracking-wide mb-2">Legacy Notes</div>
@@ -362,7 +369,7 @@ export function CustomerOverviewTab({ customer }: Props) {
   )
 }
 
-// ─── Sub-components ──────────────────────────────────────────
+// ─── Sub-components ──────────────────────────────────────────────
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
@@ -386,9 +393,7 @@ function ConsentBadge({ label, enabled }: { label: string; enabled: boolean }) {
         {enabled ? '✓' : '✗'}
       </span>
       <div>
-        <div className="text-xs font-semibold" style={{ color: enabled ? '#4ade80' : '#64748b' }}>
-          {label}
-        </div>
+        <div className="text-xs font-semibold" style={{ color: enabled ? '#4ade80' : '#64748b' }}>{label}</div>
         <div className="text-xs text-muted">{enabled ? 'Opted in' : 'Not opted in'}</div>
       </div>
     </div>
