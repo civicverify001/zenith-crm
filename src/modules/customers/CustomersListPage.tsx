@@ -1,8 +1,14 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useCustomers } from './useCustomers'
 import { useNavigate } from 'react-router-dom'
 import type { Customer, CustomerLifecycle } from './customers.types'
 import { LIFECYCLE_LABELS, LIFECYCLE_COLORS } from './customers.types'
+
+function useIsMobile() {
+  const [v, setV] = useState(window.innerWidth < 768)
+  useEffect(() => { const h = () => setV(window.innerWidth < 768); window.addEventListener('resize', h); return () => window.removeEventListener('resize', h) }, [])
+  return v
+}
 
 // ── Column config ─────────────────────────────────────────────
 const COLUMNS: {
@@ -101,9 +107,10 @@ function CustomerCard({ c, onClick, accentColor, borderColor }: { c: Customer; o
 
 export function CustomersListPage() {
   const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const { data: customers, isLoading, error } = useCustomers()
   const [search, setSearch] = useState('')
-  const [mobileTab, setMobileTab] = useState<CustomerLifecycle | 'all'>('all')
+  const [mobileTab, setMobileTab] = useState<CustomerLifecycle>('active')
 
   if (isLoading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
@@ -125,7 +132,6 @@ export function CustomersListPage() {
     else byStatus['inactive'] = [...(byStatus['inactive'] || []), c]
   }
 
-  // Search filter
   const filterCustomers = (list: Customer[]) => {
     if (!search) return list
     const q = search.toLowerCase()
@@ -137,16 +143,112 @@ export function CustomersListPage() {
     )
   }
 
-  const totalFiltered = allCustomers.filter(c => {
-    if (!search) return true
-    const q = search.toLowerCase()
-    return c.full_name.toLowerCase().includes(q) || c.phone.includes(q)
-  }).length
+  // ── MOBILE LAYOUT ─────────────────────────────────────────
+  if (isMobile) {
+    const activeCol = COLUMNS.find(c => c.key === mobileTab)!
+    const cards = filterCustomers(byStatus[mobileTab] || [])
 
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+
+        {/* Header */}
+        <div style={{ flexShrink: 0, paddingBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div>
+              <h1 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 18, margin: 0 }}>Customers</h1>
+              <div style={{ color: '#64748b', fontSize: 12, marginTop: 1 }}>{allCustomers.length} total</div>
+            </div>
+          </div>
+          {/* Full-width search */}
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search name, phone, address…"
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              background: '#162232', border: '1px solid #1e3a4f', borderRadius: 8,
+              color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none',
+            }}
+          />
+        </div>
+
+        {/* Stage tabs — scrollable */}
+        <div style={{
+          flexShrink: 0,
+          display: 'flex',
+          gap: 6,
+          overflowX: 'auto',
+          paddingBottom: 10,
+          scrollbarWidth: 'none',
+        }}>
+          {COLUMNS.map(col => {
+            const count = filterCustomers(byStatus[col.key] || []).length
+            const isActive = mobileTab === col.key
+            return (
+              <button
+                key={col.key}
+                onClick={() => setMobileTab(col.key)}
+                style={{
+                  flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  padding: '7px 12px',
+                  borderRadius: 20,
+                  border: `1px solid ${isActive ? col.color : col.border}`,
+                  background: isActive ? `${col.color}20` : '#0c1a26',
+                  color: isActive ? col.color : '#64748b',
+                  fontSize: 12,
+                  fontWeight: isActive ? 700 : 500,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <span style={{ fontSize: 13 }}>{col.icon}</span>
+                <span>{col.label}</span>
+                <span style={{
+                  background: isActive ? `${col.color}30` : '#1e3a4f',
+                  color: isActive ? col.color : '#64748b',
+                  borderRadius: 10,
+                  padding: '1px 6px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}>
+                  {count}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Cards — scrollable */}
+        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+          {cards.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '48px 12px', color: '#334155', fontSize: 13 }}>
+              {search ? 'No matches' : 'No customers'}
+            </div>
+          ) : (
+            cards.map(c => (
+              <CustomerCard
+                key={c.id}
+                c={c}
+                accentColor={activeCol.color}
+                borderColor={activeCol.border}
+                onClick={() => navigate(`/customers/${c.id}`)}
+              />
+            ))
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ── DESKTOP LAYOUT (unchanged) ────────────────────────────
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
 
-      {/* ── Top bar ── */}
+      {/* Top bar */}
       <div style={{
         flexShrink: 0,
         display: 'flex',
@@ -175,16 +277,8 @@ export function CustomersListPage() {
         />
       </div>
 
-
-
-      {/* ── Kanban columns ── */}
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        gap: 12,
-        overflow: 'hidden',
-        minHeight: 0,
-      }}>
+      {/* Kanban columns */}
+      <div style={{ flex: 1, display: 'flex', gap: 12, overflow: 'hidden', minHeight: 0 }}>
         {COLUMNS.map(col => {
           const cards = filterCustomers(byStatus[col.key] || [])
           return (
@@ -201,7 +295,6 @@ export function CustomersListPage() {
                 overflow: 'hidden',
               }}
             >
-              {/* Column header */}
               <div style={{
                 background: col.headerBg,
                 padding: '12px 14px',
@@ -231,7 +324,6 @@ export function CustomersListPage() {
                 </div>
               </div>
 
-              {/* Cards */}
               <div style={{
                 flex: 1,
                 overflowY: 'auto',
@@ -240,10 +332,7 @@ export function CustomersListPage() {
                 scrollbarColor: '#1e3a4f transparent',
               }}>
                 {cards.length === 0 ? (
-                  <div style={{
-                    textAlign: 'center', padding: '32px 12px',
-                    color: '#334155', fontSize: 12,
-                  }}>
+                  <div style={{ textAlign: 'center', padding: '32px 12px', color: '#334155', fontSize: 12 }}>
                     {search ? 'No matches' : 'No customers'}
                   </div>
                 ) : (
