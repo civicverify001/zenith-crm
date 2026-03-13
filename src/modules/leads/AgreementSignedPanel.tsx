@@ -267,7 +267,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   const [detectionSource, setDetectionSource] = useState<'invoice'|'quote'|'fallback'|null>(null)
   const [jobSlots, setJobSlots] = useState<JobSlot[]>([])
 
-  // Agreement data loaded from DB (lead fields may be empty for digital signing flow)
+  // Agreement data loaded from DB
   const [agreementData, setAgreementData] = useState<{
     signed_by: string | null
     signed_at: string | null
@@ -275,36 +275,83 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     monthly_amount: number | null
     commercial_type: string | null
   } | null>(null)
-  const installPrefLabel: Record<string, string> = { asap: 'ASAP', specific_date: 'Specific Date', flexible: 'Flexible' }
-  const paymentLabel: Record<string, string> = { cash: 'Cash', check: 'Check', card: 'Card', financing: 'Financing' }
+
   const jobAlreadyCreated = !!lead.job_created
 
-  // Load agreement/quote data from DB (digital signing flow writes there, not to lead fields)
+  // ── Load agreement/quote data from DB ─────────────────────────
+  // Strategy: try lead_id first, fall back to customer_id if empty.
+  // signed_by lives on agreements only (customer types name during signing).
+  // quotes table does not have a signed_by column.
   useEffect(() => {
     async function loadAgreementData() {
-      const { data: ag } = await supabase
+      const customerId = (lead as any).converted_to_customer_id ?? null
+
+      // 1. Try agreements by lead_id
+      let agData: any = null
+      const { data: ag1 } = await supabase
         .from('agreements')
         .select('signed_by, signed_at, commercial_type')
         .eq('lead_id', lead.id)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
+      agData = ag1
 
-      const { data: qt } = await supabase
+      // 2. Fall back to customer_id if lead_id returned nothing
+      if (!agData && customerId) {
+        const { data: ag2 } = await supabase
+          .from('agreements')
+          .select('signed_by, signed_at, commercial_type')
+          .eq('customer_id', customerId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        agData = ag2
+      }
+
+      // 3. Try quotes by lead_id (accepted or signed)
+      let qtData: any = null
+      const { data: qt1 } = await supabase
         .from('quotes')
-        .select('total, monthly_amount, commercial_type, signed_at, signed_by')
+        .select('total, monthly_amount, commercial_type, signed_at')
         .eq('lead_id', lead.id)
         .in('status', ['accepted', 'signed'])
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
+      qtData = qt1
+
+      // 4. Fall back to customer_id for quotes
+      if (!qtData && customerId) {
+        const { data: qt2 } = await supabase
+          .from('quotes')
+          .select('total, monthly_amount, commercial_type, signed_at')
+          .eq('customer_id', customerId)
+          .in('status', ['accepted', 'signed'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        qtData = qt2
+      }
+
+      // 5. Final fallback: any quote for this lead (not just signed ones)
+      if (!qtData) {
+        const { data: qt3 } = await supabase
+          .from('quotes')
+          .select('total, monthly_amount, commercial_type, signed_at')
+          .eq('lead_id', lead.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        qtData = qt3
+      }
 
       setAgreementData({
-        signed_by: ag?.signed_by || qt?.signed_by || lead.signed_by || null,
-        signed_at: ag?.signed_at || qt?.signed_at || lead.signed_at || null,
-        quote_total: qt?.total || lead.quote_total || null,
-        monthly_amount: qt?.monthly_amount || null,
-        commercial_type: ag?.commercial_type || qt?.commercial_type || null,
+        signed_by: agData?.signed_by || (lead as any).signed_by || null,
+        signed_at: agData?.signed_at || qtData?.signed_at || (lead as any).signed_at || null,
+        quote_total: qtData?.total || (lead as any).quote_total || null,
+        monthly_amount: qtData?.monthly_amount || null,
+        commercial_type: agData?.commercial_type || qtData?.commercial_type || null,
       })
     }
     loadAgreementData()
@@ -466,6 +513,13 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
 
   const canSubmit = !submitting && !loadingAgreement && !!scheduledDate && scheduledHour !== null
 
+  // Derive display values
+  const isRental = agreementData?.commercial_type === 'rental'
+  const displayTotal = isRental
+    ? `${formatCurrency(agreementData?.monthly_amount)}/mo`
+    : formatCurrency(agreementData?.quote_total || (lead as any).quote_total)
+  const displayLabel = isRental ? 'Monthly Amount' : 'Quote Total'
+
   return (
     <>
       <div className="bg-green/5 border border-green/20 rounded-xl p-4 space-y-3">
@@ -493,24 +547,18 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
         </div>
 
         <div className="text-center py-2">
-          <div className="text-xs text-muted uppercase tracking-wide">
-            {agreementData?.commercial_type === 'rental' ? 'Monthly Amount' : 'Quote Total'}
-          </div>
-          <div className="text-2xl font-bold text-white mt-0.5">
-            {agreementData?.commercial_type === 'rental'
-              ? `${formatCurrency(agreementData?.monthly_amount)}/mo`
-              : formatCurrency(agreementData?.quote_total || lead.quote_total)}
-          </div>
+          <div className="text-xs text-muted uppercase tracking-wide">{displayLabel}</div>
+          <div className="text-2xl font-bold text-white mt-0.5">{displayTotal}</div>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
             <div className="text-xs text-muted">Signed By</div>
-            <div className="text-sm text-slate-200">{agreementData?.signed_by || lead.signed_by || '—'}</div>
+            <div className="text-sm text-slate-200">{agreementData?.signed_by || '—'}</div>
           </div>
           <div>
             <div className="text-xs text-muted">Signed At</div>
-            <div className="text-sm text-slate-200">{formatDate(agreementData?.signed_at || lead.signed_at)}</div>
+            <div className="text-sm text-slate-200">{formatDate(agreementData?.signed_at)}</div>
           </div>
           <div>
             <div className="text-xs text-muted">Type</div>
@@ -524,8 +572,8 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
           <div>
             <div className="text-xs text-muted">Agreement</div>
             <div className="text-sm">
-              {lead.agreement_file_url
-                ? <a href={lead.agreement_file_url} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">View PDF</a>
+              {(lead as any).agreement_file_url
+                ? <a href={(lead as any).agreement_file_url} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">View PDF</a>
                 : <span className="text-green">✓ Digitally Signed</span>}
             </div>
           </div>
@@ -533,7 +581,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
 
         <div className="flex items-center gap-2 pt-2 border-t border-green/10">
           <StatusBadge active={!!lead.job_created} activeLabel="Job Created" inactiveLabel="Job Pending" />
-          <StatusBadge active={!!lead.inventory_reserved} activeLabel="Inventory Reserved" inactiveLabel="Not Reserved" />
+          <StatusBadge active={!!(lead as any).inventory_reserved} activeLabel="Inventory Reserved" inactiveLabel="Not Reserved" />
         </div>
       </div>
 
@@ -683,7 +731,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 <div><span className="text-slate-400 font-semibold">Customer: </span>{lead.full_name}</div>
                 <div><span className="text-slate-400 font-semibold">Address: </span>{[lead.address, lead.city, lead.state, lead.zip_code].filter(Boolean).join(', ') || '—'}</div>
                 <div><span className="text-slate-400 font-semibold">Phone: </span>{lead.phone}</div>
-                {lead.quote_total && <div><span className="text-slate-400 font-semibold">Quote Total: </span>{formatCurrency(lead.quote_total)}</div>}
+                {agreementData?.quote_total && <div><span className="text-slate-400 font-semibold">Quote Total: </span>{formatCurrency(agreementData.quote_total)}</div>}
               </div>
             </div>
 
