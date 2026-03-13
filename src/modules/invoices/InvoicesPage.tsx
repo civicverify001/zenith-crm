@@ -18,7 +18,16 @@ const fmt = (n: number) =>
 const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
 
-// ── Colorful tab config ───────────────────────────────────────
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [])
+  return isMobile
+}
+
 const FILTER_TABS: {
   key: InvoiceStatus | 'all'
   label: string
@@ -294,7 +303,7 @@ function CreateInvoiceModal({ onClose, onCreated }: { onClose: () => void; onCre
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)' }} onClick={onClose} />
-      <div style={{ position: 'relative', background: '#162232', borderRadius: 14, border: '1px solid #1e3a4f', width: '100%', maxWidth: 440, padding: 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ position: 'relative', background: '#162232', borderRadius: 14, border: '1px solid #1e3a4f', width: '100%', maxWidth: 440, padding: 28, display: 'flex', flexDirection: 'column', gap: 16, margin: 16 }}>
         <div style={{ fontWeight: 800, fontSize: 20, color: '#e2e8f0' }}>New Invoice</div>
         <div style={{ display: 'flex', gap: 4, background: '#0f1923', borderRadius: 8, padding: 3 }}>
           {(['from_quote', 'manual'] as const).map(v => (
@@ -364,6 +373,7 @@ function CreateInvoiceModal({ onClose, onCreated }: { onClose: () => void; onCre
 
 /* ─── Main Page ─────────────────────────────────────────────── */
 export function InvoicesPage() {
+  const isMobile = useIsMobile()
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Invoice | null>(null)
@@ -396,34 +406,44 @@ export function InvoicesPage() {
       {/* ── Top bar ── */}
       <div style={{
         background: '#162232', borderBottom: '1px solid #1e3a4f',
-        padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+        padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 800, fontSize: 20, color: '#e2e8f0', lineHeight: 1.2 }}>Invoices</div>
-          <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>Track billing, payments, and outstanding balances</div>
+          <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>Track billing, payments, and balances</div>
         </div>
-        <input
-          placeholder="Search customer or invoice #…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{
-            background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8,
-            color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none',
-            width: 240, flexShrink: 0,
-          }}
-        />
+        {!isMobile && (
+          <input
+            placeholder="Search customer or invoice #…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none', width: 220, flexShrink: 0 }}
+          />
+        )}
         <button
           onClick={() => setShowCreate(true)}
-          style={{ padding: '10px 22px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 14, flexShrink: 0, whiteSpace: 'nowrap' }}
+          style={{ padding: '10px 18px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 14, flexShrink: 0, whiteSpace: 'nowrap' }}
         >
           + New Invoice
         </button>
       </div>
 
+      {/* Mobile search */}
+      {isMobile && (
+        <div style={{ padding: '10px 16px', background: '#0f1923', borderBottom: '1px solid #1e3a4f' }}>
+          <input
+            placeholder="Search customer or invoice #…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '10px 14px', fontSize: 14, outline: 'none', width: '100%', boxSizing: 'border-box' }}
+          />
+        </div>
+      )}
+
       {/* ── Colorful filter tabs ── */}
       <div style={{
         background: '#0c1a26', borderBottom: '1px solid #1e3a4f',
-        padding: '12px 24px', display: 'flex', gap: 8, flexShrink: 0,
+        padding: '10px 16px', display: 'flex', gap: 6, flexShrink: 0, overflowX: 'auto',
       }}>
         {FILTER_TABS.map(f => {
           const count = countFor(f.key)
@@ -433,26 +453,25 @@ export function InvoicesPage() {
               key={f.key}
               onClick={() => setFilter(f.key)}
               style={{
-                flex: 1,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                padding: '11px 8px', borderRadius: 10,
+                flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                padding: isMobile ? '8px 10px' : '11px 8px',
+                borderRadius: 10,
                 border: `1px solid ${isActive ? f.color + '60' : f.border}`,
                 background: isActive ? f.bg : 'rgba(255,255,255,0.02)',
                 color: isActive ? f.color : '#475569',
-                cursor: 'pointer', fontSize: 13, fontWeight: isActive ? 700 : 500,
-                transition: 'all 0.12s',
+                cursor: 'pointer', fontSize: isMobile ? 12 : 13,
+                fontWeight: isActive ? 700 : 500,
                 boxShadow: isActive ? `0 0 14px ${f.color}20` : 'none',
               }}
-              onMouseEnter={e => { if (!isActive) { e.currentTarget.style.background = f.bg; e.currentTarget.style.color = f.color } }}
-              onMouseLeave={e => { if (!isActive) { e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; e.currentTarget.style.color = '#475569' } }}
             >
-              <span style={{ fontSize: 14 }}>{f.icon}</span>
-              <span>{f.label}</span>
+              <span>{f.icon}</span>
+              {!isMobile && <span>{f.label}</span>}
               {count > 0 && (
                 <span style={{
                   background: isActive ? f.color + '30' : 'rgba(255,255,255,0.06)',
                   color: isActive ? f.color : '#64748b',
-                  borderRadius: 20, padding: '1px 7px', fontSize: 11, fontWeight: 700,
+                  borderRadius: 20, padding: '1px 6px', fontSize: 11, fontWeight: 700,
                 }}>
                   {count}
                 </span>
@@ -464,25 +483,25 @@ export function InvoicesPage() {
 
       {/* ── Stats strip ── */}
       <div style={{
-        display: 'flex', gap: 12, padding: '14px 24px',
+        display: 'flex', gap: 10, padding: '12px 16px',
         borderBottom: '1px solid #1e3a4f', background: '#0f1923',
         flexShrink: 0, overflowX: 'auto',
       }}>
         {[
           { label: 'Outstanding', val: fmt(outstanding), color: '#60a5fa', sub: `${invoices.filter(i => ['sent','partial','overdue'].includes(i.status)).length} invoices` },
           { label: 'Overdue',     val: String(overdueCount), color: overdueCount > 0 ? '#f87171' : '#94a3b8', sub: 'need attention' },
-          { label: 'Paid MTD',    val: fmt(paidMtd), color: '#4ade80', sub: 'collected this month' },
+          { label: 'Paid MTD',    val: fmt(paidMtd), color: '#4ade80', sub: 'this month' },
         ].map(s => (
-          <div key={s.label} style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 10, padding: '10px 18px', flexShrink: 0, minWidth: 130 }}>
+          <div key={s.label} style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 10, padding: isMobile ? '8px 12px' : '10px 18px', flexShrink: 0, minWidth: isMobile ? 100 : 130 }}>
             <div style={{ color: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{s.label}</div>
-            <div style={{ color: s.color, fontWeight: 800, fontSize: 20, marginTop: 3 }}>{s.val}</div>
-            <div style={{ color: '#475569', fontSize: 11, marginTop: 2 }}>{s.sub}</div>
+            <div style={{ color: s.color, fontWeight: 800, fontSize: isMobile ? 16 : 20, marginTop: 3 }}>{s.val}</div>
+            {!isMobile && <div style={{ color: '#475569', fontSize: 11, marginTop: 2 }}>{s.sub}</div>}
           </div>
         ))}
       </div>
 
-      {/* ── Table ── */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+      {/* ── Content ── */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px 12px' : '16px 24px' }}>
         {loading ? (
           <div style={{ textAlign: 'center', padding: 60, color: '#64748b' }}>Loading invoices…</div>
         ) : filtered.length === 0 ? (
@@ -491,7 +510,53 @@ export function InvoicesPage() {
             <div style={{ color: '#64748b', fontSize: 15 }}>No invoices found</div>
             <button onClick={() => setShowCreate(true)} style={{ marginTop: 16, padding: '10px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#0d7ea3', color: '#fff', fontWeight: 700 }}>Create one →</button>
           </div>
+        ) : isMobile ? (
+          /* ── MOBILE CARD LAYOUT ── */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {filtered.map(inv => {
+              const balance = balanceDue(inv)
+              const statusColor = STATUS_COLORS[inv.status]
+              return (
+                <div
+                  key={inv.id}
+                  onClick={() => setSelected(inv)}
+                  style={{
+                    background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12,
+                    padding: '14px 16px', cursor: 'pointer',
+                  }}
+                >
+                  {/* Row 1: Invoice# + Status */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#60a5fa', fontFamily: 'monospace' }}>{inv.invoice_number}</span>
+                    <Badge status={inv.status} />
+                  </div>
+                  {/* Row 2: Customer */}
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0', marginBottom: 10 }}>
+                    {inv.customer_name || '—'}
+                  </div>
+                  {/* Row 3: Total + Balance + Due */}
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Total</div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: '#e2e8f0' }}>{fmt(inv.total)}</div>
+                    </div>
+                    {balance > 0 && (
+                      <div>
+                        <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Balance</div>
+                        <div style={{ fontSize: 15, fontWeight: 800, color: '#f87171' }}>{fmt(balance)}</div>
+                      </div>
+                    )}
+                    <div style={{ marginLeft: 'auto' }}>
+                      <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Due</div>
+                      <div style={{ fontSize: 13, color: '#94a3b8' }}>{fmtDate(inv.due_date)}</div>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         ) : (
+          /* ── DESKTOP TABLE LAYOUT ── */
           <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
