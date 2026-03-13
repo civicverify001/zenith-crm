@@ -48,6 +48,37 @@ async function getValidAccessToken(conn) {
   return data.access_token
 }
 
+// ── Resolve question UUIDs → human-readable labels ────────────────
+// Queries qualifying_questions or site_visit_questions
+// Returns: { [uuid]: "Question label text" }
+async function buildQuestionLabelMap(tableName) {
+  const { data, error } = await supabaseAdmin
+    .from(tableName)
+    .select('id, question')
+  if (error || !data) return {}
+  return data.reduce((map, row) => {
+    map[row.id] = row.question || row.id
+    return map
+  }, {})
+}
+
+// Format { uuid: answer } JSONB into readable bullet lines using label map
+// Skips empty/false values and photo URLs
+function formatAnswersWithLabels(answersObj, labelMap) {
+  if (!answersObj || typeof answersObj !== 'object') return []
+  return Object.entries(answersObj)
+    .filter(([, v]) => {
+      if (v === null || v === undefined || v === '' || v === false) return false
+      if (typeof v === 'string' && v.startsWith('http')) return false // skip photo URLs
+      return true
+    })
+    .map(([id, val]) => {
+      const label = labelMap[id] || id // fallback to UUID only if question was deleted
+      const display = typeof val === 'boolean' ? (val ? 'Yes' : 'No') : String(val)
+      return `• ${label}: ${display}`
+    })
+}
+
 // ── Build event for a JOB (install) ──────────────────────────────
 async function buildJobEvent(job) {
   // Fetch full customer
@@ -67,7 +98,7 @@ async function buildJobEvent(job) {
     products = lines || []
   }
 
-  // Fetch lead notes
+  // Fetch lead notes + answers
   let leadNotes = ''
   let qualifyingAnswers = {}
   let siteVisitAnswers = {}
@@ -95,6 +126,12 @@ async function buildJobEvent(job) {
       .maybeSingle()
     installFee = contract?.monthly_amount || null
   }
+
+  // Resolve question labels (parallel — no extra latency)
+  const [qualifyingLabelMap, siteVisitLabelMap] = await Promise.all([
+    buildQuestionLabelMap('qualifying_questions'),
+    buildQuestionLabelMap('site_visit_questions'),
+  ])
 
   const customerName = customer?.full_name || job.customer_name_snapshot || 'Customer'
   const address = customer?.service_address || job.service_address_snapshot || ''
@@ -139,23 +176,19 @@ async function buildJobEvent(job) {
     lines.push('')
   }
 
-  // Qualifying answers
-  const qaEntries = Object.entries(qualifyingAnswers).filter(([, v]) => v)
-  if (qaEntries.length > 0) {
+  // Qualifying answers — resolved labels
+  const qaLines = formatAnswersWithLabels(qualifyingAnswers, qualifyingLabelMap)
+  if (qaLines.length > 0) {
     lines.push(`✅ QUALIFYING INFO`)
-    for (const [key, val] of qaEntries) {
-      lines.push(`• ${key.replace(/_/g, ' ')}: ${val}`)
-    }
+    lines.push(...qaLines)
     lines.push('')
   }
 
-  // Site visit notes
-  const svEntries = Object.entries(siteVisitAnswers).filter(([, v]) => v && typeof v === 'string')
-  if (svEntries.length > 0) {
+  // Site visit answers — resolved labels
+  const svLines = formatAnswersWithLabels(siteVisitAnswers, siteVisitLabelMap)
+  if (svLines.length > 0) {
     lines.push(`🏠 SITE VISIT NOTES`)
-    for (const [key, val] of svEntries) {
-      lines.push(`• ${key.replace(/_/g, ' ')}: ${val}`)
-    }
+    lines.push(...svLines)
     lines.push('')
   }
 
@@ -198,6 +231,12 @@ async function buildSiteVisitEvent(visit) {
 
   if (!lead) return null
 
+  // Resolve question labels (parallel)
+  const [qualifyingLabelMap, siteVisitLabelMap] = await Promise.all([
+    buildQuestionLabelMap('qualifying_questions'),
+    buildQuestionLabelMap('site_visit_questions'),
+  ])
+
   const address = [lead.address, lead.city, lead.state, lead.zip].filter(Boolean).join(', ')
   const mapsUrl = address ? `https://maps.google.com/?q=${encodeURIComponent(address)}` : null
   const crmUrl  = `https://zenith-crm-ten.vercel.app/leads?lead=${visit.lead_id}`
@@ -239,14 +278,19 @@ async function buildSiteVisitEvent(visit) {
     lines.push('')
   }
 
-  // Qualifying answers
-  const qa = lead.qualifying_answers || {}
-  const qaEntries = Object.entries(qa).filter(([, v]) => v)
-  if (qaEntries.length > 0) {
+  // Qualifying answers — resolved labels
+  const qaLines = formatAnswersWithLabels(lead.qualifying_answers || {}, qualifyingLabelMap)
+  if (qaLines.length > 0) {
     lines.push(`✅ QUALIFYING INFO`)
-    for (const [key, val] of qaEntries) {
-      lines.push(`• ${key.replace(/_/g, ' ')}: ${val}`)
-    }
+    lines.push(...qaLines)
+    lines.push('')
+  }
+
+  // Site visit answers — resolved labels (photo URLs already filtered by formatAnswersWithLabels)
+  const svLines = formatAnswersWithLabels(lead.site_visit_answers || {}, siteVisitLabelMap)
+  if (svLines.length > 0) {
+    lines.push(`🏠 SITE VISIT NOTES`)
+    lines.push(...svLines)
     lines.push('')
   }
 
