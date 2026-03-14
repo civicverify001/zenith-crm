@@ -235,7 +235,7 @@ export async function getInstallKPIs(range: DateRange) {
       supabase.from('jobs').select('*', { count: 'exact', head: true }).eq('status', 'scheduled'),
       supabase.from('jobs').select('*', { count: 'exact', head: true }).eq('status', 'in_progress'),
       supabase.from('jobs').select('*', { count: 'exact', head: true })
-        .eq('status', 'complete').eq('proof_approved', false),
+        .eq('status', 'complete').eq('handover_signed', false),
       supabase.from('jobs').select('*', { count: 'exact', head: true }).eq('status', 'waiting_for_stock'),
     ])
 
@@ -298,7 +298,7 @@ export async function getJobsDrilldown(range: DateRange, limit = 100) {
   try {
     const { data, error } = await supabase
       .from('jobs')
-      .select('id, customer_name_snapshot, system_type, status, scheduled_date, completed_at, assigned_technician_name, proof_approved, service_address_snapshot')
+      .select('id, customer_name_snapshot, system_type, status, scheduled_date, completed_at, assigned_technician_name, handover_signed, service_address_snapshot')
       .gte('scheduled_date', range.start)
       .lte('scheduled_date', range.end + 'T23:59:59')
       .order('scheduled_date', { ascending: false })
@@ -405,7 +405,7 @@ export async function getDataQualityExceptions() {
       supabase.from('jobs')
         .select('id, customer_name_snapshot, completed_at, scheduled_date')
         .eq('status', 'complete')
-        .eq('proof_approved', false)
+        .eq('handover_signed', false)
         .order('completed_at', { ascending: false })
         .limit(50),
 
@@ -812,7 +812,7 @@ export async function getGrossMarginEstimate() {
     const productCounts: Record<string, number> = {}
     for (const sys of (installedSystems || [])) {
       if (sys.product_catalog_id) {
-       productCounts[sys.product_catalog_id] = (productCounts[sys.product_catalog_id] || 0) + 1
+        productCounts[sys.product_catalog_id] = (productCounts[sys.product_id] || 0) + 1
       }
     }
 
