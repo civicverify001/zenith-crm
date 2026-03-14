@@ -388,8 +388,8 @@ export async function getDataQualityExceptions() {
       // 1. Leads with null or blank source
       supabase.from('leads')
         .select('id, full_name, created_at, stage')
-        .is('source', null)
-        .filter('stage', 'not.in', '(won,lost,dnd)')
+        .or('source.is.null,source.eq.')
+        .neq('stage', 'won').neq('stage', 'lost').neq('stage', 'dnd')
         .order('created_at', { ascending: false })
         .limit(50),
 
@@ -855,5 +855,216 @@ export async function getGrossMarginEstimate() {
       totalCost: 0, grossMargin: 0, marginPct: 0,
       costCoverage: 0, uncoveredProducts: 0, isEstimate: true,
     }
+  }
+}
+
+// ─── Rep Performance ───────────────────────────────────────────
+export async function getRepPerformance() {
+  try {
+    // Get all reps from user_profiles
+    const { data: reps } = await supabase
+      .from('user_profiles')
+      .select('id, full_name, role')
+      .in('role', ['salesrep', 'admin'])
+
+    if (!reps?.length) return []
+
+    // Leads per rep
+    const { data: leads } = await supabase
+      .from('leads')
+      .select('assigned_rep_id, stage, created_at')
+
+    // Quotes — join via lead_id to get rep attribution
+    const { data: quotes } = await supabase
+      .from('quotes')
+      .select('lead_id, status, commercial_type, monthly_amount, one_time_amount, created_at')
+
+    // Jobs per technician
+    const { data: jobs } = await supabase
+      .from('jobs')
+      .select('assigned_technician_id, status')
+      .eq('status', 'complete')
+
+    // Build lead → rep map
+    const leadRepMap: Record<string, string> = {}
+    const repLeadCounts: Record<string, { total: number; won: number; lost: number }> = {}
+
+    for (const lead of (leads || [])) {
+      if (!lead.assigned_rep_id) continue
+      leadRepMap[lead.id] = lead.assigned_rep_id
+      if (!repLeadCounts[lead.assigned_rep_id]) repLeadCounts[lead.assigned_rep_id] = { total: 0, won: 0, lost: 0 }
+      repLeadCounts[lead.assigned_rep_id].total++
+      if (lead.stage === 'won')  repLeadCounts[lead.assigned_rep_id].won++
+      if (lead.stage === 'lost') repLeadCounts[lead.assigned_rep_id].lost++
+    }
+
+    // Quotes per rep (via lead attribution)
+    const repQuoteCounts: Record<string, { sent: number; accepted: number; totalValue: number }> = {}
+    for (const q of (quotes || [])) {
+      const repId = q.lead_id ? leadRepMap[q.lead_id] : null
+      if (!repId) continue
+      if (!repQuoteCounts[repId]) repQuoteCounts[repId] = { sent: 0, accepted: 0, totalValue: 0 }
+      if (['sent','viewed','accepted','declined','expired','signed'].includes(q.status)) {
+        repQuoteCounts[repId].sent++
+      }
+      if (['accepted','signed'].includes(q.status)) {
+        repQuoteCounts[repId].accepted++
+        repQuoteCounts[repId].totalValue += Number(q.monthly_amount) || Number(q.one_time_amount) || 0
+      }
+    }
+
+    // Installs per tech
+    const techInstallCounts: Record<string, number> = {}
+    for (const job of (jobs || [])) {
+      if (!job.assigned_technician_id) continue
+      techInstallCounts[job.assigned_technician_id] = (techInstallCounts[job.assigned_technician_id] || 0) + 1
+    }
+
+    return reps.map(rep => {
+      const lc = repLeadCounts[rep.id]  || { total: 0, won: 0, lost: 0 }
+      const qc = repQuoteCounts[rep.id] || { sent: 0, accepted: 0, totalValue: 0 }
+      const installs = techInstallCounts[rep.id] || 0
+      const closeRate = qc.sent > 0 ? Math.round((qc.accepted / qc.sent) * 100) : 0
+      return {
+        id:         rep.id,
+        name:       rep.full_name || 'Unknown',
+        role:       rep.role,
+        totalLeads: lc.total,
+        wonLeads:   lc.won,
+        lostLeads:  lc.lost,
+        quotesSent: qc.sent,
+        quotesWon:  qc.accepted,
+        closeRate,
+        totalValue: qc.totalValue,
+        installs,
+      }
+    }).filter(r => r.totalLeads > 0 || r.quotesSent > 0 || r.installs > 0)
+  } catch (err) {
+    console.error('getRepPerformance:', err)
+    return []
+  }
+}
+
+// ─── Quotes & Commercial ───────────────────────────────────────
+export async function getQuotesSummary() {
+  try {
+    const { data, error } = await supabase
+      .from('quotes')
+      .select('id, status, commercial_type, monthly_amount, one_time_amount, created_at, updated_at, view_count')
+      .order('created_at', { ascending: false })
+    if (error) throw error
+
+    const quotes = data || []
+    const now = Date.now()
+
+    const summary = {
+      total:       0,
+      draft:       0,
+      sent:        0,
+      viewed:      0,
+      accepted:    0,
+      declined:    0,
+      expired:     0,
+      rental:      0,
+      purchase:    0,
+      financed:    0,
+      avgDaysToAccept: 0,
+      acceptanceRate:  0,
+      avgQuoteValue:   0,
+      totalPipeline:   0,
+    }
+
+    let daysToAcceptTotal = 0
+    let daysToAcceptCount = 0
+    let totalSent = 0
+
+    for (const q of quotes) {
+      summary.total++
+      const s = q.status || 'draft'
+      if (s === 'draft')    summary.draft++
+      if (s === 'sent')     summary.sent++
+      if (s === 'viewed')   summary.viewed++
+      if (['accepted','signed'].includes(s)) {
+        summary.accepted++
+        // Days to accept = updated_at - created_at (approximate — updated_at when status changed)
+        if (q.updated_at && q.created_at) {
+          const days = Math.floor((new Date(q.updated_at).getTime() - new Date(q.created_at).getTime()) / 86400000)
+          if (days >= 0 && days < 365) {
+            daysToAcceptTotal += days
+            daysToAcceptCount++
+          }
+        }
+      }
+      if (s === 'declined') summary.declined++
+      if (s === 'expired')  summary.expired++
+
+      const ct = q.commercial_type || ''
+      if (ct === 'rental')   summary.rental++
+      if (ct === 'purchase') summary.purchase++
+      if (ct === 'financed') summary.financed++
+
+      if (['sent','viewed','accepted','signed','declined','expired'].includes(s)) totalSent++
+
+      const val = Number(q.monthly_amount) || Number(q.one_time_amount) || 0
+      if (['sent','viewed'].includes(s)) summary.totalPipeline += val
+    }
+
+    summary.acceptanceRate  = totalSent > 0 ? Math.round((summary.accepted / totalSent) * 100) : 0
+    summary.avgDaysToAccept = daysToAcceptCount > 0 ? Math.round(daysToAcceptTotal / daysToAcceptCount) : 0
+    summary.avgQuoteValue   = summary.accepted > 0
+      ? Math.round(quotes.filter(q => ['accepted','signed'].includes(q.status))
+          .reduce((s, q) => s + (Number(q.monthly_amount) || Number(q.one_time_amount) || 0), 0) / summary.accepted)
+      : 0
+
+    return { summary, quotes }
+  } catch (err) {
+    console.error('getQuotesSummary:', err)
+    return { summary: null, quotes: [] }
+  }
+}
+
+// ─── Marketing / Lead Sources ──────────────────────────────────
+export async function getLeadSourceBreakdown() {
+  try {
+    const { data: leads, error } = await supabase
+      .from('leads')
+      .select('id, source, utm_source, utm_campaign, stage, created_at')
+    if (error) throw error
+
+    const sourceMap: Record<string, { total: number; won: number; lost: number; active: number }> = {}
+
+    for (const lead of (leads || [])) {
+      const src = lead.source || 'unknown'
+      if (!sourceMap[src]) sourceMap[src] = { total: 0, won: 0, lost: 0, active: 0 }
+      sourceMap[src].total++
+      if (lead.stage === 'won')  sourceMap[src].won++
+      if (lead.stage === 'lost') sourceMap[src].lost++
+      if (!['won','lost','dnd','future_follow_up'].includes(lead.stage || '')) sourceMap[src].active++
+    }
+
+    // UTM breakdown
+    const utmMap: Record<string, number> = {}
+    for (const lead of (leads || [])) {
+      if (!lead.utm_campaign) continue
+      utmMap[lead.utm_campaign] = (utmMap[lead.utm_campaign] || 0) + 1
+    }
+
+    const sources = Object.entries(sourceMap)
+      .map(([source, counts]) => ({
+        source,
+        ...counts,
+        conversionRate: counts.total > 0 ? Math.round((counts.won / counts.total) * 100) : 0,
+      }))
+      .sort((a, b) => b.total - a.total)
+
+    const utmCampaigns = Object.entries(utmMap)
+      .map(([campaign, count]) => ({ campaign, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10)
+
+    return { sources, utmCampaigns, totalLeads: (leads || []).length }
+  } catch (err) {
+    console.error('getLeadSourceBreakdown:', err)
+    return { sources: [], utmCampaigns: [], totalLeads: 0 }
   }
 }
