@@ -806,13 +806,13 @@ export async function getGrossMarginEstimate() {
     // How many of each product is installed (from installed_systems + system_type match)
     const { data: installedSystems } = await supabase
       .from('installed_systems')
-      .select('system_type, product_id')
+      .select('system_type, product_catalog_id')
 
     // Count by product_id where available, else skip
     const productCounts: Record<string, number> = {}
     for (const sys of (installedSystems || [])) {
-      if (sys.product_id) {
-        productCounts[sys.product_id] = (productCounts[sys.product_id] || 0) + 1
+      if (sys.product_catalog_id) {
+       productCounts[sys.product_catalog_id] = (productCounts[sys.product_catalog_id] || 0) + 1
       }
     }
 
@@ -829,7 +829,7 @@ export async function getGrossMarginEstimate() {
     }
 
     // Count installs with no product_id (uncovered)
-    uncoveredProducts = (installedSystems || []).filter(s => !s.product_id).length
+    uncoveredProducts = (installedSystems || []).filter(s => !s.product_catalog_id).length
 
     const grossMargin    = totalRevenue - totalCost
     const marginPct      = totalRevenue > 0 ? (grossMargin / totalRevenue) * 100 : 0
