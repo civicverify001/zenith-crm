@@ -235,7 +235,7 @@ export async function getInstallKPIs(range: DateRange) {
       supabase.from('jobs').select('*', { count: 'exact', head: true }).eq('status', 'scheduled'),
       supabase.from('jobs').select('*', { count: 'exact', head: true }).eq('status', 'in_progress'),
       supabase.from('jobs').select('*', { count: 'exact', head: true })
-        .eq('status', 'complete').eq('proof_approved', false),
+        .eq('status', 'complete').eq('handover_signed', false),
       supabase.from('jobs').select('*', { count: 'exact', head: true }).eq('status', 'waiting_for_stock'),
     ])
 
@@ -298,7 +298,7 @@ export async function getJobsDrilldown(range: DateRange, limit = 100) {
   try {
     const { data, error } = await supabase
       .from('jobs')
-      .select('id, customer_name_snapshot, system_type, status, scheduled_date, completed_at, assigned_technician_name, proof_approved, service_address_snapshot')
+      .select('id, customer_name_snapshot, system_type, status, scheduled_date, completed_at, assigned_technician_name, handover_signed, service_address_snapshot')
       .gte('scheduled_date', range.start)
       .lte('scheduled_date', range.end + 'T23:59:59')
       .order('scheduled_date', { ascending: false })
@@ -405,7 +405,7 @@ export async function getDataQualityExceptions() {
       supabase.from('jobs')
         .select('id, customer_name_snapshot, completed_at, scheduled_date')
         .eq('status', 'complete')
-        .eq('proof_approved', false)
+        .eq('handover_signed', false)
         .order('completed_at', { ascending: false })
         .limit(50),
 
@@ -693,7 +693,7 @@ export async function getCommercialTypeSplit(): Promise<{ type: string; count: n
       .from('payment_transactions')
       .select('customer_id, amount, type')
       .eq('status', 'succeeded')
-      .in('type', ['deposit', 'link', 'manual'])
+      .in('type', ['link', 'manual'])
 
     const purchaseAmounts: Record<string, number> = {}
     for (const p of (payments || [])) {
@@ -701,7 +701,7 @@ export async function getCommercialTypeSplit(): Promise<{ type: string; count: n
     }
 
     const map: Record<string, { count: number; totalValue: number }> = {}
-    for (const row of (systems || [])) {
+    for (const row of (data || [])) {
       const t = row.ownership_type || 'unknown'
       if (!map[t]) map[t] = { count: 0, totalValue: 0 }
       map[t].count++
@@ -790,7 +790,7 @@ export async function getGrossMarginEstimate() {
       .from('payment_transactions')
       .select('amount')
       .eq('status', 'succeeded')
-      .in('type', ['deposit', 'link', 'manual'])
+      .in('type', ['link', 'manual'])
 
     const rentalRevenue   = (rentalContracts  || []).reduce((s, c) => s + (Number(c.monthly_amount) || 0), 0)
     const purchaseRevenue = (purchasePayments || []).reduce((s, p) => s + (Number(p.amount)         || 0), 0)
@@ -812,7 +812,7 @@ export async function getGrossMarginEstimate() {
     const productCounts: Record<string, number> = {}
     for (const sys of (installedSystems || [])) {
       if (sys.product_catalog_id) {
-       productCounts[sys.product_catalog_id] = (productCounts[sys.product_catalog_id] || 0) + 1
+        productCounts[sys.product_catalog_id] = (productCounts[sys.product_id] || 0) + 1
       }
     }
 
