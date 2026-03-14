@@ -693,7 +693,7 @@ export async function getCommercialTypeSplit(): Promise<{ type: string; count: n
       .from('payment_transactions')
       .select('customer_id, amount, type')
       .eq('status', 'succeeded')
-      .in('type', ['link', 'manual'])
+      .in('type', ['deposit', 'link', 'manual'])
 
     const purchaseAmounts: Record<string, number> = {}
     for (const p of (payments || [])) {
@@ -790,7 +790,7 @@ export async function getGrossMarginEstimate() {
       .from('payment_transactions')
       .select('amount')
       .eq('status', 'succeeded')
-      .in('type', ['link', 'manual'])
+      .in('type', ['deposit', 'link', 'manual'])
 
     const rentalRevenue   = (rentalContracts  || []).reduce((s, c) => s + (Number(c.monthly_amount) || 0), 0)
     const purchaseRevenue = (purchasePayments || []).reduce((s, p) => s + (Number(p.amount)         || 0), 0)
