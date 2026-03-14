@@ -701,7 +701,7 @@ export async function getCommercialTypeSplit(): Promise<{ type: string; count: n
     }
 
     const map: Record<string, { count: number; totalValue: number }> = {}
-    for (const row of (data || [])) {
+    for (const row of (systems || [])) {
       const t = row.ownership_type || 'unknown'
       if (!map[t]) map[t] = { count: 0, totalValue: 0 }
       map[t].count++
