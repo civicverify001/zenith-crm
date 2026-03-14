@@ -909,7 +909,7 @@ export async function getRepPerformance() {
       }
       if (['accepted','signed'].includes(q.status)) {
         repQuoteCounts[repId].accepted++
-        repQuoteCounts[repId].totalValue += Number(q.monthly_amount) || Number(q.one_time_amount) || 0
+        repQuoteCounts[repId].totalValue += Number(q.monthly_amount) || Number(q.quote_total) || 0
       }
     }
 
@@ -950,7 +950,7 @@ export async function getQuotesSummary() {
   try {
     const { data, error } = await supabase
       .from('quotes')
-      .select('id, status, commercial_type, monthly_amount, one_time_amount, created_at, updated_at, view_count')
+      .select('id, status, commercial_type, monthly_amount, quote_total, deposit_amount, created_at, updated_at, view_count')
       .order('created_at', { ascending: false })
     if (error) throw error
 
@@ -1005,7 +1005,7 @@ export async function getQuotesSummary() {
 
       if (['sent','viewed','accepted','signed','declined','expired'].includes(s)) totalSent++
 
-      const val = Number(q.monthly_amount) || Number(q.one_time_amount) || 0
+      const val = Number(q.monthly_amount) || Number(q.quote_total) || 0
       if (['sent','viewed'].includes(s)) summary.totalPipeline += val
     }
 
@@ -1013,7 +1013,7 @@ export async function getQuotesSummary() {
     summary.avgDaysToAccept = daysToAcceptCount > 0 ? Math.round(daysToAcceptTotal / daysToAcceptCount) : 0
     summary.avgQuoteValue   = summary.accepted > 0
       ? Math.round(quotes.filter(q => ['accepted','signed'].includes(q.status))
-          .reduce((s, q) => s + (Number(q.monthly_amount) || Number(q.one_time_amount) || 0), 0) / summary.accepted)
+          .reduce((s, q) => s + (Number(q.monthly_amount) || Number(q.quote_total) || 0), 0) / summary.accepted)
       : 0
 
     return { summary, quotes }
