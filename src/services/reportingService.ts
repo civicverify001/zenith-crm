@@ -472,41 +472,54 @@ export async function getDataQualityExceptions() {
 
 export async function getCustomerKPIs() {
   try {
-    const [activeRes, atRiskRes, allRes, renewalRes] = await Promise.all([
-      supabase.from('customers')
+    // Run each query independently so one failure doesn't kill the rest
+    let totalCustomers = 0, activeCustomers = 0, atRisk = 0, renewalsIn30 = 0, serviceDue = 0
+
+    try {
+      const { count } = await supabase.from('customers')
         .select('*', { count: 'exact', head: true })
-        .eq('lifecycle_status', 'active'),
-      supabase.from('customers')
+      totalCustomers = count ?? 0
+    } catch (_) {}
+
+    try {
+      const { count } = await supabase.from('customers')
         .select('*', { count: 'exact', head: true })
-        .eq('lifecycle_status', 'at_risk'),
-      supabase.from('customers')
-        .select('*', { count: 'exact', head: true }),
-      supabase.from('contracts')
+        .eq('lifecycle_status', 'active')
+      activeCustomers = count ?? 0
+    } catch (_) {}
+
+    try {
+      const { count } = await supabase.from('customers')
+        .select('*', { count: 'exact', head: true })
+        .eq('lifecycle_status', 'at_risk')
+      atRisk = count ?? 0
+    } catch (_) {}
+
+    try {
+      const now = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const today = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`
+      const future = new Date(Date.now() + 30 * 86400000)
+      const in30 = `${future.getFullYear()}-${pad(future.getMonth()+1)}-${pad(future.getDate())}`
+      const { count } = await supabase.from('contracts')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'active')
-        .gte('end_date', localDateStr())
-        .lte('end_date', localDateStr(new Date(Date.now() + 30 * 86400000))),
-    ])
+        .gte('end_date', today)
+        .lte('end_date', in30)
+      renewalsIn30 = count ?? 0
+    } catch (_) {}
 
-    let serviceDue = 0
     try {
-      const { count } = await supabase
-        .from('service_schedule_items')
+      const { count } = await supabase.from('service_schedule_items')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'overdue')
       serviceDue = count ?? 0
-    } catch (_) { serviceDue = 0 }
+    } catch (_) {}
 
-    return {
-      totalCustomers:  allRes.count     ?? 0,
-      activeCustomers: activeRes.count  ?? 0,
-      atRisk:          atRiskRes.count  ?? 0,
-      renewalsIn30:    renewalRes.count ?? 0,
-      serviceDue,
-    }
+    return { totalCustomers, activeCustomers, atRisk, renewalsIn30, serviceDue }
   } catch (err) {
     console.error('getCustomerKPIs:', err)
-    throw err
+    return { totalCustomers: 0, activeCustomers: 0, atRisk: 0, renewalsIn30: 0, serviceDue: 0 }
   }
 }
 
