@@ -64,7 +64,7 @@ export async function getExecutiveKPIs(range: DateRange) {
     ] = await Promise.all([
       supabase.from('leads')
         .select('*', { count: 'exact', head: true })
-        .not('stage', 'in', '(won,lost,dnd,future_follow_up)'),,
+        .not('stage', 'in', '(won,lost,dnd,future_follow_up)'),
 
       supabase.from('contracts')
         .select('monthly_amount')
@@ -358,7 +358,7 @@ export async function getLeadsDrilldown(limit = 100) {
     const { data, error } = await supabase
       .from('leads')
       .select('id, full_name, phone, stage, source, assigned_rep_id, created_at')
-      .not('stage', 'in', '(won,lost,dnd,future_follow_up)'),
+      .not('stage', 'in', '(won,lost,dnd,future_follow_up)')
       .order('created_at', { ascending: false })
       .limit(limit)
     if (error) throw error
