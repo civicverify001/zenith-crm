@@ -9,15 +9,12 @@ import type { DateRange } from '../../services/reportingService'
 function fmt$(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
 }
-
 function fmtDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
 }
-
 function fmtMonth(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
 }
-
 function downloadCSV(data: any[], filename: string) {
   if (!data.length) return
   const keys = Object.keys(data[0])
@@ -31,50 +28,233 @@ function downloadCSV(data: any[], filename: string) {
   const csv = [keys.join(','), ...rows].join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = filename
+  const a = document.createElement('a'); a.href = url; a.download = filename
   document.body.appendChild(a); a.click()
   document.body.removeChild(a); URL.revokeObjectURL(url)
 }
 
 const STAGE_LABELS: Record<string, string> = {
-  new_lead:             'New Lead',
-  qualifying:           'Qualifying',
-  qualified:            'Qualified',
-  site_visit_scheduled: 'Site Visit',
-  proposal_in_progress: 'Proposal',
-  quote_sent:           'Quote Sent',
-  agreement_signed:     'Agreement Signed',
+  new_lead:'New Lead', qualifying:'Qualifying', qualified:'Qualified',
+  site_visit_scheduled:'Site Visit', proposal_in_progress:'Proposal',
+  quote_sent:'Quote Sent', agreement_signed:'Agreement Signed',
 }
-
 const STAGE_COLORS: Record<string, string> = {
-  new_lead:             '#64748b',
-  qualifying:           '#a78bfa',
-  qualified:            '#0d7ea3',
-  site_visit_scheduled: '#22d3ee',
-  proposal_in_progress: '#22d3ee',
-  quote_sent:           '#f59e0b',
-  agreement_signed:     '#4ade80',
+  new_lead:'#64748b', qualifying:'#a78bfa', qualified:'#0d7ea3',
+  site_visit_scheduled:'#22d3ee', proposal_in_progress:'#22d3ee',
+  quote_sent:'#f59e0b', agreement_signed:'#4ade80',
 }
 
-// ─── Shared UI Components ──────────────────────────────────────
+// ─── Health Score Engine ────────────────────────────────────────
+interface HealthSignal {
+  label: string
+  score: number      // 0–100
+  weight: number     // relative weight
+  status: 'good' | 'warn' | 'bad' | 'neutral'
+  detail: string
+}
+
+function computeHealthScore(kpis: any, exceptions: any): { score: number; grade: string; color: string; signals: HealthSignal[] } {
+  const signals: HealthSignal[] = []
+
+  // Failed payments (weight 25)
+  const failedPmt = kpis?.failedPayments48h ?? 0
+  signals.push({
+    label: 'Failed Payments',
+    score: failedPmt === 0 ? 100 : failedPmt <= 2 ? 60 : 20,
+    weight: 25,
+    status: failedPmt === 0 ? 'good' : failedPmt <= 2 ? 'warn' : 'bad',
+    detail: failedPmt === 0 ? 'All clear' : `${failedPmt} failed in last 48h`,
+  })
+
+  // Unsigned agreements (weight 15)
+  const unsigned = kpis?.unsignedAgreements ?? 0
+  signals.push({
+    label: 'Unsigned Agreements',
+    score: unsigned === 0 ? 100 : unsigned <= 2 ? 70 : 40,
+    weight: 15,
+    status: unsigned === 0 ? 'good' : unsigned <= 2 ? 'warn' : 'bad',
+    detail: unsigned === 0 ? 'All signed' : `${unsigned} awaiting signature`,
+  })
+
+  // Unassigned jobs (weight 15)
+  const unassigned = kpis?.unassignedJobs ?? 0
+  signals.push({
+    label: 'Unassigned Jobs',
+    score: unassigned === 0 ? 100 : unassigned <= 1 ? 65 : 30,
+    weight: 15,
+    status: unassigned === 0 ? 'good' : unassigned <= 1 ? 'warn' : 'bad',
+    detail: unassigned === 0 ? 'All jobs assigned' : `${unassigned} job${unassigned !== 1 ? 's' : ''} need a tech`,
+  })
+
+  // Active pipeline (weight 10)
+  const leads = kpis?.activeLeads ?? 0
+  signals.push({
+    label: 'Active Pipeline',
+    score: leads >= 5 ? 100 : leads >= 2 ? 75 : leads >= 1 ? 50 : 20,
+    weight: 10,
+    status: leads >= 3 ? 'good' : leads >= 1 ? 'warn' : 'bad',
+    detail: `${leads} active lead${leads !== 1 ? 's' : ''} in pipeline`,
+  })
+
+  // MRR (weight 15)
+  const mrr = kpis?.mrr ?? 0
+  signals.push({
+    label: 'Monthly Revenue',
+    score: mrr >= 500 ? 100 : mrr >= 200 ? 75 : mrr > 0 ? 50 : 20,
+    weight: 15,
+    status: mrr >= 200 ? 'good' : mrr > 0 ? 'warn' : 'bad',
+    detail: mrr > 0 ? `${fmt$(mrr)} MRR from active contracts` : 'No active rental contracts',
+  })
+
+  // Data quality (weight 20)
+  const dqIssues = exceptions
+    ? (exceptions.nullSourceLeads?.length ?? 0) +
+      (exceptions.nullCommercialTypeQuotes?.length ?? 0) +
+      (exceptions.overdue60Invoices?.length ?? 0)
+    : 0
+  signals.push({
+    label: 'Data Quality',
+    score: dqIssues === 0 ? 100 : dqIssues <= 2 ? 65 : 35,
+    weight: 20,
+    status: dqIssues === 0 ? 'good' : dqIssues <= 2 ? 'warn' : 'bad',
+    detail: dqIssues === 0 ? 'No data issues found' : `${dqIssues} data issue${dqIssues !== 1 ? 's' : ''} need attention`,
+  })
+
+  const totalWeight = signals.reduce((s, x) => s + x.weight, 0)
+  const weighted = signals.reduce((s, x) => s + (x.score * x.weight), 0)
+  const score = Math.round(weighted / totalWeight)
+
+  const grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F'
+  const color = score >= 90 ? '#4ade80' : score >= 75 ? '#34d399' : score >= 60 ? '#fbbf24' : score >= 40 ? '#fb923c' : '#f87171'
+
+  return { score, grade, color, signals }
+}
+
+// ─── Health Meter Component ─────────────────────────────────────
+function HealthMeter({ range }: { range: DateRange }) {
+  const { data: kpis } = useQuery({
+    queryKey: ['reports', 'executive', range.start, range.end],
+    queryFn: () => rs.getExecutiveKPIs(range),
+    refetchInterval: 120_000,
+  })
+  const { data: exceptions } = useQuery({
+    queryKey: ['reports', 'data_quality'],
+    queryFn: () => rs.getDataQualityExceptions(),
+    refetchInterval: 300_000,
+  })
+
+  const health = computeHealthScore(kpis, exceptions)
+  const { score, grade, color, signals } = health
+
+  const gradeLabel = grade === 'A' ? 'Excellent' : grade === 'B' ? 'Good' : grade === 'C' ? 'Fair' : grade === 'D' ? 'Needs Attention' : 'Critical'
+  const goodCount = signals.filter(s => s.status === 'good').length
+  const warnCount = signals.filter(s => s.status === 'warn').length
+  const badCount  = signals.filter(s => s.status === 'bad').length
+
+  // Arc SVG parameters
+  const r = 54, cx = 70, cy = 70
+  const circumference = Math.PI * r  // half circle
+  const arcOffset = circumference - (score / 100) * circumference
+
+  return (
+    <div style={{
+      background: '#0f1923',
+      border: `1px solid ${color}30`,
+      borderRadius: 16,
+      padding: '20px 24px',
+      display: 'flex',
+      gap: 28,
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      marginBottom: 20,
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      {/* Background glow */}
+      <div style={{ position: 'absolute', top: -40, left: -40, width: 200, height: 200, borderRadius: '50%', background: `${color}08`, pointerEvents: 'none' }} />
+
+      {/* Gauge */}
+      <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+        <svg width="140" height="80" viewBox="0 0 140 80">
+          {/* Track */}
+          <path
+            d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`}
+            fill="none" stroke="#1e3a4f" strokeWidth="10" strokeLinecap="round"
+          />
+          {/* Fill */}
+          <path
+            d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`}
+            fill="none" stroke={color} strokeWidth="10" strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={arcOffset}
+            style={{ transition: 'stroke-dashoffset 0.8s ease, stroke 0.4s ease' }}
+          />
+          {/* Score text */}
+          <text x={cx} y={cy - 6} textAnchor="middle" fill={color} fontSize="22" fontWeight="900" fontFamily="system-ui">
+            {score}
+          </text>
+          <text x={cx} y={cy + 10} textAnchor="middle" fill="#475569" fontSize="10" fontFamily="system-ui">
+            / 100
+          </text>
+        </svg>
+        <div style={{ fontSize: 13, fontWeight: 800, color, letterSpacing: '-0.01em' }}>{gradeLabel}</div>
+        <div style={{ fontSize: 10, color: '#475569', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Business Health</div>
+      </div>
+
+      {/* Divider */}
+      <div style={{ width: 1, height: 80, background: '#1e3a4f', flexShrink: 0 }} />
+
+      {/* Signal pills */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+          {[
+            { count: goodCount, label: 'Healthy',  color: '#4ade80', bg: 'rgba(74,222,128,0.1)'  },
+            { count: warnCount, label: 'Warning',  color: '#fbbf24', bg: 'rgba(251,191,36,0.1)'  },
+            { count: badCount,  label: 'Critical', color: '#f87171', bg: 'rgba(248,113,113,0.1)' },
+          ].map(s => (
+            <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: 20, background: s.bg, border: `1px solid ${s.color}25` }}>
+              <span style={{ fontSize: 14, fontWeight: 800, color: s.color }}>{s.count}</span>
+              <span style={{ fontSize: 11, color: s.color, fontWeight: 600 }}>{s.label}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+          {signals.map(sig => {
+            const sc = sig.status === 'good' ? '#4ade80' : sig.status === 'warn' ? '#fbbf24' : '#f87171'
+            const icon = sig.status === 'good' ? '✓' : sig.status === 'warn' ? '⚠' : '✕'
+            return (
+              <div key={sig.label} style={{
+                padding: '8px 10px', borderRadius: 10,
+                background: `${sc}08`, border: `1px solid ${sc}20`,
+                display: 'flex', flexDirection: 'column', gap: 3,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ fontSize: 11, color: sc, fontWeight: 800 }}>{icon}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8' }}>{sig.label}</span>
+                </div>
+                <div style={{ fontSize: 10, color: '#475569', lineHeight: 1.4 }}>{sig.detail}</div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Shared UI ─────────────────────────────────────────────────
 
 function KPICard({ label, value, sub, accent, icon, tooltip }: {
   label: string; value: string; sub?: string; accent: string; icon: string; tooltip?: string
 }) {
   return (
-    <div style={{
-      background: '#0f1923', border: `1px solid ${accent}25`,
-      borderTop: `3px solid ${accent}`, borderRadius: 12,
-      padding: '16px 18px', position: 'relative', overflow: 'hidden',
-    }}>
+    <div style={{ background: '#0f1923', border: `1px solid ${accent}25`, borderTop: `3px solid ${accent}`, borderRadius: 12, padding: '16px 18px', position: 'relative', overflow: 'hidden' }}>
       <div style={{ position: 'absolute', top: -16, right: -16, width: 60, height: 60, borderRadius: '50%', background: `${accent}10`, pointerEvents: 'none' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
         <span style={{ fontSize: 14 }}>{icon}</span>
         <span style={{ fontSize: 10, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.07em' }}>{label}</span>
-        {tooltip && (
-          <span title={tooltip} style={{ fontSize: 11, color: '#334155', cursor: 'help', marginLeft: 2 }}>ⓘ</span>
-        )}
+        {tooltip && <span title={tooltip} style={{ fontSize: 11, color: '#334155', cursor: 'help', marginLeft: 2 }}>ⓘ</span>}
       </div>
       <div style={{ fontSize: 30, fontWeight: 900, color: accent, lineHeight: 1, letterSpacing: '-0.02em' }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: '#475569', marginTop: 8 }}>{sub}</div>}
@@ -82,24 +262,11 @@ function KPICard({ label, value, sub, accent, icon, tooltip }: {
   )
 }
 
-function SectionHeader({ title, sub, onExport, exportLabel }: {
-  title: string; sub?: string; onExport?: () => void; exportLabel?: string
-}) {
+function SectionHeader({ title, sub }: { title: string; sub?: string }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 16 }}>
-      <div>
-        <h2 style={{ color: '#e2e8f0', fontWeight: 800, fontSize: 18, margin: 0, letterSpacing: '-0.01em' }}>{title}</h2>
-        {sub && <p style={{ color: '#475569', fontSize: 12, marginTop: 4, marginBottom: 0 }}>{sub}</p>}
-      </div>
-      {onExport && (
-        <button onClick={onExport} style={{
-          fontSize: 11, padding: '6px 14px', borderRadius: 8, cursor: 'pointer',
-          background: 'rgba(13,126,163,0.1)', border: '1px solid rgba(13,126,163,0.3)',
-          color: '#0d7ea3', fontWeight: 600,
-        }}>
-          ↓ {exportLabel || 'Export CSV'}
-        </button>
-      )}
+    <div style={{ marginBottom: 16 }}>
+      <h2 style={{ color: '#e2e8f0', fontWeight: 800, fontSize: 18, margin: 0, letterSpacing: '-0.01em' }}>{title}</h2>
+      {sub && <p style={{ color: '#475569', fontSize: 12, marginTop: 4, marginBottom: 0 }}>{sub}</p>}
     </div>
   )
 }
@@ -118,8 +285,7 @@ function ChartCard({ title, children, tooltip }: { title: string; children: Reac
 
 function VerticalBarChart({ data, height = 120, color = '#0d7ea3', formatValue }: {
   data: { label: string; value: number }[]
-  height?: number; color?: string
-  formatValue?: (v: number) => string
+  height?: number; color?: string; formatValue?: (v: number) => string
 }) {
   const max = Math.max(...data.map(d => d.value), 1)
   return (
@@ -161,9 +327,7 @@ function HBarChart({ data }: { data: { label: string; value: number; color: stri
 
 function DrilldownTable({ columns, rows, emptyText = 'No data', onExport }: {
   columns: { key: string; label: string; render?: (v: any, row: any) => React.ReactNode }[]
-  rows: any[]
-  emptyText?: string
-  onExport?: () => void
+  rows: any[]; emptyText?: string; onExport?: () => void
 }) {
   return (
     <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, overflow: 'hidden' }}>
@@ -217,30 +381,13 @@ function ExceptionBlock({ title, count, rows, columns, emptyText }: {
   emptyText: string
 }) {
   const [open, setOpen] = useState(false)
-  const urgentColor = count > 0 ? '#f87171' : '#4ade80'
-
+  const sc = count > 0 ? '#f87171' : '#4ade80'
   return (
     <div style={{ background: '#0f1923', border: `1px solid ${count > 0 ? 'rgba(248,113,113,0.2)' : '#1e3a4f'}`, borderRadius: 12, overflow: 'hidden' }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '13px 16px', cursor: 'pointer', background: 'linear-gradient(135deg, #162232, #0d1a26)',
-          border: 'none', textAlign: 'left',
-        }}
-      >
+      <button onClick={() => setOpen(o => !o)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 16px', cursor: 'pointer', background: 'linear-gradient(135deg, #162232, #0d1a26)', border: 'none', textAlign: 'left' }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: '#cbd5e1' }}>{title}</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{
-            minWidth: 28, height: 22, borderRadius: 20, padding: '0 8px',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 11, fontWeight: 800,
-            background: count === 0 ? 'rgba(74,222,128,0.12)' : 'rgba(248,113,113,0.12)',
-            color: urgentColor,
-            border: `1px solid ${count === 0 ? 'rgba(74,222,128,0.25)' : 'rgba(248,113,113,0.25)'}`,
-          }}>
-            {count}
-          </span>
+          <span style={{ minWidth: 28, height: 22, borderRadius: 20, padding: '0 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, background: count === 0 ? 'rgba(74,222,128,0.12)' : 'rgba(248,113,113,0.12)', color: sc, border: `1px solid ${count === 0 ? 'rgba(74,222,128,0.25)' : 'rgba(248,113,113,0.25)'}` }}>{count}</span>
           {count > 0 && (
             <button onClick={e => { e.stopPropagation(); downloadCSV(rows, `${title.toLowerCase().replace(/\s+/g, '_')}.csv`) }}
               style={{ fontSize: 10, padding: '3px 8px', borderRadius: 5, cursor: 'pointer', background: 'rgba(13,126,163,0.1)', border: '1px solid rgba(13,126,163,0.25)', color: '#0d7ea3' }}>
@@ -250,16 +397,16 @@ function ExceptionBlock({ title, count, rows, columns, emptyText }: {
           <span style={{ color: '#334155', fontSize: 13 }}>{open ? '▾' : '▸'}</span>
         </div>
       </button>
-      {open && (
-        <div style={{ borderTop: '1px solid #1e3a4f' }}>
-          <DrilldownTable columns={columns} rows={rows} emptyText={emptyText} />
-        </div>
-      )}
+      {open && <div style={{ borderTop: '1px solid #1e3a4f' }}><DrilldownTable columns={columns} rows={rows} emptyText={emptyText} /></div>}
     </div>
   )
 }
 
-// ─── Section: Executive Overview ──────────────────────────────
+function LoadingState({ small }: { small?: boolean }) {
+  return <div style={{ padding: small ? '20px 0' : '48px 0', textAlign: 'center', color: '#334155', fontSize: 13 }}>Loading…</div>
+}
+
+// ─── Sections ──────────────────────────────────────────────────
 
 function ExecutiveSection({ range }: { range: DateRange }) {
   const { data, isLoading } = useQuery({
@@ -267,119 +414,60 @@ function ExecutiveSection({ range }: { range: DateRange }) {
     queryFn: () => rs.getExecutiveKPIs(range),
     refetchInterval: 120_000,
   })
-
   if (isLoading) return <LoadingState />
-
   const d = data || { activeLeads: 0, mrr: 0, cashCollected: 0, installsCompleted: 0, failedPayments48h: 0, unsignedAgreements: 0, unassignedJobs: 0 }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <SectionHeader title="Executive Overview" sub={`${range.label} snapshot`} />
-
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-        <KPICard label="Active Pipeline Leads" value={String(d.activeLeads)} icon="⬡" accent="#38bdf8"
-          sub="Excludes won/lost/parked" />
-        <KPICard label="Current MRR" value={fmt$(d.mrr)} icon="💰" accent="#4ade80"
-          sub="Active rental contracts" tooltip="Sum of monthly_amount from contracts where status = active." />
-        <KPICard label="Cash Collected" value={fmt$(d.cashCollected)} icon="💳" accent="#a78bfa"
-          sub={`${range.label} — account level`}
-          tooltip="Payments recorded at account level. Individual contract attribution is not available." />
-        <KPICard label="Installs Completed" value={String(d.installsCompleted)} icon="✅" accent="#34d399"
-          sub={range.label} />
+        <KPICard label="Active Pipeline Leads" value={String(d.activeLeads)} icon="⬡" accent="#38bdf8" sub="Excludes won/lost/parked" />
+        <KPICard label="Current MRR" value={fmt$(d.mrr)} icon="💰" accent="#4ade80" sub="Active rental contracts" tooltip="Sum of monthly_amount from contracts where status = active." />
+        <KPICard label="Cash Collected" value={fmt$(d.cashCollected)} icon="💳" accent="#a78bfa" sub={`${range.label} — account level`} tooltip="Payments recorded at account level. Individual contract attribution is not available." />
+        <KPICard label="Installs Completed" value={String(d.installsCompleted)} icon="✅" accent="#34d399" sub={range.label} />
       </div>
-
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-        <KPICard label="Failed Payments" value={String(d.failedPayments48h)} icon="⚠️"
-          accent={d.failedPayments48h > 0 ? '#f87171' : '#4ade80'}
-          sub="Last 48 hours" />
-        <KPICard label="Awaiting Signature" value={String(d.unsignedAgreements)} icon="✍️"
-          accent={d.unsignedAgreements > 0 ? '#fbbf24' : '#4ade80'}
-          sub="Agreements pending" />
-        <KPICard label="Unassigned Jobs" value={String(d.unassignedJobs)} icon="👷"
-          accent={d.unassignedJobs > 0 ? '#fb923c' : '#4ade80'}
-          sub="Scheduled, no tech" />
+        <KPICard label="Failed Payments" value={String(d.failedPayments48h)} icon="⚠️" accent={d.failedPayments48h > 0 ? '#f87171' : '#4ade80'} sub="Last 48 hours" />
+        <KPICard label="Awaiting Signature" value={String(d.unsignedAgreements)} icon="✍️" accent={d.unsignedAgreements > 0 ? '#fbbf24' : '#4ade80'} sub="Agreements pending" />
+        <KPICard label="Unassigned Jobs" value={String(d.unassignedJobs)} icon="👷" accent={d.unassignedJobs > 0 ? '#fb923c' : '#4ade80'} sub="Scheduled, no tech" />
       </div>
     </div>
   )
 }
 
-// ─── Section: Revenue & Billing ────────────────────────────────
-
 function RevenueSection({ range }: { range: DateRange }) {
-  const { data: summary, isLoading: sl } = useQuery({
-    queryKey: ['reports', 'revenue_summary', range.start, range.end],
-    queryFn: () => rs.getRevenueSummary(range),
-  })
-  const { data: cashByMonth = [], isLoading: cl } = useQuery({
-    queryKey: ['reports', 'cash_by_month'],
-    queryFn: () => rs.getCashByMonth(6),
-  })
-  const { data: contractsByMonth = [], isLoading: nml } = useQuery({
-    queryKey: ['reports', 'contracts_by_month'],
-    queryFn: () => rs.getNewContractValueByMonth(6),
-  })
-  const { data: aging, isLoading: al } = useQuery({
-    queryKey: ['reports', 'invoice_aging'],
-    queryFn: () => rs.getInvoiceAging(),
-  })
-  const { data: payments = [], isLoading: pl } = useQuery({
-    queryKey: ['reports', 'payments_drilldown', range.start, range.end],
-    queryFn: () => rs.getPaymentsDrilldown(range),
-  })
-
+  const { data: summary, isLoading: sl } = useQuery({ queryKey: ['reports', 'revenue_summary', range.start, range.end], queryFn: () => rs.getRevenueSummary(range) })
+  const { data: cashByMonth = [], isLoading: cl } = useQuery({ queryKey: ['reports', 'cash_by_month'], queryFn: () => rs.getCashByMonth(6) })
+  const { data: contractsByMonth = [], isLoading: nml } = useQuery({ queryKey: ['reports', 'contracts_by_month'], queryFn: () => rs.getNewContractValueByMonth(6) })
+  const { data: aging, isLoading: al } = useQuery({ queryKey: ['reports', 'invoice_aging'], queryFn: () => rs.getInvoiceAging() })
+  const { data: payments = [], isLoading: pl } = useQuery({ queryKey: ['reports', 'payments_drilldown', range.start, range.end], queryFn: () => rs.getPaymentsDrilldown(range) })
   const s = summary || { mrr: 0, overdueTotal: 0, cashCollected: 0, failedPaymentsCount: 0 }
   const ag = aging || { amounts: { b0_30: 0, b31_60: 0, b61_90: 0, b90plus: 0 }, counts: { b0_30: 0, b31_60: 0, b61_90: 0, b90plus: 0 } }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <SectionHeader title="Revenue & Billing" sub="MRR is contract-level. Cash collected is account-level." />
-
-      {/* KPI Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-        <KPICard label="Current MRR" value={sl ? '…' : fmt$(s.mrr)} icon="📈" accent="#4ade80"
-          tooltip="Sum of monthly_amount from active contracts. Not a historical trend — this is a snapshot of current committed monthly revenue." />
-        <KPICard label="Cash Collected" value={sl ? '…' : fmt$(s.cashCollected)} icon="💳" accent="#a78bfa"
-          sub={`${range.label} — account level`}
-          tooltip="Payments recorded at account level. Individual contract attribution is not available." />
-        <KPICard label="Overdue Invoices" value={sl ? '…' : fmt$(s.overdueTotal)} icon="🔴"
-          accent={s.overdueTotal > 0 ? '#f87171' : '#4ade80'} sub="Total outstanding" />
-        <KPICard label="Failed Payments" value={sl ? '…' : String(s.failedPaymentsCount)} icon="⚠️"
-          accent={s.failedPaymentsCount > 0 ? '#f87171' : '#4ade80'} sub={range.label} />
+        <KPICard label="Current MRR" value={sl ? '…' : fmt$(s.mrr)} icon="📈" accent="#4ade80" tooltip="Snapshot of current committed monthly revenue from active contracts." />
+        <KPICard label="Cash Collected" value={sl ? '…' : fmt$(s.cashCollected)} icon="💳" accent="#a78bfa" sub={`${range.label} — account level`} tooltip="Payments recorded at account level. Individual contract attribution is not available." />
+        <KPICard label="Overdue Invoices" value={sl ? '…' : fmt$(s.overdueTotal)} icon="🔴" accent={s.overdueTotal > 0 ? '#f87171' : '#4ade80'} sub="Total outstanding" />
+        <KPICard label="Failed Payments" value={sl ? '…' : String(s.failedPaymentsCount)} icon="⚠️" accent={s.failedPaymentsCount > 0 ? '#f87171' : '#4ade80'} sub={range.label} />
       </div>
-
-      {/* Charts Row */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-        <ChartCard title="Cash Collected by Month"
-          tooltip="Account-level cash actually received per month.">
-          {cl ? <LoadingState small /> : (
-            <VerticalBarChart
-              data={cashByMonth.map(m => ({ label: fmtMonth(String(m.month)), value: Number(m.total_collected) }))}
-              color="#a78bfa" height={110} formatValue={v => `$${Math.round(v / 1000)}k`}
-            />
-          )}
+        <ChartCard title="Cash Collected by Month" tooltip="Account-level cash actually received per month.">
+          {cl ? <LoadingState small /> : <VerticalBarChart data={cashByMonth.map(m => ({ label: fmtMonth(String(m.month)), value: Number(m.total_collected) }))} color="#a78bfa" height={110} formatValue={v => `$${Math.round(v / 1000)}k`} />}
         </ChartCard>
-
-        <ChartCard title="New Rental Contract Value by Month"
-          tooltip="Value of new rental contracts signed each month. This is not a historical MRR trend — it reflects new business only, not total active contracts in any past month.">
-          {nml ? <LoadingState small /> : (
-            <VerticalBarChart
-              data={contractsByMonth.map(m => ({ label: fmtMonth(String(m.month)), value: Number(m.new_monthly_value) }))}
-              color="#4ade80" height={110} formatValue={v => `$${Math.round(v / 1000)}k`}
-            />
-          )}
+        <ChartCard title="New Rental Contract Value by Month" tooltip="Value of new rental contracts signed each month. Not a historical MRR trend — reflects new business only.">
+          {nml ? <LoadingState small /> : <VerticalBarChart data={contractsByMonth.map(m => ({ label: fmtMonth(String(m.month)), value: Number(m.new_monthly_value) }))} color="#4ade80" height={110} formatValue={v => `$${Math.round(v / 1000)}k`} />}
         </ChartCard>
       </div>
-
-      {/* Invoice Aging */}
       <div>
         <div style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8', marginBottom: 10 }}>Invoice Aging</div>
         {al ? <LoadingState small /> : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
             {[
-              { label: '0–30 days', amt: ag.amounts.b0_30, cnt: ag.counts.b0_30, color: '#f59e0b' },
-              { label: '31–60 days', amt: ag.amounts.b31_60, cnt: ag.counts.b31_60, color: '#fb923c' },
-              { label: '61–90 days', amt: ag.amounts.b61_90, cnt: ag.counts.b61_90, color: '#f87171' },
-              { label: '90+ days', amt: ag.amounts.b90plus, cnt: ag.counts.b90plus, color: '#dc2626' },
+              { label: '0–30 days', amt: ag.amounts.b0_30,   cnt: ag.counts.b0_30,   color: '#f59e0b' },
+              { label: '31–60 days', amt: ag.amounts.b31_60, cnt: ag.counts.b31_60,  color: '#fb923c' },
+              { label: '61–90 days', amt: ag.amounts.b61_90, cnt: ag.counts.b61_90,  color: '#f87171' },
+              { label: '90+ days',   amt: ag.amounts.b90plus,cnt: ag.counts.b90plus, color: '#dc2626' },
             ].map(b => (
               <div key={b.label} style={{ background: `${b.color}10`, border: `1px solid ${b.color}25`, borderRadius: 10, padding: '12px 14px' }}>
                 <div style={{ fontSize: 10, color: '#475569', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>{b.label}</div>
@@ -390,25 +478,17 @@ function RevenueSection({ range }: { range: DateRange }) {
           </div>
         )}
       </div>
-
-      {/* Payments drilldown */}
       {pl ? <LoadingState small /> : (
         <DrilldownTable
           columns={[
             { key: 'customers', label: 'Customer', render: (v: any) => v?.full_name || '—' },
-            { key: 'amount', label: 'Amount', render: (v: any) => fmt$(Number(v)) },
-            { key: 'status', label: 'Status', render: (v: string) => (
-              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 700,
-                background: v === 'succeeded' ? 'rgba(74,222,128,0.12)' : v === 'failed' ? 'rgba(248,113,113,0.12)' : 'rgba(100,116,139,0.12)',
-                color: v === 'succeeded' ? '#4ade80' : v === 'failed' ? '#f87171' : '#94a3b8',
-              }}>{v}</span>
-            )},
-            { key: 'type', label: 'Type' },
+            { key: 'amount',    label: 'Amount',   render: (v: any) => fmt$(Number(v)) },
+            { key: 'status',    label: 'Status',   render: (v: string) => <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 700, background: v === 'succeeded' ? 'rgba(74,222,128,0.12)' : v === 'failed' ? 'rgba(248,113,113,0.12)' : 'rgba(100,116,139,0.12)', color: v === 'succeeded' ? '#4ade80' : v === 'failed' ? '#f87171' : '#94a3b8' }}>{v}</span> },
+            { key: 'type',           label: 'Type' },
             { key: 'failure_reason', label: 'Failure Reason', render: (v: any) => v || '—' },
-            { key: 'attempted_at', label: 'Date', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
+            { key: 'attempted_at',   label: 'Date', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
           ]}
-          rows={payments}
-          emptyText="No payment transactions in this period"
+          rows={payments} emptyText="No payment transactions in this period"
           onExport={() => downloadCSV(payments, `payments_${range.start}_${range.end}.csv`)}
         />
       )}
@@ -416,75 +496,38 @@ function RevenueSection({ range }: { range: DateRange }) {
   )
 }
 
-// ─── Section: Installations ────────────────────────────────────
-
 function InstallationsSection({ range }: { range: DateRange }) {
-  const { data: kpis, isLoading: kl } = useQuery({
-    queryKey: ['reports', 'install_kpis', range.start, range.end],
-    queryFn: () => rs.getInstallKPIs(range),
-  })
-  const { data: weekly = [], isLoading: wl } = useQuery({
-    queryKey: ['reports', 'weekly_installs'],
-    queryFn: () => rs.getWeeklyInstalls(8),
-  })
-  const { data: jobs = [], isLoading: jl } = useQuery({
-    queryKey: ['reports', 'jobs_drilldown', range.start, range.end],
-    queryFn: () => rs.getJobsDrilldown(range),
-  })
-
+  const { data: kpis, isLoading: kl } = useQuery({ queryKey: ['reports', 'install_kpis', range.start, range.end], queryFn: () => rs.getInstallKPIs(range) })
+  const { data: weekly = [], isLoading: wl } = useQuery({ queryKey: ['reports', 'weekly_installs'], queryFn: () => rs.getWeeklyInstalls(8) })
+  const { data: jobs = [], isLoading: jl } = useQuery({ queryKey: ['reports', 'jobs_drilldown', range.start, range.end], queryFn: () => rs.getJobsDrilldown(range) })
   const k = kpis || { completedInRange: 0, scheduled: 0, inProgress: 0, proofBacklog: 0, waitingStock: 0 }
-
-  const STATUS_LABEL: Record<string, string> = {
-    scheduled: 'Scheduled', in_progress: 'In Progress',
-    waiting_for_stock: 'Waiting Stock', complete: 'Complete', cancelled: 'Cancelled',
-  }
-  const STATUS_COLOR: Record<string, string> = {
-    scheduled: '#60a5fa', in_progress: '#22d3ee',
-    waiting_for_stock: '#f59e0b', complete: '#4ade80', cancelled: '#64748b',
-  }
-
+  const STATUS_LABEL: Record<string, string> = { scheduled:'Scheduled', in_progress:'In Progress', waiting_for_stock:'Waiting Stock', complete:'Complete', cancelled:'Cancelled' }
+  const STATUS_COLOR: Record<string, string> = { scheduled:'#60a5fa', in_progress:'#22d3ee', waiting_for_stock:'#f59e0b', complete:'#4ade80', cancelled:'#64748b' }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <SectionHeader title="Installations & Operations" sub="Uses completed_at from jobs table" />
-
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
         <KPICard label="Completed" value={kl ? '…' : String(k.completedInRange)} icon="✅" accent="#4ade80" sub={range.label} />
-        <KPICard label="Scheduled" value={kl ? '…' : String(k.scheduled)} icon="📅" accent="#60a5fa" sub="Future" />
-        <KPICard label="In Progress" value={kl ? '…' : String(k.inProgress)} icon="⚡" accent="#22d3ee" sub="Active now" />
-        <KPICard label="Proof Backlog" value={kl ? '…' : String(k.proofBacklog)} icon="📸"
-          accent={k.proofBacklog > 0 ? '#fbbf24' : '#4ade80'} sub="Awaiting review" />
-        <KPICard label="Waiting Stock" value={kl ? '…' : String(k.waitingStock)} icon="📦"
-          accent={k.waitingStock > 0 ? '#fb923c' : '#4ade80'} sub="Blocked" />
+        <KPICard label="Scheduled"   value={kl ? '…' : String(k.scheduled)}        icon="📅" accent="#60a5fa" sub="Future" />
+        <KPICard label="In Progress" value={kl ? '…' : String(k.inProgress)}       icon="⚡" accent="#22d3ee" sub="Active now" />
+        <KPICard label="Proof Backlog" value={kl ? '…' : String(k.proofBacklog)}   icon="📸" accent={k.proofBacklog > 0 ? '#fbbf24' : '#4ade80'} sub="Awaiting review" />
+        <KPICard label="Waiting Stock" value={kl ? '…' : String(k.waitingStock)}   icon="📦" accent={k.waitingStock > 0 ? '#fb923c' : '#4ade80'} sub="Blocked" />
       </div>
-
       <ChartCard title="Weekly Install Volume (last 8 weeks)">
-        {wl ? <LoadingState small /> : (
-          <VerticalBarChart data={weekly.map(w => ({ label: w.label, value: w.count }))} color="#4ade80" height={120} />
-        )}
+        {wl ? <LoadingState small /> : <VerticalBarChart data={weekly.map(w => ({ label: w.label, value: w.count }))} color="#4ade80" height={120} />}
       </ChartCard>
-
       {jl ? <LoadingState small /> : (
         <DrilldownTable
           columns={[
             { key: 'customer_name_snapshot', label: 'Customer' },
             { key: 'system_type', label: 'System' },
-            { key: 'status', label: 'Status', render: (v: string) => (
-              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 700,
-                background: `${STATUS_COLOR[v] || '#64748b'}18`, color: STATUS_COLOR[v] || '#64748b' }}>
-                {STATUS_LABEL[v] || v}
-              </span>
-            )},
+            { key: 'status', label: 'Status', render: (v: string) => <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 700, background: `${STATUS_COLOR[v] || '#64748b'}18`, color: STATUS_COLOR[v] || '#64748b' }}>{STATUS_LABEL[v] || v}</span> },
             { key: 'scheduled_date', label: 'Scheduled', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
             { key: 'completed_at', label: 'Completed', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
             { key: 'assigned_technician_name', label: 'Technician', render: (v: any) => v || <span style={{ color: '#f59e0b' }}>⚠ Unassigned</span> },
-            { key: 'proof_approved', label: 'Proof', render: (v: boolean) => v
-              ? <span style={{ color: '#4ade80', fontSize: 11, fontWeight: 700 }}>✓ Approved</span>
-              : <span style={{ color: '#f59e0b', fontSize: 11, fontWeight: 700 }}>Pending</span>
-            },
-            { key: 'service_address_snapshot', label: 'Address' },
+            { key: 'proof_approved', label: 'Proof', render: (v: boolean) => v ? <span style={{ color: '#4ade80', fontSize: 11, fontWeight: 700 }}>✓ Approved</span> : <span style={{ color: '#f59e0b', fontSize: 11, fontWeight: 700 }}>Pending</span> },
           ]}
-          rows={jobs}
-          emptyText="No jobs in this period"
+          rows={jobs} emptyText="No jobs in this period"
           onExport={() => downloadCSV(jobs, `installations_${range.start}_${range.end}.csv`)}
         />
       )}
@@ -492,205 +535,91 @@ function InstallationsSection({ range }: { range: DateRange }) {
   )
 }
 
-// ─── Section: Pipeline Snapshot ────────────────────────────────
-
 function PipelineSection({ range }: { range: DateRange }) {
-  const { data: snapshot = [], isLoading: sl } = useQuery({
-    queryKey: ['reports', 'pipeline_snapshot'],
-    queryFn: () => rs.getPipelineSnapshot(),
-  })
-  const { data: outcomes, isLoading: ol } = useQuery({
-    queryKey: ['reports', 'pipeline_outcomes', range.start, range.end],
-    queryFn: () => rs.getPipelineOutcomes(range),
-  })
-  const { data: leads = [], isLoading: ll } = useQuery({
-    queryKey: ['reports', 'leads_drilldown'],
-    queryFn: () => rs.getLeadsDrilldown(100),
-  })
-
+  const { data: snapshot = [], isLoading: sl } = useQuery({ queryKey: ['reports', 'pipeline_snapshot'], queryFn: () => rs.getPipelineSnapshot() })
+  const { data: outcomes, isLoading: ol } = useQuery({ queryKey: ['reports', 'pipeline_outcomes', range.start, range.end], queryFn: () => rs.getPipelineOutcomes(range) })
+  const { data: leads = [], isLoading: ll } = useQuery({ queryKey: ['reports', 'leads_drilldown'], queryFn: () => rs.getLeadsDrilldown(100) })
   const o = outcomes || { won: 0, lost: 0, dnd: 0, parked: 0 }
-
   const stageOrder = ['new_lead','qualifying','qualified','site_visit_scheduled','proposal_in_progress','quote_sent','agreement_signed']
-  const sortedSnapshot = stageOrder
-    .map(s => snapshot.find((r: any) => r.stage === s) || { stage: s, lead_count: 0 })
-    .filter(r => r.lead_count > 0 || stageOrder.includes(r.stage))
-
+  const sortedSnapshot = stageOrder.map(s => (snapshot as any[]).find((r: any) => r.stage === s) || { stage: s, lead_count: 0 })
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <SectionHeader title="Pipeline Snapshot" />
-
-      {/* Caveat banner */}
       <div style={{ padding: '10px 14px', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 8, fontSize: 12, color: '#94a3b8' }}>
         <strong style={{ color: '#a5b4fc' }}>Snapshot only.</strong> Shows where leads currently stand. Stage transition history is not tracked. Drop-off rates and time-in-stage are not available.
       </div>
-
-      {/* Open pipeline chart */}
       <ChartCard title="Open Pipeline — Current Stage Distribution">
-        {sl ? <LoadingState small /> : (
-          <HBarChart data={sortedSnapshot.map((r: any) => ({
-            label: STAGE_LABELS[r.stage] || r.stage,
-            value: r.lead_count,
-            color: STAGE_COLORS[r.stage] || '#64748b',
-          }))} />
-        )}
+        {sl ? <LoadingState small /> : <HBarChart data={sortedSnapshot.map((r: any) => ({ label: STAGE_LABELS[r.stage] || r.stage, value: r.lead_count, color: STAGE_COLORS[r.stage] || '#64748b' }))} />}
       </ChartCard>
-
-      {/* Outcomes summary */}
       <div>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
-          Pipeline Outcomes — {range.label}
-        </div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Pipeline Outcomes — {range.label}</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
-          <KPICard label="Won (approx.)" value={ol ? '…' : String(o.won)} icon="🏆" accent="#4ade80"
-            tooltip="Based on leads.updated_at falling in the selected period. Leads updated for other reasons may be included. Approximate." />
-          <KPICard label="Lost (approx.)" value={ol ? '…' : String(o.lost)} icon="❌" accent="#f87171"
-            tooltip="Based on leads.updated_at falling in the selected period. Approximate." />
-          <KPICard label="DND (all time)" value={ol ? '…' : String(o.dnd)} icon="🚫" accent="#64748b"
-            sub="Do not disturb — all time" />
-          <KPICard label="Parked" value={ol ? '…' : String(o.parked)} icon="⏸️" accent="#94a3b8"
-            sub="Future follow-up — all time" />
+          <KPICard label="Won (approx.)" value={ol ? '…' : String(o.won)} icon="🏆" accent="#4ade80" tooltip="Based on leads.updated_at. Approximate." />
+          <KPICard label="Lost (approx.)" value={ol ? '…' : String(o.lost)} icon="❌" accent="#f87171" tooltip="Based on leads.updated_at. Approximate." />
+          <KPICard label="DND (all time)" value={ol ? '…' : String(o.dnd)} icon="🚫" accent="#64748b" sub="Do not disturb" />
+          <KPICard label="Parked" value={ol ? '…' : String(o.parked)} icon="⏸️" accent="#94a3b8" sub="Future follow-up" />
         </div>
       </div>
-
-      {/* Leads drilldown */}
       {ll ? <LoadingState small /> : (
         <DrilldownTable
           columns={[
             { key: 'full_name', label: 'Name' },
             { key: 'phone', label: 'Phone' },
-            { key: 'stage', label: 'Stage', render: (v: string) => (
-              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 700,
-                background: `${STAGE_COLORS[v] || '#64748b'}18`, color: STAGE_COLORS[v] || '#94a3b8' }}>
-                {STAGE_LABELS[v] || v}
-              </span>
-            )},
+            { key: 'stage', label: 'Stage', render: (v: string) => <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 700, background: `${STAGE_COLORS[v] || '#64748b'}18`, color: STAGE_COLORS[v] || '#94a3b8' }}>{STAGE_LABELS[v] || v}</span> },
             { key: 'source', label: 'Source', render: (v: any) => v || <span style={{ color: '#f59e0b' }}>⚠ None</span> },
-            { key: 'days_open', label: 'Days Open', render: (v: number) => (
-              <span style={{ color: v > 30 ? '#f87171' : v > 14 ? '#fbbf24' : '#94a3b8', fontWeight: 600 }}>{v}</span>
-            )},
+            { key: 'days_open', label: 'Days Open', render: (v: number) => <span style={{ color: v > 30 ? '#f87171' : v > 14 ? '#fbbf24' : '#94a3b8', fontWeight: 600 }}>{v}</span> },
             { key: 'created_at', label: 'Created', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
           ]}
-          rows={leads}
-          emptyText="No active leads"
-          onExport={() => downloadCSV(leads, `pipeline_snapshot.csv`)}
+          rows={leads} emptyText="No active leads"
+          onExport={() => downloadCSV(leads, 'pipeline_snapshot.csv')}
         />
       )}
     </div>
   )
 }
 
-// ─── Section: Data Quality ─────────────────────────────────────
-
 function DataQualitySection() {
-  const { data, isLoading } = useQuery({
-    queryKey: ['reports', 'data_quality'],
-    queryFn: () => rs.getDataQualityExceptions(),
-    refetchInterval: 300_000,
-  })
-
+  const { data, isLoading } = useQuery({ queryKey: ['reports', 'data_quality'], queryFn: () => rs.getDataQualityExceptions(), refetchInterval: 300_000 })
   if (isLoading) return <LoadingState />
-
-  const d = data || {
-    nullSourceLeads: [], nullCommercialTypeQuotes: [], noProofJobs: [],
-    customersNoSystem: [], contractsNoPmt: [], overdue60Invoices: [],
-  }
-
+  const d = data || { nullSourceLeads: [], nullCommercialTypeQuotes: [], noProofJobs: [], customersNoSystem: [], contractsNoPmt: [], overdue60Invoices: [] }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <SectionHeader title="Data Quality — Exceptions" sub="Internal use. Expand each row to review and export." />
-
       <div style={{ padding: '10px 14px', background: 'rgba(251,146,60,0.08)', border: '1px solid rgba(251,146,60,0.2)', borderRadius: 8, fontSize: 12, color: '#94a3b8' }}>
         These exceptions indicate data that may affect reporting accuracy. Address them before relying on other reports.
       </div>
-
-      <ExceptionBlock title="Leads with missing source" count={d.nullSourceLeads.length}
-        rows={d.nullSourceLeads}
-        columns={[
-          { key: 'full_name', label: 'Name' },
-          { key: 'stage', label: 'Stage' },
-          { key: 'created_at', label: 'Created', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
-        ]}
-        emptyText="All active leads have a source ✓"
-      />
-
-      <ExceptionBlock title="Non-draft quotes missing commercial_type" count={d.nullCommercialTypeQuotes.length}
-        rows={d.nullCommercialTypeQuotes}
-        columns={[
-          { key: 'quote_number', label: 'Quote #' },
-          { key: 'status', label: 'Status' },
-          { key: 'created_at', label: 'Created', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
-        ]}
-        emptyText="All sent quotes have commercial_type ✓"
-      />
-
-      <ExceptionBlock title="Completed installs awaiting proof review" count={d.noProofJobs.length}
-        rows={d.noProofJobs}
-        columns={[
-          { key: 'customer_name_snapshot', label: 'Customer' },
-          { key: 'scheduled_date', label: 'Scheduled', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
-          { key: 'completed_at', label: 'Completed', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
-        ]}
-        emptyText="All completed installs have approved proof ✓"
-      />
-
-      <ExceptionBlock title="Customers with no installed system" count={d.customersNoSystem.length}
-        rows={d.customersNoSystem}
-        columns={[
-          { key: 'full_name', label: 'Customer' },
-          { key: 'lifecycle_status', label: 'Status' },
-          { key: 'created_at', label: 'Created', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
-        ]}
-        emptyText="All customers have at least one installed system ✓"
-      />
-
-      <ExceptionBlock
-        title="Active rental contracts — no payment in 35 days (account-level)"
-        count={d.contractsNoPmt.length}
-        rows={d.contractsNoPmt}
-        columns={[
-          { key: 'customers', label: 'Customer', render: (v: any) => v?.full_name || '—' },
-          { key: 'contract_number', label: 'Contract #' },
-          { key: 'monthly_amount', label: 'Monthly', render: (v: any) => fmt$(Number(v)) },
-          { key: 'created_at', label: 'Signed', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
-        ]}
-        emptyText="All active rental contracts have recent payments ✓"
-      />
-
-      <ExceptionBlock title="Invoices overdue 60+ days" count={d.overdue60Invoices.length}
-        rows={d.overdue60Invoices}
-        columns={[
-          { key: 'customers', label: 'Customer', render: (v: any) => v?.full_name || '—' },
-          { key: 'amount', label: 'Amount', render: (v: any) => fmt$(Number(v)) },
-          { key: 'due_date', label: 'Due Date', render: (v: string) => v ? fmtDate(v) : '—' },
-          { key: 'status', label: 'Status' },
-        ]}
-        emptyText="No invoices overdue 60+ days ✓"
-      />
+      <ExceptionBlock title="Leads with missing source" count={d.nullSourceLeads.length} rows={d.nullSourceLeads}
+        columns={[{ key: 'full_name', label: 'Name' }, { key: 'stage', label: 'Stage' }, { key: 'created_at', label: 'Created', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' }]}
+        emptyText="All active leads have a source ✓" />
+      <ExceptionBlock title="Non-draft quotes missing commercial_type" count={d.nullCommercialTypeQuotes.length} rows={d.nullCommercialTypeQuotes}
+        columns={[{ key: 'quote_number', label: 'Quote #' }, { key: 'status', label: 'Status' }, { key: 'created_at', label: 'Created', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' }]}
+        emptyText="All sent quotes have commercial_type ✓" />
+      <ExceptionBlock title="Completed installs awaiting proof review" count={d.noProofJobs.length} rows={d.noProofJobs}
+        columns={[{ key: 'customer_name_snapshot', label: 'Customer' }, { key: 'scheduled_date', label: 'Scheduled', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' }, { key: 'completed_at', label: 'Completed', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' }]}
+        emptyText="All completed installs have approved proof ✓" />
+      <ExceptionBlock title="Customers with no installed system" count={d.customersNoSystem.length} rows={d.customersNoSystem}
+        columns={[{ key: 'full_name', label: 'Customer' }, { key: 'lifecycle_status', label: 'Status' }, { key: 'created_at', label: 'Created', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' }]}
+        emptyText="All customers have at least one installed system ✓" />
+      <ExceptionBlock title="Active rental contracts — no payment in 35 days (account-level)" count={d.contractsNoPmt.length} rows={d.contractsNoPmt}
+        columns={[{ key: 'customers', label: 'Customer', render: (v: any) => v?.full_name || '—' }, { key: 'contract_number', label: 'Contract #' }, { key: 'monthly_amount', label: 'Monthly', render: (v: any) => fmt$(Number(v)) }, { key: 'created_at', label: 'Signed', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' }]}
+        emptyText="All active rental contracts have recent payments ✓" />
+      <ExceptionBlock title="Invoices overdue 60+ days" count={d.overdue60Invoices.length} rows={d.overdue60Invoices}
+        columns={[{ key: 'customers', label: 'Customer', render: (v: any) => v?.full_name || '—' }, { key: 'amount', label: 'Amount', render: (v: any) => fmt$(Number(v)) }, { key: 'due_date', label: 'Due Date', render: (v: string) => v ? fmtDate(v) : '—' }, { key: 'status', label: 'Status' }]}
+        emptyText="No invoices overdue 60+ days ✓" />
     </div>
   )
 }
 
-// ─── Loading State ─────────────────────────────────────────────
-
-function LoadingState({ small }: { small?: boolean }) {
-  return (
-    <div style={{ padding: small ? '20px 0' : '48px 0', textAlign: 'center', color: '#334155', fontSize: 13 }}>
-      Loading…
-    </div>
-  )
-}
-
-// ─── Date Range Bar ────────────────────────────────────────────
-
+// ─── Date Range Bar ─────────────────────────────────────────────
 function DateRangeBar({ range, onChange }: { range: DateRange; onChange: (r: DateRange) => void }) {
   const presets = [
-    { label: 'MTD',     fn: rs.getMTDRange    },
+    { label: 'MTD',      fn: rs.getMTDRange    },
     { label: 'Last 30d', fn: rs.getLast30Range },
     { label: 'Last 90d', fn: rs.getLast90Range },
-    { label: 'YTD',     fn: rs.getYTDRange    },
+    { label: 'YTD',      fn: rs.getYTDRange    },
   ]
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
       <span style={{ fontSize: 11, color: '#475569', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Period:</span>
       {presets.map(p => (
         <button key={p.label} onClick={() => onChange(p.fn())} style={{
@@ -698,46 +627,37 @@ function DateRangeBar({ range, onChange }: { range: DateRange; onChange: (r: Dat
           background: range.label === p.label ? 'rgba(13,126,163,0.2)' : 'rgba(255,255,255,0.04)',
           border: `1px solid ${range.label === p.label ? '#0d7ea3' : '#1e3a4f'}`,
           color: range.label === p.label ? '#0d7ea3' : '#64748b',
-          transition: 'all 0.12s',
-        }}>
-          {p.label}
-        </button>
+        }}>{p.label}</button>
       ))}
-      <span style={{ fontSize: 11, color: '#334155', marginLeft: 4 }}>
-        {range.start} → {range.end}
-      </span>
+      <span style={{ fontSize: 11, color: '#334155', marginLeft: 4 }}>{range.start} → {range.end}</span>
     </div>
   )
 }
 
-// ─── Left Sidebar Nav ──────────────────────────────────────────
-
+// ─── Nav Tab Config ─────────────────────────────────────────────
 type Section = 'overview' | 'revenue' | 'installs' | 'pipeline' | 'quality'
 
-const NAV_ITEMS: { id: Section; label: string; icon: string; adminOnly?: boolean }[] = [
-  { id: 'overview',  label: 'Executive Overview',   icon: '◉' },
-  { id: 'revenue',   label: 'Revenue & Billing',     icon: '💰' },
-  { id: 'installs',  label: 'Installations',         icon: '🔧' },
-  { id: 'pipeline',  label: 'Pipeline Snapshot',     icon: '⬡' },
-  { id: 'quality',   label: 'Data Quality',          icon: '🔍', adminOnly: true },
+const NAV_TABS: { id: Section; label: string; icon: string; color: string; bg: string; adminOnly?: boolean }[] = [
+  { id: 'overview',  label: 'Executive Overview',  icon: '◉',  color: '#38bdf8', bg: 'rgba(56,189,248,0.12)'  },
+  { id: 'revenue',   label: 'Revenue & Billing',   icon: '💰', color: '#4ade80', bg: 'rgba(74,222,128,0.12)'  },
+  { id: 'installs',  label: 'Installations',       icon: '🔧', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)'  },
+  { id: 'pipeline',  label: 'Pipeline Snapshot',   icon: '⬡',  color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
+  { id: 'quality',   label: 'Data Quality',        icon: '🔍', color: '#fb923c', bg: 'rgba(251,146,60,0.12)',  adminOnly: true },
 ]
 
-// ─── Main Page ─────────────────────────────────────────────────
-
+// ─── Main Page ──────────────────────────────────────────────────
 export function ReportsPage() {
   const { role } = useAuth()
   const isAdmin = role === 'admin'
-
   const [activeSection, setActiveSection] = useState<Section>('overview')
   const [range, setRange] = useState<DateRange>(rs.getMTDRange())
-
-  const visibleNav = NAV_ITEMS.filter(n => !n.adminOnly || isAdmin)
+  const visibleTabs = NAV_TABS.filter(t => !t.adminOnly || isAdmin)
 
   return (
     <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 0 }}>
 
       {/* Page header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h1 style={{ color: '#f1f5f9', fontWeight: 800, fontSize: 22, margin: 0, letterSpacing: '-0.02em' }}>Reports</h1>
           <p style={{ color: '#475569', fontSize: 13, marginTop: 4, marginBottom: 0 }}>Zenith Pure Solutions · Indianapolis, IN</p>
@@ -745,60 +665,64 @@ export function ReportsPage() {
         <DateRangeBar range={range} onChange={setRange} />
       </div>
 
-      {/* Two-column layout */}
-      <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
+      {/* Health Meter */}
+      <HealthMeter range={range} />
 
-        {/* Left nav */}
-        <div style={{ width: 200, flexShrink: 0, position: 'sticky', top: 0 }}>
-          <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, overflow: 'hidden', padding: '8px 0' }}>
-            {visibleNav.map(item => {
-              const active = activeSection === item.id
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveSection(item.id)}
-                  style={{
-                    width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '10px 14px', border: 'none', cursor: 'pointer',
-                    background: active ? 'rgba(13,126,163,0.12)' : 'transparent',
-                    borderLeft: `3px solid ${active ? '#0d7ea3' : 'transparent'}`,
-                    transition: 'all 0.12s',
-                    textAlign: 'left',
-                  }}
-                  onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)' }}
-                  onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-                >
-                  <span style={{ fontSize: 14, flexShrink: 0 }}>{item.icon}</span>
-                  <span style={{ fontSize: 12, fontWeight: active ? 700 : 500, color: active ? '#0d7ea3' : '#64748b', lineHeight: 1.3 }}>
-                    {item.label}
-                  </span>
-                  {item.adminOnly && (
-                    <span style={{ marginLeft: 'auto', fontSize: 9, color: '#334155', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      Admin
-                    </span>
-                  )}
-                </button>
-              )
-            })}
+      {/* Horizontal tab nav */}
+      <div style={{
+        display: 'flex', gap: 6, marginBottom: 20,
+        borderBottom: '1px solid #1e3a4f', paddingBottom: 0,
+        overflowX: 'auto', scrollbarWidth: 'none',
+      }}>
+        {visibleTabs.map(tab => {
+          const active = activeSection === tab.id
+          return (
+            <button key={tab.id} onClick={() => setActiveSection(tab.id)} style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '10px 18px', cursor: 'pointer', border: 'none',
+              borderBottom: `3px solid ${active ? tab.color : 'transparent'}`,
+              background: active ? tab.bg : 'transparent',
+              borderRadius: '8px 8px 0 0',
+              color: active ? tab.color : '#475569',
+              fontSize: 13, fontWeight: active ? 700 : 500,
+              flexShrink: 0,
+              transition: 'all 0.15s',
+            }}
+              onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.color = '#94a3b8' }}
+              onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.color = '#475569' }}
+            >
+              <span style={{ fontSize: 15 }}>{tab.icon}</span>
+              {tab.label}
+              {tab.adminOnly && (
+                <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 20, background: `${tab.color}20`, color: tab.color, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Admin
+                </span>
+              )}
+            </button>
+          )
+        })}
+
+        {/* P2 coming soon tabs — grayed out, not clickable */}
+        {['Rep Performance', 'Quotes & Commercial', 'Marketing'].map(label => (
+          <div key={label} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '10px 16px', borderBottom: '3px solid transparent',
+            color: '#1e3a4f', fontSize: 12, fontWeight: 500, flexShrink: 0,
+            cursor: 'not-allowed', borderRadius: '8px 8px 0 0',
+          }}>
+            {label}
+            <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 10, background: '#1e2a38', color: '#334155', fontWeight: 700, textTransform: 'uppercase' }}>P2</span>
           </div>
+        ))}
+      </div>
 
-          {/* P2 coming soon */}
-          <div style={{ marginTop: 16, background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: '12px 14px' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Coming in P2</div>
-            {['Rep Performance', 'Quotes & Commercial', 'Customers & Rentals', 'Marketing Sources'].map(label => (
-              <div key={label} style={{ fontSize: 11, color: '#1e3a4f', padding: '4px 0', fontWeight: 500 }}>{label}</div>
-            ))}
-          </div>
-        </div>
-
-        {/* Main content */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {activeSection === 'overview'  && <ExecutiveSection range={range} />}
-          {activeSection === 'revenue'   && <RevenueSection   range={range} />}
-          {activeSection === 'installs'  && <InstallationsSection range={range} />}
-          {activeSection === 'pipeline'  && <PipelineSection  range={range} />}
-          {activeSection === 'quality'   && isAdmin && <DataQualitySection />}
-        </div>
+      {/* Section content */}
+      <div style={{ minHeight: 400 }}>
+        {activeSection === 'overview' && <ExecutiveSection range={range} />}
+        {activeSection === 'revenue'  && <RevenueSection   range={range} />}
+        {activeSection === 'installs' && <InstallationsSection range={range} />}
+        {activeSection === 'pipeline' && <PipelineSection  range={range} />}
+        {activeSection === 'quality'  && isAdmin && <DataQualitySection />}
       </div>
     </div>
   )
