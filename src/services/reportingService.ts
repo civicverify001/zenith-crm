@@ -64,7 +64,7 @@ export async function getExecutiveKPIs(range: DateRange) {
     ] = await Promise.all([
       supabase.from('leads')
         .select('*', { count: 'exact', head: true })
-        .not('stage', 'in', '("won","lost","dnd","future_follow_up")'),
+        .filter('stage', 'not.in', '(won,lost,dnd,future_follow_up)'),
 
       supabase.from('contracts')
         .select('monthly_amount')
