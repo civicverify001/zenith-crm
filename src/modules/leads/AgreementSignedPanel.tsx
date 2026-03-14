@@ -508,38 +508,37 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   //          complete.js (api/installations/complete.js) and fires only
   //          after Kendrick marks the job done.
   async function handleScheduleInstall() {
-    if (!user) return
-    setSubmitting(true)
-    try {
-      const datetime = buildScheduledDatetime()
-      const newJob = await createInstallJobFromLead(lead, systemType, datetime, needsFaucetHole, { actor_id: user.id, actor_name: profile?.full_name })
-      if (techId) await supabase.from('jobs').update({ assigned_technician_id: techId, assigned_at: new Date().toISOString() }).eq('id', newJob.id)
-      if (notes) await supabase.from('jobs').update({ notes }).eq('id', newJob.id)
+  if (!user) return
+  setSubmitting(true)
+  try {
+    const datetime = buildScheduledDatetime()
+    const newJob = await createInstallJobFromLead(lead, systemType, datetime, needsFaucetHole, { actor_id: user.id, actor_name: profile?.full_name })
+    if (techId) await supabase.from('jobs').update({ assigned_technician_id: techId, assigned_at: new Date().toISOString() }).eq('id', newJob.id)
+    if (notes) await supabase.from('jobs').update({ notes }).eq('id', newJob.id)
 
-      // Push to Google Calendar (fire and forget — does not block job creation)
-      syncToCalendar('job', newJob.id).catch(e => console.warn('Google Cal sync failed:', e))
+    // Push to Google Calendar (fire and forget)
+    syncToCalendar('job', newJob.id).catch(e => console.warn('Google Cal sync failed:', e))
 
-      queryClient.invalidateQueries({ queryKey: JOB_KEYS.board() })
-      queryClient.invalidateQueries({ queryKey: LEAD_KEYS.kanban() })
-      queryClient.invalidateQueries({ queryKey: LEAD_KEYS.counts })
+    // Move lead to 'won' — removes from pipeline kanban.
+    // Dispatch board is now the tracking point until install is complete.
+    await supabase.from('leads').update({
+      stage: 'won',
+      stage_changed_at: new Date().toISOString(),
+      stage_entered_at: new Date().toISOString(),
+    }).eq('id', lead.id)
 
-      // Refresh lead from DB to pick up job_created flag without changing stage.
-      // Lead stays at 'agreement_signed' — visible in pipeline until install is done.
-      const { data: refreshedLead } = await supabase
-        .from('leads')
-        .select('*')
-        .eq('id', lead.id)
-        .single()
-      onLeadUpdated?.(refreshedLead || lead)
+    queryClient.invalidateQueries({ queryKey: JOB_KEYS.board() })
+    queryClient.invalidateQueries({ queryKey: LEAD_KEYS.kanban() })
+    queryClient.invalidateQueries({ queryKey: LEAD_KEYS.counts })
 
-      setShowModal(false)
-    } catch (err: any) {
-      alert('Failed to create job: ' + (err.message || err))
-    } finally {
-      setSubmitting(false)
-    }
+    onLeadUpdated?.({ ...lead, stage: 'won' as any })
+    setShowModal(false)
+  } catch (err: any) {
+    alert('Failed to create job: ' + (err.message || err))
+  } finally {
+    setSubmitting(false)
   }
-
+}
   const selectedDaySlot = scheduledDate ? jobSlots.find(s => s.date === scheduledDate) : null
   const bookedHoursForDay = selectedDaySlot?.bookedHours || []
 
