@@ -358,7 +358,7 @@ export async function getLeadsDrilldown(limit = 100) {
     const { data, error } = await supabase
       .from('leads')
       .select('id, full_name, phone, stage, source, assigned_rep_id, created_at')
-      .filter('stage', 'not.in', '(won,lost,dnd,future_follow_up)'))
+      .filter('stage', 'not.in', '(won,lost,dnd,future_follow_up)')
       .order('created_at', { ascending: false })
       .limit(limit)
     if (error) throw error
