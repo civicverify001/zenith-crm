@@ -203,7 +203,30 @@ module.exports = async function handler(req, res) {
       } catch(e) { console.error('[BEST-EFFORT] billing_day update:', e.message); }
     }
 
-        // ── 6. Installed systems — idempotent upsert ──────────────────────
+    // ── 5d. Move lead to 'won' now that install is physically complete ─
+    // ADDED: This is the correct place for the 'won' stage transition.
+    // Previously this was done in AgreementSignedPanel.tsx when the install
+    // was merely SCHEDULED — too early, caused the lead to disappear from
+    // the pipeline before the work was done.
+    // Now: won = installed and done. Not just signed. Not just scheduled.
+    // Only runs on first completion (alreadyComplete guard prevents re-run duplication).
+    if (!alreadyComplete && job.lead_id) {
+      try {
+        await supabase
+          .from('leads')
+          .update({
+            stage: 'won',
+            stage_changed_at: new Date().toISOString(),
+            stage_entered_at: new Date().toISOString(),
+          })
+          .eq('id', job.lead_id);
+      } catch(e) {
+        // Non-critical — log but never block install completion
+        console.warn('[BEST-EFFORT] lead won stage move:', e.message);
+      }
+    }
+
+    // ── 6. Installed systems — idempotent upsert ──────────────────────
     //   Check for existing row by job_id.
     //   EXISTS → UPDATE ownership_type, install_fee_snapshot, monthly_amount_snapshot.
     //   NOT EXISTS → INSERT fresh row.
