@@ -789,12 +789,12 @@ export function QuoteReviewPage() {
             if (data) {
               setQuote(data)
               if (data.lead_id) {
-                await supabase.from('leads').update({
-                  stage: 'won',
-                  stage_entered_at: new Date().toISOString(),
-                  stage_changed_at: new Date().toISOString(),
-                }).eq('id', data.lead_id)
-              }
+  await supabase.from('leads').update({
+    stage: 'agreement_signed',
+    stage_entered_at: new Date().toISOString(),
+    stage_changed_at: new Date().toISOString(),
+  }).eq('id', data.lead_id)
+}
               if (data.commercial_type === 'rental') {
                 const { data: ag } = await supabase.from('agreements').select('*').eq('quote_id', data.id).maybeSingle()
                 if (ag) setAgreement(ag)
