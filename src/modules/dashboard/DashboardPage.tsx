@@ -624,7 +624,7 @@ export function DashboardPage() {
   const urgentCount = overdueFollowUps.length + overdueServices.length + failedPayments.length + pendingProof.length
 
   return (
-    <div style={{ maxWidth: 1100, display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
       {/* ─── Header ──────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
