@@ -802,10 +802,20 @@ function ReorderTab() {
   const [activeTab, setActiveTab] = useState('open')
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
+  const [productMap, setProductMap] = useState<Record<string, {name: string; sku: string}>>({})
+
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase.from('reorder_requests').select('*, products(name, sku)').order('created_at', { ascending: false })
+    const { data } = await supabase.from('reorder_requests').select('*').order('created_at', { ascending: false })
     setRows(data || [])
+    // Fetch product names
+    const ids = [...new Set((data || []).map((r: any) => r.product_id).filter(Boolean))]
+    if (ids.length) {
+      const { data: prods } = await supabase.from('products').select('id, name, sku').in('id', ids)
+      const map: Record<string, {name: string; sku: string}> = {}
+      for (const p of (prods || [])) map[p.id] = { name: p.name, sku: p.sku }
+      setProductMap(map)
+    }
     setLoading(false)
   }, [])
 
@@ -871,8 +881,8 @@ function ReorderTab() {
                       {r.status === 'open' && <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSelect(r.id)} style={{ accentColor: '#0d7ea3', cursor: 'pointer' }} />}
                     </td>
                     <td style={{ padding: '10px 14px' }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{r.products?.name}</div>
-                      <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{r.products?.sku}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{productMap[r.product_id]?.name || r.product_id?.slice(0,8)}</div>
+                      <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{productMap[r.product_id]?.sku || '—'}</div>
                     </td>
                     <td style={{ padding: '10px 14px' }}><Badge val={r.request_type} /></td>
                     <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 800, color: '#e2e8f0' }}>{r.qty_requested}</td>
@@ -903,7 +913,7 @@ function PurchaseOrdersTab({ allProducts }: { allProducts: Product[] }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase.from('purchase_orders').select('*, purchase_order_items(id, product_id, qty_ordered, unit_cost, products(name, sku))').order('created_at', { ascending: false })
+    const { data } = await supabase.from('purchase_orders').select('*, purchase_order_items(id, product_id, qty_ordered, unit_cost)').order('created_at', { ascending: false })
     setOrders(data || [])
     setLoading(false)
   }, [])
@@ -968,8 +978,8 @@ function PurchaseOrdersTab({ allProducts }: { allProducts: Product[] }) {
                       {(po.purchase_order_items || []).map(item => (
                         <tr key={item.id} style={{ borderBottom: '1px solid #0d1a26' }}>
                           <td style={{ padding: '8px 10px' }}>
-                            <div style={{ fontSize: 13, color: '#e2e8f0' }}>{item.products?.name}</div>
-                            <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{item.products?.sku}</div>
+                            <div style={{ fontSize: 13, color: '#e2e8f0' }}>{allProducts.find(p => p.id === item.product_id)?.name || item.product_id?.slice(0,8)}</div>
+                            <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{allProducts.find(p => p.id === item.product_id)?.sku || '—'}</div>
                           </td>
                           <td style={{ padding: '8px 10px', textAlign: 'right', color: '#e2e8f0', fontWeight: 700 }}>{item.qty_ordered}</td>
                           <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>{fmt$(item.unit_cost)}</td>
@@ -1006,10 +1016,20 @@ function ReceivingTab() {
   const [saving, setSaving] = useState(false)
   const [done, setDone] = useState(false)
 
+  const [productMap, setProductMap] = useState<Record<string, {name: string; sku: string}>>({})
+
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase.from('purchase_orders').select('*, purchase_order_items(id, product_id, qty_ordered, unit_cost, products(name, sku))').in('status', ['sent', 'confirmed']).order('created_at', { ascending: false })
+    const { data } = await supabase.from('purchase_orders').select('*, purchase_order_items(id, product_id, qty_ordered, unit_cost)').in('status', ['sent', 'confirmed']).order('created_at', { ascending: false })
     setPos(data || [])
+    // Fetch product names for all items
+    const ids = [...new Set((data || []).flatMap((po: any) => (po.purchase_order_items || []).map((i: any) => i.product_id)).filter(Boolean))]
+    if (ids.length) {
+      const { data: prods } = await supabase.from('products').select('id, name, sku').in('id', ids)
+      const map: Record<string, {name: string; sku: string}> = {}
+      for (const p of (prods || [])) map[p.id] = { name: p.name, sku: p.sku }
+      setProductMap(map)
+    }
     setLoading(false)
   }, [])
 
@@ -1087,8 +1107,8 @@ function ReceivingTab() {
           {(selected.purchase_order_items || []).map(item => (
             <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, color: '#e2e8f0' }}>{item.products?.name}</div>
-                <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{item.products?.sku} · Ordered: {item.qty_ordered}</div>
+                <div style={{ fontSize: 13, color: '#e2e8f0' }}>{productMap[item.product_id]?.name || item.product_id?.slice(0,8)}</div>
+                <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{productMap[item.product_id]?.sku || '—'} · Ordered: {item.qty_ordered}</div>
               </div>
               <input type="number" value={receiveQtys[item.id] || ''} onChange={e => setReceiveQtys(prev => ({ ...prev, [item.id]: e.target.value }))}
                 style={{ width: 72, background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '7px 10px', fontSize: 13, outline: 'none', textAlign: 'right' }} />
@@ -1112,18 +1132,27 @@ function TransactionsTab() {
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
 
+  const [productMap, setProductMap] = useState<Record<string, {name: string; sku: string}>>({})
+
   useEffect(() => {
     ;(async () => {
       setLoading(true)
-      const { data } = await supabase.from('inventory_transactions').select('*, products(name, sku)').order('created_at', { ascending: false }).limit(200)
+      const { data } = await supabase.from('inventory_transactions').select('*').order('created_at', { ascending: false }).limit(200)
       setRows(data || [])
+      const ids = [...new Set((data || []).map((r: any) => r.product_id).filter(Boolean))]
+      if (ids.length) {
+        const { data: prods } = await supabase.from('products').select('id, name, sku').in('id', ids)
+        const map: Record<string, {name: string; sku: string}> = {}
+        for (const p of (prods || [])) map[p.id] = { name: p.name, sku: p.sku }
+        setProductMap(map)
+      }
       setLoading(false)
     })()
   }, [])
 
   const types = ['all', ...Array.from(new Set(rows.map(r => r.transaction_type)))]
   const filtered = rows.filter(r => {
-    const matchSearch = !search || r.products?.name?.toLowerCase().includes(search.toLowerCase()) || r.products?.sku?.toLowerCase().includes(search.toLowerCase())
+    const matchSearch = !search || productMap[r.product_id]?.name?.toLowerCase().includes(search.toLowerCase()) || productMap[r.product_id]?.sku?.toLowerCase().includes(search.toLowerCase())
     return matchSearch && (typeFilter === 'all' || r.transaction_type === typeFilter)
   })
 
@@ -1157,8 +1186,8 @@ function TransactionsTab() {
                       <div style={{ fontSize: 11, color: '#334155' }}>{new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                     </td>
                     <td style={{ padding: '10px 14px' }}>
-                      <div style={{ fontSize: 13, color: '#e2e8f0' }}>{r.products?.name}</div>
-                      <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{r.products?.sku}</div>
+                      <div style={{ fontSize: 13, color: '#e2e8f0' }}>{productMap[r.product_id]?.name || r.product_id?.slice(0,8)}</div>
+                      <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{productMap[r.product_id]?.sku || '—'}</div>
                     </td>
                     <td style={{ padding: '10px 14px', fontSize: 13, color: '#94a3b8' }}>{TX_LABELS[r.transaction_type] || r.transaction_type}</td>
                     <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 16, fontWeight: 800, color: r.qty > 0 ? '#4ade80' : '#f87171' }}>{r.qty > 0 ? '+' : ''}{r.qty}</td>
