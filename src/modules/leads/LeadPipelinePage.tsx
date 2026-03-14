@@ -35,13 +35,10 @@ export function LeadPipelinePage() {
   useEffect(() => {
     const leadId = searchParams.get('lead')
     if (!leadId || !leadsByStage) return
-
-    // Search all stages for this lead
     const allLeads = Object.values(leadsByStage).flat()
     const found = allLeads.find((l: Lead) => l.id === leadId)
     if (found) {
       setSelectedLead(found)
-      // Clean the param from URL without triggering navigation
       setSearchParams({}, { replace: true })
     }
   }, [searchParams, leadsByStage])
@@ -63,6 +60,9 @@ export function LeadPipelinePage() {
       </div>
     )
   }
+
+  // Total columns = pipeline stages + 1 Other column
+  const totalCols = PIPELINE_COLUMNS.length + 1
 
   return (
     <div className="flex flex-col h-full">
@@ -93,7 +93,17 @@ export function LeadPipelinePage() {
         </div>
       </div>
 
-      <div className="flex gap-4 overflow-x-auto flex-1 pb-4">
+      {/* ── Kanban grid — all columns fit on screen ── */}
+      <div
+        className="flex-1 pb-2"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: `repeat(${totalCols}, minmax(0, 1fr))`,
+          gap: 8,
+          overflow: 'hidden',
+          minWidth: 0,
+        }}
+      >
         {PIPELINE_COLUMNS.map(stage => {
           const stageleads = leadsByStage?.[stage] || []
           const filtered = searchQuery
@@ -105,16 +115,28 @@ export function LeadPipelinePage() {
             : stageleads
 
           return (
-            <div key={stage} className={`kanban-col bg-surface border-t-2 ${STAGE_COLORS[stage]} rounded-xl flex-shrink-0`}>
-              <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
-                <span className="text-xs font-bold text-slate-300 uppercase tracking-wide">
+            <div
+              key={stage}
+              className={`bg-surface border-t-2 ${STAGE_COLORS[stage]} rounded-xl`}
+              style={{ minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+            >
+              {/* Column header */}
+              <div className="flex items-center justify-between px-2 py-2 border-b border-border flex-shrink-0">
+                <span
+                  className="font-bold text-slate-300 uppercase tracking-wide truncate"
+                  style={{ fontSize: 10 }}
+                >
                   {LEAD_STAGE_LABELS[stage]}
                 </span>
-                <span className="text-xs bg-card border border-border rounded-full px-2 py-0.5 text-muted font-semibold">
+                <span className="text-xs bg-card border border-border rounded-full px-1.5 py-0.5 text-muted font-semibold flex-shrink-0 ml-1">
                   {filtered.length}
                 </span>
               </div>
-              <div className="flex flex-col gap-2 p-2 overflow-y-auto max-h-[calc(100vh-220px)]">
+              {/* Cards */}
+              <div
+                className="flex flex-col gap-1.5 p-1.5 overflow-y-auto"
+                style={{ maxHeight: 'calc(100vh - 220px)' }}
+              >
                 {filtered.length === 0 ? (
                   <div className="text-center py-6 text-xs text-muted">No leads</div>
                 ) : (
@@ -127,15 +149,19 @@ export function LeadPipelinePage() {
           )
         })}
 
-        <div className="kanban-col bg-surface border-t-2 border-t-border rounded-xl flex-shrink-0">
-          <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
-            <span className="text-xs font-bold text-slate-300 uppercase tracking-wide">Other</span>
+        {/* Other column */}
+        <div
+          className="bg-surface border-t-2 border-t-border rounded-xl"
+          style={{ minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+        >
+          <div className="flex items-center justify-between px-2 py-2 border-b border-border flex-shrink-0">
+            <span className="font-bold text-slate-300 uppercase tracking-wide" style={{ fontSize: 10 }}>Other</span>
           </div>
-          <div className="p-3 space-y-2">
+          <div className="p-2 space-y-1.5">
             {(['won', 'lost', 'future_follow_up', 'dnd'] as LeadStage[]).map(s => (
-              <div key={s} className="flex items-center justify-between text-xs">
-                <span className="text-muted">{LEAD_STAGE_LABELS[s]}</span>
-                <span className="text-slate-400 font-semibold">{counts?.[s] || 0}</span>
+              <div key={s} className="flex items-center justify-between" style={{ fontSize: 11 }}>
+                <span className="text-muted truncate">{LEAD_STAGE_LABELS[s]}</span>
+                <span className="text-slate-400 font-semibold ml-1 flex-shrink-0">{counts?.[s] || 0}</span>
               </div>
             ))}
           </div>
