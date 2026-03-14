@@ -467,3 +467,189 @@ export async function getDataQualityExceptions() {
     throw err
   }
 }
+
+// ─── Customers & Rentals ───────────────────────────────────────
+
+export async function getCustomerKPIs() {
+  try {
+    const [activeRes, atRiskRes, allRes] = await Promise.all([
+      supabase.from('customers')
+        .select('*', { count: 'exact', head: true })
+        .eq('lifecycle_status', 'active'),
+      supabase.from('customers')
+        .select('*', { count: 'exact', head: true })
+        .eq('lifecycle_status', 'at_risk'),
+      supabase.from('customers')
+        .select('*', { count: 'exact', head: true }),
+    ])
+
+    // Renewals in 30 days
+    const today = localDateStr()
+    const in30  = localDateStr(new Date(Date.now() + 30 * 86400000))
+    const { count: renewalCount } = await supabase.from('contracts')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'active')
+      .gte('end_date', today)
+      .lte('end_date', in30)
+
+    // Service due / overdue
+    const { count: serviceDue } = await supabase.from('service_schedule_items')
+      .select('*', { count: 'exact', head: true })
+      .in('status', ['due', 'overdue'])
+
+    return {
+      totalCustomers:  allRes.count    ?? 0,
+      activeCustomers: activeRes.count ?? 0,
+      atRisk:          atRiskRes.count ?? 0,
+      renewalsIn30:    renewalCount    ?? 0,
+      serviceDue:      serviceDue      ?? 0,
+    }
+  } catch (err) {
+    console.error('getCustomerKPIs:', err)
+    throw err
+  }
+}
+
+export async function getCustomerLifecycleDistribution(): Promise<{ status: string; count: number }[]> {
+  try {
+    const { data, error } = await supabase
+      .from('customers')
+      .select('lifecycle_status')
+    if (error) throw error
+
+    const counts: Record<string, number> = {}
+    for (const row of (data || [])) {
+      const s = row.lifecycle_status || 'unknown'
+      counts[s] = (counts[s] || 0) + 1
+    }
+
+    const order = ['active', 'service_due', 'renewal_due', 'upsell', 'at_risk', 'inactive', 'unknown']
+    return order
+      .filter(s => counts[s] > 0)
+      .map(s => ({ status: s, count: counts[s] }))
+  } catch (err) {
+    console.error('getCustomerLifecycleDistribution:', err)
+    return []
+  }
+}
+
+export async function getSystemTypeDistribution(): Promise<{ type: string; count: number }[]> {
+  try {
+    const { data, error } = await supabase
+      .from('installed_systems')
+      .select('system_type')
+    if (error) throw error
+
+    const counts: Record<string, number> = {}
+    for (const row of (data || [])) {
+      const t = row.system_type || 'unknown'
+      counts[t] = (counts[t] || 0) + 1
+    }
+
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => ({ type, count }))
+  } catch (err) {
+    console.error('getSystemTypeDistribution:', err)
+    return []
+  }
+}
+
+export async function getCustomersDrilldown(limit = 150) {
+  try {
+    const { data: customers, error } = await supabase
+      .from('customers')
+      .select('id, full_name, lifecycle_status, created_at, phone, email')
+      .order('created_at', { ascending: false })
+      .limit(limit)
+    if (error) throw error
+    if (!customers?.length) return []
+
+    const custIds = customers.map((c: any) => c.id)
+
+    // Get contracts
+    const { data: contracts } = await supabase
+      .from('contracts')
+      .select('customer_id, type, monthly_amount, status, end_date')
+      .in('customer_id', custIds)
+      .eq('status', 'active')
+
+    // Get installed systems
+    const { data: systems } = await supabase
+      .from('installed_systems')
+      .select('customer_id, system_type, ownership_type')
+      .in('customer_id', custIds)
+
+    // Get last payment per customer
+    const { data: payments } = await supabase
+      .from('payment_transactions')
+      .select('customer_id, completed_at, amount')
+      .eq('status', 'succeeded')
+      .in('customer_id', custIds)
+      .order('completed_at', { ascending: false })
+
+    // Build maps
+    const contractMap: Record<string, any> = {}
+    for (const c of (contracts || [])) {
+      if (!contractMap[c.customer_id]) contractMap[c.customer_id] = c
+    }
+
+    const systemMap: Record<string, any[]> = {}
+    for (const s of (systems || [])) {
+      if (!systemMap[s.customer_id]) systemMap[s.customer_id] = []
+      systemMap[s.customer_id].push(s)
+    }
+
+    const lastPmtMap: Record<string, string> = {}
+    for (const p of (payments || [])) {
+      if (!lastPmtMap[p.customer_id] && p.completed_at) {
+        lastPmtMap[p.customer_id] = p.completed_at
+      }
+    }
+
+    return customers.map((c: any) => ({
+      ...c,
+      contract:        contractMap[c.id] || null,
+      systems:         systemMap[c.id]   || [],
+      last_payment_at: lastPmtMap[c.id]  || null,
+    }))
+  } catch (err) {
+    console.error('getCustomersDrilldown:', err)
+    return []
+  }
+}
+
+export async function getNewCustomersByMonth(months = 6): Promise<{ month: string; count: number }[]> {
+  try {
+    const { data, error } = await supabase
+      .from('customers')
+      .select('created_at')
+      .order('created_at', { ascending: false })
+    if (error) throw error
+
+    const now = new Date()
+    const buckets: { month: string; date: Date; count: number }[] = []
+    for (let i = months - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      buckets.push({
+        month: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        date: d,
+        count: 0,
+      })
+    }
+
+    for (const row of (data || [])) {
+      if (!row.created_at) continue
+      const d = new Date(row.created_at)
+      const bucket = buckets.find(b =>
+        b.date.getFullYear() === d.getFullYear() && b.date.getMonth() === d.getMonth()
+      )
+      if (bucket) bucket.count++
+    }
+
+    return buckets.map(b => ({ month: b.month, count: b.count }))
+  } catch (err) {
+    console.error('getNewCustomersByMonth:', err)
+    return []
+  }
+}
