@@ -211,7 +211,7 @@ export async function getPaymentsDrilldown(range: DateRange, limit = 100) {
   try {
     const { data, error } = await supabase
       .from('payment_transactions')
-      .select('id, amount, status, type, failure_reason, attempted_at, completed_at, customer_id, customers!inner(full_name)')
+      .select('id, amount, status, type, failure_reason, attempted_at, completed_at, customer_id')
       .gte('attempted_at', range.start + 'T00:00:00')
       .lte('attempted_at', range.end + 'T23:59:59')
       .order('attempted_at', { ascending: false })
@@ -298,7 +298,7 @@ export async function getJobsDrilldown(range: DateRange, limit = 100) {
   try {
     const { data, error } = await supabase
       .from('jobs')
-      .select('id, customer_name_snapshot, system_type, status, scheduled_date, completed_at, assigned_technician_name, handover_signed, service_address_snapshot')
+      .select('id, customer_name_snapshot, system_type, status, scheduled_date, completed_at, assigned_technician_id, handover_signed, service_address_snapshot')
       .gte('scheduled_date', range.start)
       .lte('scheduled_date', range.end + 'T23:59:59')
       .order('scheduled_date', { ascending: false })
@@ -417,7 +417,7 @@ export async function getDataQualityExceptions() {
 
       // 5. Active rental contracts signed 35+ days ago
       supabase.from('contracts')
-        .select('id, contract_number, customer_id, monthly_amount, created_at, customers!inner(full_name)')
+        .select('id, contract_number, customer_id, monthly_amount, created_at')
         .eq('status', 'active')
         .eq('type', 'rental')
         .lte('created_at', new Date(Date.now() - 35 * 86400000).toISOString())
@@ -425,7 +425,7 @@ export async function getDataQualityExceptions() {
 
       // 6. Invoices overdue 60+ days
       supabase.from('invoices')
-        .select('id, amount, due_date, status, customer_id, customers!inner(full_name)')
+        .select('id, amount, due_date, status, customer_id')
         .eq('status', 'overdue')
         .lte('due_date', new Date(Date.now() - 60 * 86400000).toISOString().split('T')[0])
         .order('due_date', { ascending: true })
@@ -877,7 +877,7 @@ export async function getRepPerformance() {
     // Quotes — join via lead_id to get rep attribution
     const { data: quotes } = await supabase
       .from('quotes')
-      .select('lead_id, status, commercial_type, monthly_amount, quote_total, created_at')
+      .select('lead_id, status, commercial_type, monthly_amount, created_at')
 
     // Jobs per technician
     const { data: jobs } = await supabase
@@ -909,7 +909,7 @@ export async function getRepPerformance() {
       }
       if (['accepted','signed'].includes(q.status)) {
         repQuoteCounts[repId].accepted++
-        repQuoteCounts[repId].totalValue += Number(q.monthly_amount) || Number(q.quote_total) || 0
+        repQuoteCounts[repId].totalValue += Number(q.monthly_amount) || 0
       }
     }
 
@@ -950,7 +950,7 @@ export async function getQuotesSummary() {
   try {
     const { data, error } = await supabase
       .from('quotes')
-      .select('id, status, commercial_type, monthly_amount, quote_total, deposit_amount, created_at, updated_at, view_count')
+      .select('id, status, commercial_type, monthly_amount, created_at, updated_at, view_count')
       .order('created_at', { ascending: false })
     if (error) throw error
 
@@ -1005,7 +1005,7 @@ export async function getQuotesSummary() {
 
       if (['sent','viewed','accepted','signed','declined','expired'].includes(s)) totalSent++
 
-      const val = Number(q.monthly_amount) || Number(q.quote_total) || 0
+      const val = Number(q.monthly_amount) || 0
       if (['sent','viewed'].includes(s)) summary.totalPipeline += val
     }
 
@@ -1013,7 +1013,7 @@ export async function getQuotesSummary() {
     summary.avgDaysToAccept = daysToAcceptCount > 0 ? Math.round(daysToAcceptTotal / daysToAcceptCount) : 0
     summary.avgQuoteValue   = summary.accepted > 0
       ? Math.round(quotes.filter(q => ['accepted','signed'].includes(q.status))
-          .reduce((s, q) => s + (Number(q.monthly_amount) || Number(q.quote_total) || 0), 0) / summary.accepted)
+          .reduce((s, q) => s + (Number(q.monthly_amount) || 0), 0) / summary.accepted)
       : 0
 
     return { summary, quotes }
