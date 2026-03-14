@@ -260,6 +260,107 @@ function usePendingProofReview() {
   })
 }
 
+// ── NEW: Unsigned Agreements ─────────────────────────────────────
+function useUnsignedAgreements() {
+  return useQuery({
+    queryKey: ['dashboard', 'unsigned_agreements'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('agreements')
+        .select('id, agreement_number, created_at, lead_id, leads!inner(full_name, phone)')
+        .eq('status', 'pending_signature')
+        .order('created_at', { ascending: true })
+        .limit(10)
+      if (error) throw error
+      return data || []
+    },
+    refetchInterval: 60_000,
+  })
+}
+
+// ── NEW: Cold Leads (7+ days no activity) ────────────────────────
+function useColdLeads() {
+  return useQuery({
+    queryKey: ['dashboard', 'cold_leads'],
+    queryFn: async () => {
+      const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+      const { data, error } = await supabase
+        .from('leads')
+        .select('id, full_name, phone, stage, updated_at, created_at')
+        .not('stage', 'in', '(won,lost,dnd,agreement_signed)')
+        .lt('updated_at', cutoff)
+        .order('updated_at', { ascending: true })
+        .limit(10)
+      if (error) throw error
+      return data || []
+    },
+    refetchInterval: 60_000,
+  })
+}
+
+// ── NEW: Unassigned Jobs ──────────────────────────────────────────
+function useUnassignedJobs() {
+  return useQuery({
+    queryKey: ['dashboard', 'unassigned_jobs'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('jobs')
+        .select('id, customer_name_snapshot, scheduled_date, system_type, status')
+        .in('status', ['scheduled', 'in_progress'])
+        .is('assigned_technician_id', null)
+        .order('scheduled_date', { ascending: true })
+        .limit(10)
+      if (error) throw error
+      return data || []
+    },
+    refetchInterval: 60_000,
+  })
+}
+
+// ── NEW: Expiring Quotes ──────────────────────────────────────────
+function useExpiringQuotes() {
+  return useQuery({
+    queryKey: ['dashboard', 'expiring_quotes'],
+    queryFn: async () => {
+      const now = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+      const in7 = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      const in7Str = `${in7.getFullYear()}-${pad(in7.getMonth() + 1)}-${pad(in7.getDate())}`
+      const { data, error } = await supabase
+        .from('quotes')
+        .select('id, quote_number, valid_until, monthly_amount, one_time_amount, customer_id, customers!inner(full_name)')
+        .in('status', ['sent', 'viewed'])
+        .gte('valid_until', todayStr)
+        .lte('valid_until', in7Str + 'T23:59:59')
+        .order('valid_until', { ascending: true })
+        .limit(10)
+      if (error) throw error
+      return data || []
+    },
+    refetchInterval: 60_000,
+  })
+}
+
+// ── NEW: Low Inventory Alerts ─────────────────────────────────────
+function useLowInventoryAlerts() {
+  return useQuery({
+    queryKey: ['dashboard', 'low_inventory'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('inventory_items')
+        .select('id, name, sku, qty_on_hand, reorder_point, unit_cost')
+        .not('reorder_point', 'is', null)
+        .order('qty_on_hand', { ascending: true })
+        .limit(10)
+      if (error) throw error
+      // Filter client-side: qty_on_hand <= reorder_point
+      return (data || []).filter((item: any) => item.qty_on_hand <= item.reorder_point)
+    },
+    refetchInterval: 120_000,
+  })
+}
+
 // ── NEW: Calendar events (site visits + jobs for the week) ────────
 function useWeekCalendarEvents(userId: string | undefined, role: string | null) {
   return useQuery({
@@ -609,10 +710,15 @@ export function DashboardPage() {
   const { data: jobsThisWeek = [] }     = useJobsThisWeek()
   const { data: overdueServices = [] }  = useOverdueServices()
   const { data: recentCustomers = [] }  = useRecentCustomers()
-  const { data: failedPayments = [] }   = useFailedPayments()
-  const { data: upcomingVisits = [] }   = useMyUpcomingVisits(profile?.id, isAdmin)
-  const { data: upcomingRenewals = [] } = useUpcomingRenewals()
-  const { data: pendingProof = [] }     = usePendingProofReview()
+  const { data: failedPayments = [] }     = useFailedPayments()
+  const { data: upcomingVisits = [] }     = useMyUpcomingVisits(profile?.id, isAdmin)
+  const { data: upcomingRenewals = [] }   = useUpcomingRenewals()
+  const { data: pendingProof = [] }       = usePendingProofReview()
+  const { data: unsignedAgreements = [] } = useUnsignedAgreements()
+  const { data: coldLeads = [] }          = useColdLeads()
+  const { data: unassignedJobs = [] }     = useUnassignedJobs()
+  const { data: expiringQuotes = [] }     = useExpiringQuotes()
+  const { data: lowInventory = [] }       = useLowInventoryAlerts()
 
   const greeting = profile
     ? `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, ${profile.full_name.split(' ')[0]}.`
@@ -621,10 +727,10 @@ export function DashboardPage() {
   const completedJobsThisWeek = jobsThisWeek.filter((j: any) => j.status === 'complete').length
   const scheduledToday  = todaysJobs.filter((j: any) => j.status === 'scheduled').length
   const inProgressToday = todaysJobs.filter((j: any) => j.status === 'in_progress').length
-  const urgentCount = overdueFollowUps.length + overdueServices.length + failedPayments.length + pendingProof.length
+  const urgentCount = overdueFollowUps.length + overdueServices.length + failedPayments.length + pendingProof.length + unsignedAgreements.length + unassignedJobs.length
 
   return (
-    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ maxWidth: 1100, display: 'flex', flexDirection: 'column', gap: 20 }}>
 
       {/* ─── Header ──────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
@@ -728,6 +834,145 @@ export function DashboardPage() {
             {pendingProof.length > 5 && (
               <button onClick={() => navigate('/installations')} style={{ fontSize: 11, color: '#0d7ea3', padding: '8px 16px', display: 'block' }}>
                 View all {pendingProof.length} →
+              </button>
+            )}
+          </ActionSection>
+        )}
+
+        {/* Unsigned Agreements */}
+        {isAdmin && (
+          <ActionSection title="Unsigned Agreements" icon="✍️" count={unsignedAgreements.length} emptyText="No pending signatures" urgentColor={unsignedAgreements.length > 0}>
+            {unsignedAgreements.slice(0, 5).map((a: any) => (
+              <ActionRow key={a.id} onClick={() => navigate(`/leads?lead=${a.lead_id}`)}
+                left={
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{a.leads?.full_name || 'Unknown'}</div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>{a.agreement_number} · sent {timeAgo(a.created_at)}</div>
+                  </div>
+                }
+                right={
+                  <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 12, fontWeight: 600, background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)', whiteSpace: 'nowrap' }}>
+                    Awaiting
+                  </span>
+                }
+              />
+            ))}
+            {unsignedAgreements.length > 5 && (
+              <button onClick={() => navigate('/leads')} style={{ fontSize: 11, color: '#0d7ea3', padding: '8px 16px', display: 'block' }}>
+                View all {unsignedAgreements.length} →
+              </button>
+            )}
+          </ActionSection>
+        )}
+
+        {/* Unassigned Jobs */}
+        {isAdmin && (
+          <ActionSection title="Unassigned Jobs" icon="⚠️" count={unassignedJobs.length} emptyText="All jobs assigned" urgentColor={unassignedJobs.length > 0}>
+            {unassignedJobs.slice(0, 5).map((job: any) => (
+              <ActionRow key={job.id} onClick={() => navigate(`/dispatch`)}
+                left={
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{job.customer_name_snapshot}</div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>
+                      {job.scheduled_date ? formatShortDate(job.scheduled_date.split('T')[0]) : 'No date'} · {job.system_type || 'Install'}
+                    </div>
+                  </div>
+                }
+                right={
+                  <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 12, fontWeight: 600, background: 'rgba(251,146,60,0.12)', color: '#fb923c', border: '1px solid rgba(251,146,60,0.25)', whiteSpace: 'nowrap' }}>
+                    Unassigned
+                  </span>
+                }
+              />
+            ))}
+            {unassignedJobs.length > 5 && (
+              <button onClick={() => navigate('/dispatch')} style={{ fontSize: 11, color: '#0d7ea3', padding: '8px 16px', display: 'block' }}>
+                View all {unassignedJobs.length} →
+              </button>
+            )}
+          </ActionSection>
+        )}
+
+        {/* Expiring Quotes */}
+        {isSalesOrAdmin && (
+          <ActionSection title="Quotes Expiring Soon" icon="⏰" count={expiringQuotes.length} emptyText="No quotes expiring this week" urgentColor={expiringQuotes.length > 0}>
+            {expiringQuotes.slice(0, 5).map((q: any) => {
+              const daysLeft = daysUntil(q.valid_until)
+              return (
+                <ActionRow key={q.id} onClick={() => navigate(`/quotes`)}
+                  left={
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{q.customers?.full_name || 'Unknown'}</div>
+                      <div style={{ fontSize: 11, color: '#64748b' }}>
+                        {q.quote_number} · {q.monthly_amount ? `$${Number(q.monthly_amount).toFixed(2)}/mo` : q.one_time_amount ? `$${Number(q.one_time_amount).toFixed(2)}` : ''}
+                      </div>
+                    </div>
+                  }
+                  right={
+                    <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 12 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: daysLeft <= 2 ? '#f87171' : '#fbbf24' }}>
+                        {daysLeft === 0 ? 'Today' : `${daysLeft}d`}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#64748b' }}>{formatShortDate(q.valid_until)}</div>
+                    </div>
+                  }
+                />
+              )
+            })}
+            {expiringQuotes.length > 5 && (
+              <button onClick={() => navigate('/quotes')} style={{ fontSize: 11, color: '#0d7ea3', padding: '8px 16px', display: 'block' }}>
+                View all {expiringQuotes.length} →
+              </button>
+            )}
+          </ActionSection>
+        )}
+
+        {/* Cold Leads */}
+        {isSalesOrAdmin && (
+          <ActionSection title="Leads Going Cold" icon="🧊" count={coldLeads.length} emptyText="No leads going cold">
+            {coldLeads.slice(0, 5).map((lead: any) => (
+              <ActionRow key={lead.id} onClick={() => navigate('/leads')}
+                left={
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{lead.full_name}</div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>{lead.phone} · {lead.stage?.replace(/_/g, ' ')}</div>
+                  </div>
+                }
+                right={<span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>{daysOverdue(lead.updated_at)}d idle</span>}
+              />
+            ))}
+            {coldLeads.length > 5 && (
+              <button onClick={() => navigate('/leads')} style={{ fontSize: 11, color: '#0d7ea3', padding: '8px 16px', display: 'block' }}>
+                View all {coldLeads.length} cold leads →
+              </button>
+            )}
+          </ActionSection>
+        )}
+
+        {/* Low Inventory */}
+        {isAdmin && (
+          <ActionSection title="Low Inventory" icon="📦" count={lowInventory.length} emptyText="All stock levels OK" urgentColor={lowInventory.length > 0}>
+            {lowInventory.slice(0, 5).map((item: any) => (
+              <ActionRow key={item.id} onClick={() => navigate('/inventory')}
+                left={
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{item.name}</div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>{item.sku || 'No SKU'} · reorder at {item.reorder_point}</div>
+                  </div>
+                }
+                right={
+                  <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 12 }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: item.qty_on_hand === 0 ? '#f87171' : '#fbbf24' }}>
+                      {item.qty_on_hand}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#64748b' }}>in stock</div>
+                  </div>
+                }
+              />
+            ))}
+            {lowInventory.length > 5 && (
+              <button onClick={() => navigate('/inventory')} style={{ fontSize: 11, color: '#0d7ea3', padding: '8px 16px', display: 'block' }}>
+                View all {lowInventory.length} →
               </button>
             )}
           </ActionSection>
