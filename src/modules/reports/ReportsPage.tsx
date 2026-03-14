@@ -481,7 +481,7 @@ function RevenueSection({ range }: { range: DateRange }) {
       {pl ? <LoadingState small /> : (
         <DrilldownTable
           columns={[
-            { key: 'customers', label: 'Customer', render: (v: any) => v?.full_name || '—' },
+            { key: 'customer_id', label: 'Customer', render: (v: any) => v ? <span style={{ color: '#94a3b8', fontSize: 10 }}>{String(v).slice(0,8)}…</span> : '—' },
             { key: 'amount',    label: 'Amount',   render: (v: any) => fmt$(Number(v)) },
             { key: 'status',    label: 'Status',   render: (v: string) => <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 700, background: v === 'succeeded' ? 'rgba(74,222,128,0.12)' : v === 'failed' ? 'rgba(248,113,113,0.12)' : 'rgba(100,116,139,0.12)', color: v === 'succeeded' ? '#4ade80' : v === 'failed' ? '#f87171' : '#94a3b8' }}>{v}</span> },
             { key: 'type',           label: 'Type' },
@@ -524,7 +524,7 @@ function InstallationsSection({ range }: { range: DateRange }) {
             { key: 'status', label: 'Status', render: (v: string) => <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 700, background: `${STATUS_COLOR[v] || '#64748b'}18`, color: STATUS_COLOR[v] || '#64748b' }}>{STATUS_LABEL[v] || v}</span> },
             { key: 'scheduled_date', label: 'Scheduled', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
             { key: 'completed_at', label: 'Completed', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
-            { key: 'assigned_technician_name', label: 'Technician', render: (v: any) => v || <span style={{ color: '#f59e0b' }}>⚠ Unassigned</span> },
+            { key: 'assigned_technician_id', label: 'Technician', render: (v: any) => v ? <span style={{ color: '#94a3b8', fontSize: 10 }}>{String(v).slice(0,8)}…</span> : <span style={{ color: '#f59e0b' }}>⚠ Unassigned</span> },
             { key: 'proof_approved', label: 'Proof', render: (v: boolean) => v ? <span style={{ color: '#4ade80', fontSize: 11, fontWeight: 700 }}>✓ Approved</span> : <span style={{ color: '#f59e0b', fontSize: 11, fontWeight: 700 }}>Pending</span> },
           ]}
           rows={jobs} emptyText="No jobs in this period"
@@ -601,10 +601,10 @@ function DataQualitySection() {
         columns={[{ key: 'full_name', label: 'Customer' }, { key: 'lifecycle_status', label: 'Status' }, { key: 'created_at', label: 'Created', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' }]}
         emptyText="All customers have at least one installed system ✓" />
       <ExceptionBlock title="Active rental contracts — no payment in 35 days (account-level)" count={d.contractsNoPmt.length} rows={d.contractsNoPmt}
-        columns={[{ key: 'customers', label: 'Customer', render: (v: any) => v?.full_name || '—' }, { key: 'contract_number', label: 'Contract #' }, { key: 'monthly_amount', label: 'Monthly', render: (v: any) => fmt$(Number(v)) }, { key: 'created_at', label: 'Signed', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' }]}
+        columns={[{ key: 'customer_id', label: 'Customer', render: (v: any) => v ? <span style={{ color: '#94a3b8', fontSize: 10 }}>{String(v).slice(0,8)}…</span> : '—' }, { key: 'contract_number', label: 'Contract #' }, { key: 'monthly_amount', label: 'Monthly', render: (v: any) => fmt$(Number(v)) }, { key: 'created_at', label: 'Signed', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' }]}
         emptyText="All active rental contracts have recent payments ✓" />
       <ExceptionBlock title="Invoices overdue 60+ days" count={d.overdue60Invoices.length} rows={d.overdue60Invoices}
-        columns={[{ key: 'customers', label: 'Customer', render: (v: any) => v?.full_name || '—' }, { key: 'amount', label: 'Amount', render: (v: any) => fmt$(Number(v)) }, { key: 'due_date', label: 'Due Date', render: (v: string) => v ? fmtDate(v) : '—' }, { key: 'status', label: 'Status' }]}
+        columns={[{ key: 'customer_id', label: 'Customer', render: (v: any) => v ? <span style={{ color: '#94a3b8', fontSize: 10 }}>{String(v).slice(0,8)}…</span> : '—' }, { key: 'amount', label: 'Amount', render: (v: any) => fmt$(Number(v)) }, { key: 'due_date', label: 'Due Date', render: (v: string) => v ? fmtDate(v) : '—' }, { key: 'status', label: 'Status' }]}
         emptyText="No invoices overdue 60+ days ✓" />
     </div>
   )
