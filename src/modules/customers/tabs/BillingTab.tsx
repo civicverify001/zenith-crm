@@ -725,9 +725,48 @@ export function BillingTab({ customerId, customer }: Props) {
           <div className="bg-card border border-border rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">Billing Plan</div>
-              <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}>
-                Active
-              </span>
+              <div className="flex items-center gap-2">
+                {/* Status badge — reflects actual contract status */}
+                <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{
+                  backgroundColor: activeContract.status === 'active' ? 'rgba(74,222,128,0.12)' : 'rgba(239,68,68,0.12)',
+                  color: activeContract.status === 'active' ? '#4ade80' : '#f87171',
+                  border: `1px solid ${activeContract.status === 'active' ? 'rgba(74,222,128,0.25)' : 'rgba(239,68,68,0.25)'}`,
+                }}>
+                  {activeContract.status === 'active' ? 'Active' : activeContract.status}
+                </span>
+
+                {/* ADDED: Activate / Deactivate button — admin/frontdesk only */}
+                {canEditMonthly && (
+                  activeContract.status === 'active' ? (
+                    <button
+                      onClick={async () => {
+                        if (!confirm('Deactivate this contract? Autopay will stop.')) return
+                        await supabase
+                          .from('contracts')
+                          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+                          .eq('id', activeContract.id)
+                        invalidate()
+                      }}
+                      className="text-xs px-2 py-0.5 rounded-lg font-semibold transition-colors"
+                      style={{ backgroundColor: 'rgba(239,68,68,0.10)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)' }}>
+                      Deactivate
+                    </button>
+                  ) : (
+                    <button
+                      onClick={async () => {
+                        await supabase
+                          .from('contracts')
+                          .update({ status: 'active', signed_at: new Date().toISOString() })
+                          .eq('id', activeContract.id)
+                        invalidate()
+                      }}
+                      className="text-xs px-2 py-0.5 rounded-lg font-semibold transition-colors"
+                      style={{ backgroundColor: 'rgba(74,222,128,0.10)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}>
+                      Activate
+                    </button>
+                  )
+                )}
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -737,7 +776,27 @@ export function BillingTab({ customerId, customer }: Props) {
                 <span className="text-slate-200 font-medium">{activeContract.contract_number}</span>
               </div>
 
-              {/* Billing day — editable */}
+              {/* ADDED: Contract start date */}
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">Start date</span>
+                <span className="text-slate-200 font-medium">
+                  {activeContract.start_date
+                    ? new Date(activeContract.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : '—'}
+                </span>
+              </div>
+
+              {/* ADDED: Contract end date */}
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">End date</span>
+                <span className="text-slate-200 font-medium">
+                  {activeContract.end_date
+                    ? new Date(activeContract.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : '—'}
+                </span>
+              </div>
+
+              {/* Billing day — editable (unchanged) */}
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-400">Charges on</span>
                 {editingDay ? (
@@ -791,7 +850,7 @@ export function BillingTab({ customerId, customer }: Props) {
                 </div>
               )}
 
-              {/* Monthly amount — editable */}
+              {/* Monthly amount — editable (unchanged) */}
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-400">Monthly amount</span>
                 {editingMonthly ? (
