@@ -23,7 +23,7 @@ const NAV_ITEMS = [
   { path: '/inventory',     label: 'Inventory',       icon: '📦', hex: '#2dd4bf', soon: false, roles: ['admin'] as UserRole[] },
   { path: '/admin/users',   label: 'Team & Users',    icon: '👤', hex: '#f87171', soon: false, roles: ['admin'] as UserRole[] },
   { path: '/marketing',     label: 'Marketing ROI',   icon: '📊', hex: '#fb7185', soon: true,  roles: ['admin'] as UserRole[] },
-  { path: '/reports',       label: 'Reports',         icon: '📈', hex: '#38bdf8', soon: true,  roles: ['admin'] as UserRole[] },
+  { path: '/reports',       label: 'Reports',         icon: '📈', hex: '#38bdf8', soon: false,  roles: ['admin'] as UserRole[] },
 ]
 
 const ROLE_LABELS: Record<UserRole, string> = {
