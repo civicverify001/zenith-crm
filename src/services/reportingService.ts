@@ -877,7 +877,7 @@ export async function getRepPerformance() {
     // Quotes — join via lead_id to get rep attribution
     const { data: quotes } = await supabase
       .from('quotes')
-      .select('lead_id, status, commercial_type, monthly_amount, one_time_amount, created_at')
+      .select('lead_id, status, commercial_type, monthly_amount, quote_total, created_at')
 
     // Jobs per technician
     const { data: jobs } = await supabase
