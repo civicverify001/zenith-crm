@@ -56,7 +56,7 @@ interface ReorderRequest {
 interface POItem {
   id: string
   product_id: string
-  qty_ordered: number
+  quantity_ordered: number
   unit_cost: number
   products: { name: string; sku: string }
 }
@@ -65,7 +65,7 @@ interface PurchaseOrder {
   id: string
   po_number: string
   status: string
-  total_cost?: number
+  subtotal?: number
   ordered_at?: string
   received_at?: string
   notes?: string
@@ -265,7 +265,7 @@ function QuickReorderModal({
         items.map(i => ({
           purchase_order_id: po.id,
           product_id: i.product.id,
-          qty_ordered: i.qty,
+          quantity_ordered: i.qty,
           unit_cost: i.product.vendor_cost || 0,
         }))
       )
@@ -369,14 +369,14 @@ function CreatePOModal({ allProducts, onClose, onDone }: {
     const poNumber = generatePONumber()
     const { data: po } = await supabase
       .from('purchase_orders')
-      .insert({ po_number: poNumber, status: 'draft', total_cost: totalCost, notes })
+      .insert({ po_number: poNumber, status: 'draft', subtotal: totalCost, notes })
       .select().single()
     if (po) {
       await supabase.from('purchase_order_items').insert(
         lines.map(l => ({
           purchase_order_id: po.id,
           product_id: l.product.id,
-          qty_ordered: parseInt(l.qty || '1'),
+          quantity_ordered: parseInt(l.qty || '1'),
           unit_cost: parseFloat(l.cost || '0'),
         }))
       )
@@ -840,7 +840,7 @@ function ReorderTab() {
     const poNumber = generatePONumber()
     const { data: po } = await supabase.from('purchase_orders').insert({ po_number: poNumber, status: 'draft', notes: `From ${items.length} reorder request(s)` }).select().single()
     if (po) {
-      await supabase.from('purchase_order_items').insert(items.map(r => ({ purchase_order_id: po.id, product_id: r.product_id, qty_ordered: r.qty_requested, unit_cost: 0 })))
+      await supabase.from('purchase_order_items').insert(items.map(r => ({ purchase_order_id: po.id, product_id: r.product_id, quantity_ordered: r.qty_requested, unit_cost: 0 })))
       await supabase.from('reorder_requests').update({ status: 'ordered' }).in('id', items.map(r => r.id))
     }
     setSelected(new Set()); load()
@@ -913,7 +913,7 @@ function PurchaseOrdersTab({ allProducts }: { allProducts: Product[] }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase.from('purchase_orders').select('*, purchase_order_items(id, product_id, qty_ordered, unit_cost)').order('created_at', { ascending: false })
+    const { data } = await supabase.from('purchase_orders').select('*, purchase_order_items(id, product_id, quantity_ordered, unit_cost)').order('created_at', { ascending: false })
     setOrders(data || [])
     setLoading(false)
   }, [])
@@ -960,7 +960,7 @@ function PurchaseOrdersTab({ allProducts }: { allProducts: Product[] }) {
                 <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 13, color: '#60a5fa' }}>{po.po_number}</span>
                 <Badge val={po.status} />
                 <span style={{ marginLeft: 'auto', fontSize: 12, color: '#475569' }}>{new Date(po.created_at).toLocaleDateString()}</span>
-                {po.total_cost != null && <span style={{ fontSize: 13, fontWeight: 700, color: '#4ade80' }}>{fmt$(po.total_cost)}</span>}
+                {po.subtotal != null && <span style={{ fontSize: 13, fontWeight: 700, color: '#4ade80' }}>{fmt$(po.subtotal)}</span>}
                 <span style={{ fontSize: 12, color: '#475569' }}>{po.purchase_order_items?.length || 0} items</span>
                 <span style={{ color: '#334155' }}>{expanded === po.id ? '▲' : '▼'}</span>
               </div>
@@ -981,9 +981,9 @@ function PurchaseOrdersTab({ allProducts }: { allProducts: Product[] }) {
                             <div style={{ fontSize: 13, color: '#e2e8f0' }}>{allProducts.find(p => p.id === item.product_id)?.name || item.product_id?.slice(0,8)}</div>
                             <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{allProducts.find(p => p.id === item.product_id)?.sku || '—'}</div>
                           </td>
-                          <td style={{ padding: '8px 10px', textAlign: 'right', color: '#e2e8f0', fontWeight: 700 }}>{item.qty_ordered}</td>
+                          <td style={{ padding: '8px 10px', textAlign: 'right', color: '#e2e8f0', fontWeight: 700 }}>{item.quantity_ordered}</td>
                           <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>{fmt$(item.unit_cost)}</td>
-                          <td style={{ padding: '8px 10px', textAlign: 'right', color: '#e2e8f0' }}>{fmt$(item.qty_ordered * item.unit_cost)}</td>
+                          <td style={{ padding: '8px 10px', textAlign: 'right', color: '#e2e8f0' }}>{fmt$(item.quantity_ordered * item.unit_cost)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1020,7 +1020,7 @@ function ReceivingTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase.from('purchase_orders').select('*, purchase_order_items(id, product_id, qty_ordered, unit_cost)').in('status', ['sent', 'confirmed']).order('created_at', { ascending: false })
+    const { data } = await supabase.from('purchase_orders').select('*, purchase_order_items(id, product_id, quantity_ordered, unit_cost)').in('status', ['sent', 'confirmed']).order('created_at', { ascending: false })
     setPos(data || [])
     // Fetch product names for all items
     const ids = [...new Set((data || []).flatMap((po: any) => (po.purchase_order_items || []).map((i: any) => i.product_id)).filter(Boolean))]
@@ -1038,7 +1038,7 @@ function ReceivingTab() {
   function openPO(po: PurchaseOrder) {
     setSelected(po); setDone(false)
     const qtys: Record<string, string> = {}
-    ;(po.purchase_order_items || []).forEach(item => { qtys[item.id] = String(item.qty_ordered) })
+    ;(po.purchase_order_items || []).forEach(item => { qtys[item.id] = String(item.quantity_ordered) })
     setReceiveQtys(qtys)
   }
 
@@ -1108,7 +1108,7 @@ function ReceivingTab() {
             <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 13, color: '#e2e8f0' }}>{productMap[item.product_id]?.name || item.product_id?.slice(0,8)}</div>
-                <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{productMap[item.product_id]?.sku || '—'} · Ordered: {item.qty_ordered}</div>
+                <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{productMap[item.product_id]?.sku || '—'} · Ordered: {item.quantity_ordered}</div>
               </div>
               <input type="number" value={receiveQtys[item.id] || ''} onChange={e => setReceiveQtys(prev => ({ ...prev, [item.id]: e.target.value }))}
                 style={{ width: 72, background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '7px 10px', fontSize: 13, outline: 'none', textAlign: 'right' }} />
