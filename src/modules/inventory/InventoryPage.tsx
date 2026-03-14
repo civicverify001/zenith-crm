@@ -114,8 +114,8 @@ function getStatusStyle(status: string): React.CSSProperties {
     received:            ['rgba(74,222,128,0.12)',  '#4ade80'],
     cancelled:           ['rgba(100,116,139,0.12)', '#64748b'],
     draft:               ['rgba(100,116,139,0.12)', '#94a3b8'],
-    sent:                ['rgba(96,165,250,0.12)',  '#60a5fa'],
-    confirmed:           ['rgba(167,139,250,0.12)', '#a78bfa'],
+    submitted:           ['rgba(96,165,250,0.12)',  '#60a5fa'],
+    partial:             ['rgba(167,139,250,0.12)', '#a78bfa'],
     job_shortage:        ['rgba(248,113,113,0.12)', '#f87171'],
     stock_replenishment: ['rgba(96,165,250,0.12)',  '#60a5fa'],
     low:                 ['rgba(251,191,36,0.12)',  '#fbbf24'],
@@ -918,8 +918,8 @@ function printPO(po: PurchaseOrder, allProducts: Product[]) {
     const total = (Number(item.unit_cost || 0) * qty).toFixed(2)
     return '<tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;"><div style="font-weight:600;font-size:14px;">' + name + '</div><div style="font-size:11px;color:#64748b;font-family:monospace;">Internal: ' + sku + ' / Vendor: ' + vendorSku + '</div></td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;">' + qty + '</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;">$' + cost + '</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:600;">$' + total + '</td></tr>'
   }).join('')
-  const statusColor = po.status === 'draft' ? '#475569' : po.status === 'sent' ? '#1d4ed8' : po.status === 'confirmed' ? '#6d28d9' : '#15803d'
-  const statusBg    = po.status === 'draft' ? '#f1f5f9' : po.status === 'sent' ? '#dbeafe' : po.status === 'confirmed' ? '#ede9fe' : '#dcfce7'
+  const statusColor = po.status === 'draft' ? '#475569' : po.status === 'submitted' ? '#1d4ed8' : po.status === 'partial' ? '#6d28d9' : '#15803d'
+  const statusBg    = po.status === 'draft' ? '#f1f5f9' : po.status === 'submitted' ? '#dbeafe' : po.status === 'partial' ? '#ede9fe' : '#dcfce7'
   const dateStr = new Date(po.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
   const genDate = new Date().toLocaleString()
   const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>PO ' + po.po_number + '</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;color:#1e293b;padding:40px;max-width:800px;margin:0 auto}@media print{body{padding:20px}.no-print{display:none!important}}</style></head><body>'
@@ -957,15 +957,18 @@ function PurchaseOrdersTab({ allProducts }: { allProducts: Product[] }) {
 
   const STATUS_TABS = [
     { id: 'all', color: '#94a3b8' }, { id: 'draft', color: '#64748b' },
-    { id: 'sent', color: '#60a5fa' }, { id: 'confirmed', color: '#a78bfa' }, { id: 'received', color: '#4ade80' },
+    { id: 'submitted', color: '#60a5fa' }, { id: 'partial', color: '#a78bfa' }, { id: 'received', color: '#4ade80' },
   ]
   const filtered = orders.filter(o => activeTab === 'all' || o.status === activeTab)
 
   async function updatePOStatus(id: string, status: string) {
-    const updates: Record<string, unknown> = { status }
-    if (status === 'sent') updates.ordered_at = new Date().toISOString()
-    if (status === 'received') updates.received_at = new Date().toISOString()
-    await supabase.from('purchase_orders').update(updates).eq('id', id); load()
+    try {
+      const updates: Record<string, unknown> = { status }
+      if (status === 'received') updates.received_at = new Date().toISOString()
+      const { error } = await supabase.from('purchase_orders').update(updates).eq('id', id)
+      if (error) console.error('PO status update error:', error)
+    } catch(e) { console.error(e) }
+    load()
   }
 
   return (
@@ -1025,9 +1028,9 @@ function PurchaseOrdersTab({ allProducts }: { allProducts: Product[] }) {
                   </table>
                   {po.notes && <p style={{ fontSize: 12, color: '#475569', marginBottom: 12 }}>{po.notes}</p>}
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {po.status === 'draft' && <button onClick={() => updatePOStatus(po.id, 'sent')} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(96,165,250,0.25)', background: 'rgba(96,165,250,0.1)', color: '#60a5fa', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Mark Sent</button>}
-                    {po.status === 'sent' && <button onClick={() => updatePOStatus(po.id, 'confirmed')} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(167,139,250,0.25)', background: 'rgba(167,139,250,0.1)', color: '#a78bfa', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Mark Confirmed</button>}
-                    {(po.status === 'sent' || po.status === 'confirmed') && <button onClick={() => updatePOStatus(po.id, 'received')} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(74,222,128,0.25)', background: 'rgba(74,222,128,0.1)', color: '#4ade80', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Mark Received</button>}
+                    {po.status === 'draft' && <button onClick={() => updatePOStatus(po.id, 'submitted')} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(96,165,250,0.25)', background: 'rgba(96,165,250,0.1)', color: '#60a5fa', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Mark Submitted</button>}
+                    {po.status === 'submitted' && <button onClick={() => updatePOStatus(po.id, 'partial')} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(167,139,250,0.25)', background: 'rgba(167,139,250,0.1)', color: '#a78bfa', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Mark Partial</button>}
+                    {(po.status === 'submitted' || po.status === 'partial') && <button onClick={() => updatePOStatus(po.id, 'received')} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(74,222,128,0.25)', background: 'rgba(74,222,128,0.1)', color: '#4ade80', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Mark Received</button>}
                     {po.status !== 'received' && po.status !== 'cancelled' && <button onClick={() => updatePOStatus(po.id, 'cancelled')} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(248,113,113,0.2)', background: 'rgba(248,113,113,0.08)', color: '#f87171', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Cancel PO</button>}
                     <button onClick={() => printPO(po, allProducts)} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(251,191,36,0.25)', background: 'rgba(251,191,36,0.08)', color: '#fbbf24', cursor: 'pointer', fontSize: 13, fontWeight: 600, marginLeft: 'auto' }}>🖨️ Print / PDF</button>
                   </div>
@@ -1056,7 +1059,7 @@ function ReceivingTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase.from('purchase_orders').select('*, purchase_order_items(id, product_id, quantity_ordered, unit_cost)').in('status', ['sent', 'confirmed']).order('created_at', { ascending: false })
+    const { data } = await supabase.from('purchase_orders').select('*, purchase_order_items(id, product_id, quantity_ordered, unit_cost)').in('status', ['submitted', 'partial']).order('created_at', { ascending: false })
     setPos(data || [])
     // Fetch product names for all items
     const ids = [...new Set((data || []).flatMap((po: any) => (po.purchase_order_items || []).map((i: any) => i.product_id)).filter(Boolean))]
