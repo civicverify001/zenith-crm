@@ -388,7 +388,7 @@ export async function getDataQualityExceptions() {
       // 1. Leads with null or blank source
       supabase.from('leads')
         .select('id, full_name, created_at, stage')
-        .or('source.is.null,source.eq.')
+        .is('source', null)
         .filter('stage', 'not.in', '(won,lost,dnd)')
         .order('created_at', { ascending: false })
         .limit(50),
