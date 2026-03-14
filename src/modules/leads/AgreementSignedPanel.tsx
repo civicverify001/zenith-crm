@@ -4,7 +4,6 @@ import { useTechnicians } from '../dispatch/useJobs'
 import { SYSTEM_TYPE_LABELS } from '../dispatch/dispatch.types'
 import type { SystemType } from '../dispatch/dispatch.types'
 import { createInstallJobFromLead } from '../../services/jobService'
-import { moveStage } from '../../services/leadMutations'
 import { useAuth } from '../../hooks/useAuth'
 import { useQueryClient } from '@tanstack/react-query'
 import { JOB_KEYS } from '../dispatch/useJobs'
@@ -12,6 +11,11 @@ import { LEAD_KEYS } from './useLeads'
 import { supabase } from '../../lib/supabase'
 import { cloneQuote, updateLeadFinancingStatus, type FinancingStatus } from '../../services/quotesService'
 import { syncToCalendar } from '../../services/googleCalService'
+
+// ── REMOVED: moveStage import
+// moveStage to 'won' has been moved to complete.js (api/installations/complete.js).
+// Lead now stays at 'agreement_signed' until the install is physically completed.
+// This file no longer needs moveStage.
 
 interface Props {
   lead: Lead
@@ -495,6 +499,14 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     return `${scheduledDate}T${String(scheduledHour).padStart(2,'0')}:00:00`
   }
 
+  // ── CHANGED: handleScheduleInstall ────────────────────────────
+  // REMOVED: moveStage(lead.id, lead.stage, 'won', actor)
+  // REASON:  Lead must stay at 'agreement_signed' until the install is
+  //          physically completed by the technician. Moving to 'won' here
+  //          was causing the lead to disappear from the pipeline before
+  //          the install even happened. The 'won' stage move now lives in
+  //          complete.js (api/installations/complete.js) and fires only
+  //          after Kendrick marks the job done.
   async function handleScheduleInstall() {
     if (!user) return
     setSubmitting(true)
@@ -503,14 +515,23 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
       const newJob = await createInstallJobFromLead(lead, systemType, datetime, needsFaucetHole, { actor_id: user.id, actor_name: profile?.full_name })
       if (techId) await supabase.from('jobs').update({ assigned_technician_id: techId, assigned_at: new Date().toISOString() }).eq('id', newJob.id)
       if (notes) await supabase.from('jobs').update({ notes }).eq('id', newJob.id)
+
       // Push to Google Calendar (fire and forget — does not block job creation)
       syncToCalendar('job', newJob.id).catch(e => console.warn('Google Cal sync failed:', e))
-      const actor = { actor_id: user.id, actor_name: profile?.full_name }
-      const updatedLead = await moveStage(lead.id, lead.stage, 'won', actor)
+
       queryClient.invalidateQueries({ queryKey: JOB_KEYS.board() })
       queryClient.invalidateQueries({ queryKey: LEAD_KEYS.kanban() })
       queryClient.invalidateQueries({ queryKey: LEAD_KEYS.counts })
-      onLeadUpdated?.(updatedLead)
+
+      // Refresh lead from DB to pick up job_created flag without changing stage.
+      // Lead stays at 'agreement_signed' — visible in pipeline until install is done.
+      const { data: refreshedLead } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('id', lead.id)
+        .single()
+      onLeadUpdated?.(refreshedLead || lead)
+
       setShowModal(false)
     } catch (err: any) {
       alert('Failed to create job: ' + (err.message || err))
@@ -676,7 +697,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                 <button
                   onClick={() => handleFinancingStatus('declined')}
                   disabled={financingLoading}
-                  className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all border"
+                  className="flex-1 py-1.5 rounded-lg text-xs font-semibond transition-all border"
                   style={{ background: 'rgba(248,113,113,0.1)', borderColor: '#f87171', color: '#f87171', opacity: financingLoading ? 0.5 : 1 }}
                 >
                   ✗ Declined
@@ -731,7 +752,8 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
         <div className="fixed inset-0 bg-black/70 flex items-start justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-card border border-border rounded-2xl w-full max-w-lg p-6 shadow-2xl my-4">
             <h3 className="font-bold text-white text-base mb-1">Schedule Install</h3>
-            <p className="text-xs text-muted mb-5">Creates a job on the Dispatch board, then moves lead to Won.</p>
+            {/* CHANGED: subtitle updated to reflect correct flow */}
+            <p className="text-xs text-muted mb-5">Creates a job on the Dispatch board. Lead moves to Won when Kendrick marks install complete.</p>
 
             <div className="space-y-4">
 
