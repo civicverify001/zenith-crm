@@ -666,3 +666,155 @@ export async function getNewCustomersByMonth(months = 6): Promise<{ month: strin
     return []
   }
 }
+
+// ─── Rental vs Purchase vs Financed ───────────────────────────
+export async function getCommercialTypeSplit(): Promise<{ type: string; count: number; totalValue: number }[]> {
+  try {
+    const { data, error } = await supabase
+      .from('contracts')
+      .select('type, monthly_amount, total_value')
+    if (error) throw error
+
+    const map: Record<string, { count: number; totalValue: number }> = {}
+    for (const row of (data || [])) {
+      const t = row.type || 'unknown'
+      if (!map[t]) map[t] = { count: 0, totalValue: 0 }
+      map[t].count++
+      map[t].totalValue += Number(row.monthly_amount) || 0
+    }
+
+    const order = ['rental', 'purchase', 'financed', 'unknown']
+    return order
+      .filter(t => map[t])
+      .map(t => ({ type: t, count: map[t].count, totalValue: map[t].totalValue }))
+  } catch (err) {
+    console.error('getCommercialTypeSplit:', err)
+    return []
+  }
+}
+
+// ─── Monthly Rental Lifecycle ──────────────────────────────────
+export async function getRentalLifecycleByMonth(months = 6): Promise<{ month: string; active: number; expired: number; cancelled: number }[]> {
+  try {
+    const { data, error } = await supabase
+      .from('contracts')
+      .select('type, status, created_at')
+      .eq('type', 'rental')
+      .order('created_at', { ascending: false })
+    if (error) throw error
+
+    const now = new Date()
+    const buckets: { month: string; date: Date; active: number; expired: number; cancelled: number }[] = []
+    for (let i = months - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      buckets.push({
+        month: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        date: d, active: 0, expired: 0, cancelled: 0,
+      })
+    }
+
+    for (const row of (data || [])) {
+      if (!row.created_at) continue
+      const d = new Date(row.created_at)
+      const bucket = buckets.find(b =>
+        b.date.getFullYear() === d.getFullYear() && b.date.getMonth() === d.getMonth()
+      )
+      if (!bucket) continue
+      const s = row.status || 'active'
+      if (s === 'active')         bucket.active++
+      else if (s === 'expired')   bucket.expired++
+      else if (s === 'cancelled') bucket.cancelled++
+      else                        bucket.active++
+    }
+
+    return buckets.map(b => ({ month: b.month, active: b.active, expired: b.expired, cancelled: b.cancelled }))
+  } catch (err) {
+    console.error('getRentalLifecycleByMonth:', err)
+    return []
+  }
+}
+
+// ─── Gross Margin Estimate ─────────────────────────────────────
+// Revenue = active contract monthly amounts + paid invoices (purchase)
+// Cost    = vendor_cost from products, matched via installed_systems + source_quote_id
+// WARNING: Only products with vendor_cost populated contribute to cost.
+//          If vendor_cost is null or missing, margin will be overstated.
+export async function getGrossMarginEstimate() {
+  try {
+    // Revenue side
+    const { data: rentalContracts } = await supabase
+      .from('contracts')
+      .select('monthly_amount, type')
+      .eq('status', 'active')
+      .eq('type', 'rental')
+
+    const { data: paidInvoices } = await supabase
+      .from('invoices')
+      .select('amount')
+      .eq('status', 'paid')
+
+    const rentalRevenue   = (rentalContracts || []).reduce((s, c) => s + (Number(c.monthly_amount) || 0), 0)
+    const purchaseRevenue = (paidInvoices    || []).reduce((s, i) => s + (Number(i.amount) || 0), 0)
+    const totalRevenue    = rentalRevenue + purchaseRevenue
+
+    // Cost side — via product catalog vendor_cost
+    const { data: products } = await supabase
+      .from('products')
+      .select('id, name, vendor_cost, retail_price, rental_price_monthly, install_fee')
+      .not('vendor_cost', 'is', null)
+      .gt('vendor_cost', 0)
+
+    // How many of each product is installed (from installed_systems + system_type match)
+    const { data: installedSystems } = await supabase
+      .from('installed_systems')
+      .select('system_type, product_id')
+
+    // Count by product_id where available, else skip
+    const productCounts: Record<string, number> = {}
+    for (const sys of (installedSystems || [])) {
+      if (sys.product_id) {
+        productCounts[sys.product_id] = (productCounts[sys.product_id] || 0) + 1
+      }
+    }
+
+    let totalCost = 0
+    let coveredProducts = 0
+    let uncoveredProducts = 0
+
+    for (const p of (products || [])) {
+      const qty  = productCounts[p.id] || 0
+      if (qty > 0) {
+        totalCost += qty * (Number(p.vendor_cost) || 0)
+        coveredProducts += qty
+      }
+    }
+
+    // Count installs with no product_id (uncovered)
+    uncoveredProducts = (installedSystems || []).filter(s => !s.product_id).length
+
+    const grossMargin    = totalRevenue - totalCost
+    const marginPct      = totalRevenue > 0 ? (grossMargin / totalRevenue) * 100 : 0
+    const costCoverage   = (installedSystems || []).length > 0
+      ? Math.round((coveredProducts / (installedSystems || []).length) * 100)
+      : 0
+
+    return {
+      totalRevenue,
+      rentalRevenue,
+      purchaseRevenue,
+      totalCost,
+      grossMargin,
+      marginPct: Math.round(marginPct),
+      costCoverage,       // % of installed systems with cost data
+      uncoveredProducts,  // systems with no product_id = no cost data
+      isEstimate: uncoveredProducts > 0 || coveredProducts === 0,
+    }
+  } catch (err) {
+    console.error('getGrossMarginEstimate:', err)
+    return {
+      totalRevenue: 0, rentalRevenue: 0, purchaseRevenue: 0,
+      totalCost: 0, grossMargin: 0, marginPct: 0,
+      costCoverage: 0, uncoveredProducts: 0, isEstimate: true,
+    }
+  }
+}
