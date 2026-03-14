@@ -737,8 +737,8 @@ export function DashboardPage() {
           bg={failedPayments.length > 0
             ? 'linear-gradient(135deg, #3b0a0a 0%, #450c0c 100%)'
             : 'linear-gradient(135deg, #0a2010 0%, #0c2a14 100%)'}
-          border={failedPayments.length > 0 ? '#991b1b' : '#166534'}
-          accent={failedPayments.length > 0 ? '#f87171' : '#4ade80'}
+          border={failedPayments.length > 0 ? '#7f1d1d' : '#b91c1c'}
+          accent={failedPayments.length > 0 ? '#ef4444' : '#4ade80'}
           urgent={failedPayments.length > 0}
           onClick={() => navigate('/customers')}
         />
