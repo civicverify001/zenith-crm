@@ -669,6 +669,18 @@ function CustomersSection({ range }: { range: DateRange }) {
     queryKey: ['reports', 'customers_drilldown'],
     queryFn: () => rs.getCustomersDrilldown(150),
   })
+  const { data: commSplit = [], isLoading: csl } = useQuery({
+    queryKey: ['reports', 'commercial_type_split'],
+    queryFn: () => rs.getCommercialTypeSplit(),
+  })
+  const { data: rentalLifecycle = [], isLoading: rll } = useQuery({
+    queryKey: ['reports', 'rental_lifecycle'],
+    queryFn: () => rs.getRentalLifecycleByMonth(6),
+  })
+  const { data: margin, isLoading: ml } = useQuery({
+    queryKey: ['reports', 'gross_margin'],
+    queryFn: () => rs.getGrossMarginEstimate(),
+  })
 
   const k = kpis || { totalCustomers: 0, activeCustomers: 0, atRisk: 0, renewalsIn30: 0, serviceDue: 0 }
 
@@ -782,6 +794,134 @@ function CustomersSection({ range }: { range: DateRange }) {
             </div>
           )}
         </div>
+      </div>
+
+      {/* ── Rental vs Purchase vs Financed ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: '16px 18px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#cbd5e1', marginBottom: 16 }}>Rental vs Purchase vs Financed</div>
+          {csl ? <LoadingState small /> : commSplit.length === 0 ? (
+            <div style={{ color: '#334155', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>No contract data</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {commSplit.map((item, i) => {
+                const total = commSplit.reduce((s, x) => s + x.count, 0)
+                const pct   = total > 0 ? Math.round((item.count / total) * 100) : 0
+                const colors: Record<string, string> = { rental: '#4ade80', purchase: '#38bdf8', financed: '#a78bfa', unknown: '#64748b' }
+                const c = colors[item.type] || '#64748b'
+                const labels: Record<string, string> = { rental: 'Rental', purchase: 'Purchase', financed: 'Financed', unknown: 'Unknown' }
+                return (
+                  <div key={i}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ width: 10, height: 10, borderRadius: 3, background: c, flexShrink: 0, display: 'inline-block' }} />
+                        <span style={{ fontSize: 12, color: '#94a3b8', fontWeight: 600 }}>{labels[item.type] || item.type}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: c }}>{item.count}</span>
+                        <span style={{ fontSize: 10, color: '#475569' }}>{pct}%</span>
+                        {item.totalValue > 0 && <span style={{ fontSize: 10, color: '#475569' }}>{fmt$(item.totalValue)}/mo</span>}
+                      </div>
+                    </div>
+                    <div style={{ height: 10, background: '#0d1a26', borderRadius: 20, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg, ${c}99, ${c})`, borderRadius: 20, boxShadow: `0 0 8px ${c}40`, transition: 'width 0.5s ease' }} />
+                    </div>
+                  </div>
+                )
+              })}
+              <div style={{ marginTop: 4, padding: '10px 12px', background: '#162232', borderRadius: 8, display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, color: '#475569' }}>Total contracts</span>
+                <span style={{ fontSize: 12, fontWeight: 800, color: '#e2e8f0' }}>{commSplit.reduce((s, x) => s + x.count, 0)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Monthly Rental Lifecycle */}
+        <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: '16px 18px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#cbd5e1', marginBottom: 4 }}>Monthly Rental Lifecycle</div>
+          <div style={{ fontSize: 11, color: '#475569', marginBottom: 14 }}>Rental contracts signed per month by status</div>
+          {rll ? <LoadingState small /> : (
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 140, paddingTop: 16 }}>
+              {rentalLifecycle.map((m, i) => {
+                const total  = m.active + m.expired + m.cancelled
+                const maxVal = Math.max(...rentalLifecycle.map(r => r.active + r.expired + r.cancelled), 1)
+                const barH   = total > 0 ? Math.max((total / maxVal) * 100, 4) : 0
+                return (
+                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, justifyContent: 'flex-end', height: '100%' }}>
+                    <div style={{ fontSize: 9, color: '#64748b', fontWeight: 600, height: 12 }}>{total > 0 ? total : ''}</div>
+                    <div style={{ width: '100%', height: barH, borderRadius: '4px 4px 2px 2px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                      {m.active    > 0 && <div style={{ flex: m.active,    background: '#4ade80', minHeight: 2 }} />}
+                      {m.expired   > 0 && <div style={{ flex: m.expired,   background: '#f59e0b', minHeight: 2 }} />}
+                      {m.cancelled > 0 && <div style={{ flex: m.cancelled, background: '#f87171', minHeight: 2 }} />}
+                    </div>
+                    <div style={{ fontSize: 9, color: '#475569', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em', textAlign: 'center' }}>{m.month}</div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {!rll && (
+            <div style={{ display: 'flex', gap: 12, marginTop: 10 }}>
+              {[['#4ade80','Active'],['#f59e0b','Expired'],['#f87171','Cancelled']].map(([c,l]) => (
+                <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: c, display: 'inline-block' }} />
+                  <span style={{ fontSize: 10, color: '#475569' }}>{l}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Gross Margin Estimate ── */}
+      <div style={{ background: '#0f1923', border: `1px solid ${margin?.isEstimate ? 'rgba(251,191,36,0.25)' : '#1e3a4f'}`, borderRadius: 12, padding: '18px 20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#cbd5e1' }}>Gross Margin Estimate</div>
+            <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>Revenue − Cost = Gross Margin</div>
+          </div>
+          {margin?.isEstimate && (
+            <div style={{ padding: '5px 12px', borderRadius: 8, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.25)', fontSize: 11, color: '#fbbf24', fontWeight: 600 }}>
+              ⚠ Estimate — {margin.uncoveredProducts} system{margin.uncoveredProducts !== 1 ? 's' : ''} missing cost data
+            </div>
+          )}
+        </div>
+        {ml ? <LoadingState small /> : !margin ? null : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+            {[
+              { label: 'Rental Revenue',   value: fmt$(margin.rentalRevenue),   accent: '#4ade80', icon: '📈', sub: 'Active contracts/mo' },
+              { label: 'Purchase Revenue', value: fmt$(margin.purchaseRevenue), accent: '#38bdf8', icon: '💳', sub: 'Paid invoices' },
+              { label: 'Est. Cost',        value: fmt$(margin.totalCost),       accent: '#f87171', icon: '📦', sub: `${margin.costCoverage}% cost coverage` },
+              {
+                label: 'Gross Margin',
+                value: fmt$(margin.grossMargin),
+                accent: margin.grossMargin >= 0 ? '#4ade80' : '#f87171',
+                icon: margin.grossMargin >= 0 ? '✅' : '🔴',
+                sub: 'Revenue − Cost',
+              },
+              {
+                label: 'Margin %',
+                value: `${margin.marginPct}%`,
+                accent: margin.marginPct >= 50 ? '#4ade80' : margin.marginPct >= 25 ? '#fbbf24' : '#f87171',
+                icon: '📊',
+                sub: margin.isEstimate ? 'Estimated' : 'Calculated',
+              },
+            ].map(card => (
+              <div key={card.label} style={{ background: `${card.accent}08`, border: `1px solid ${card.accent}20`, borderTop: `3px solid ${card.accent}`, borderRadius: 10, padding: '14px 14px 12px', position: 'relative', overflow: 'hidden' }}>
+                <div style={{ position: 'absolute', top: -10, right: -10, width: 40, height: 40, borderRadius: '50%', background: `${card.accent}10`, pointerEvents: 'none' }} />
+                <div style={{ fontSize: 9, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>{card.icon} {card.label}</div>
+                <div style={{ fontSize: 22, fontWeight: 900, color: card.accent, lineHeight: 1, letterSpacing: '-0.02em' }}>{card.value}</div>
+                <div style={{ fontSize: 10, color: '#475569', marginTop: 6 }}>{card.sub}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {!ml && margin?.isEstimate && (
+          <div style={{ marginTop: 12, fontSize: 11, color: '#475569', padding: '8px 12px', background: 'rgba(251,191,36,0.05)', borderRadius: 6 }}>
+            Margin is understated if products have missing vendor_cost. Go to Products Catalog → add vendor_cost to each product for accurate margin reporting.
+          </div>
+        )}
       </div>
 
       {/* Customers drilldown table */}
