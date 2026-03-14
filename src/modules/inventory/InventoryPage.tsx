@@ -902,6 +902,41 @@ function ReorderTab() {
   )
 }
 
+
+// ─── Print PO ─────────────────────────────────────────────────────────────────
+
+function printPO(po: PurchaseOrder, allProducts: Product[]) {
+  const items = po.purchase_order_items || []
+  const subtotal = items.reduce((s, i) => s + (Number(i.unit_cost) || 0) * (Number(i.quantity_ordered) || 0), 0)
+  const rows = items.map(item => {
+    const prod = allProducts.find(p => p.id === item.product_id)
+    const name = prod?.name || item.product_id?.slice(0, 8) || '—'
+    const sku  = prod?.sku  || '—'
+    const vendorSku = (prod as any)?.vendor_sku || '—'
+    const qty  = item.quantity_ordered || 0
+    const cost = Number(item.unit_cost || 0).toFixed(2)
+    const total = (Number(item.unit_cost || 0) * qty).toFixed(2)
+    return '<tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;"><div style="font-weight:600;font-size:14px;">' + name + '</div><div style="font-size:11px;color:#64748b;font-family:monospace;">Internal: ' + sku + ' / Vendor: ' + vendorSku + '</div></td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;">' + qty + '</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;">$' + cost + '</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:600;">$' + total + '</td></tr>'
+  }).join('')
+  const statusColor = po.status === 'draft' ? '#475569' : po.status === 'sent' ? '#1d4ed8' : po.status === 'confirmed' ? '#6d28d9' : '#15803d'
+  const statusBg    = po.status === 'draft' ? '#f1f5f9' : po.status === 'sent' ? '#dbeafe' : po.status === 'confirmed' ? '#ede9fe' : '#dcfce7'
+  const dateStr = new Date(po.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+  const genDate = new Date().toLocaleString()
+  const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>PO ' + po.po_number + '</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;color:#1e293b;padding:40px;max-width:800px;margin:0 auto}@media print{body{padding:20px}.no-print{display:none!important}}</style></head><body>'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px;padding-bottom:24px;border-bottom:2px solid #0d7ea3;">'
+    + '<div><div style="font-size:22px;font-weight:800;color:#0d7ea3;">Zenith Pure Solutions</div><div style="font-size:13px;color:#64748b;margin-top:4px;">6951 E 30th St, Suite B</div><div style="font-size:13px;color:#64748b;">Indianapolis, IN 46219</div></div>'
+    + '<div style="text-align:right;"><div style="font-size:26px;font-weight:900;">PURCHASE ORDER</div><div style="font-size:18px;font-weight:700;color:#0d7ea3;margin-top:4px;">' + po.po_number + '</div><div style="font-size:13px;color:#64748b;margin-top:6px;">Date: ' + dateStr + '</div>'
+    + '<div style="margin-top:8px;"><span style="background:' + statusBg + ';color:' + statusColor + ';padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;text-transform:uppercase;">' + po.status + '</span></div></div></div>'
+    + '<div class="no-print" style="margin-bottom:24px;"><button onclick="window.print()" style="background:#0d7ea3;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;">Print / Save as PDF</button><span style="margin-left:12px;font-size:12px;color:#94a3b8;">In print dialog choose Save as PDF</span></div>'
+    + (po.notes ? '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin-bottom:24px;font-size:13px;color:#475569;"><strong>Notes:</strong> ' + po.notes + '</div>' : '')
+    + '<table style="width:100%;border-collapse:collapse;margin-bottom:24px;"><thead><tr style="background:#f1f5f9;"><th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;">Product</th><th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;">Qty</th><th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;">Unit Cost</th><th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;">Total</th></tr></thead><tbody>' + rows + '</tbody></table>'
+    + '<div style="display:flex;justify-content:flex-end;margin-bottom:32px;"><div style="min-width:240px;"><div style="display:flex;justify-content:space-between;padding:10px 0;border-top:2px solid #1e293b;"><span style="font-size:16px;font-weight:800;">Total</span><span style="font-size:16px;font-weight:800;color:#0d7ea3;">$' + subtotal.toFixed(2) + '</span></div></div></div>'
+    + '<div style="border-top:1px solid #e2e8f0;padding-top:20px;font-size:12px;color:#94a3b8;text-align:center;">Zenith Pure Solutions LLC / Indianapolis, IN / Generated ' + genDate + '</div>'
+    + '</body></html>'
+  const win = window.open('', '_blank')
+  if (win) { win.document.write(html); win.document.close() }
+}
+
 // ─── Purchase Orders Tab ──────────────────────────────────────────────────────
 
 function PurchaseOrdersTab({ allProducts }: { allProducts: Product[] }) {
@@ -989,11 +1024,12 @@ function PurchaseOrdersTab({ allProducts }: { allProducts: Product[] }) {
                     </tbody>
                   </table>
                   {po.notes && <p style={{ fontSize: 12, color: '#475569', marginBottom: 12 }}>{po.notes}</p>}
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     {po.status === 'draft' && <button onClick={() => updatePOStatus(po.id, 'sent')} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(96,165,250,0.25)', background: 'rgba(96,165,250,0.1)', color: '#60a5fa', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Mark Sent</button>}
                     {po.status === 'sent' && <button onClick={() => updatePOStatus(po.id, 'confirmed')} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(167,139,250,0.25)', background: 'rgba(167,139,250,0.1)', color: '#a78bfa', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Mark Confirmed</button>}
                     {(po.status === 'sent' || po.status === 'confirmed') && <button onClick={() => updatePOStatus(po.id, 'received')} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(74,222,128,0.25)', background: 'rgba(74,222,128,0.1)', color: '#4ade80', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Mark Received</button>}
                     {po.status !== 'received' && po.status !== 'cancelled' && <button onClick={() => updatePOStatus(po.id, 'cancelled')} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(248,113,113,0.2)', background: 'rgba(248,113,113,0.08)', color: '#f87171', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Cancel PO</button>}
+                    <button onClick={() => printPO(po, allProducts)} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(251,191,36,0.25)', background: 'rgba(251,191,36,0.08)', color: '#fbbf24', cursor: 'pointer', fontSize: 13, fontWeight: 600, marginLeft: 'auto' }}>🖨️ Print / PDF</button>
                   </div>
                 </div>
               )}
