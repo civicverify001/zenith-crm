@@ -981,18 +981,20 @@ export function QuoteReviewPage() {
       }).eq('id', agreement.id)
       if (e) throw e
 
-      // Activate the contract with all required fields
-      await supabase.from('contracts')
-        .update({
-          status: 'active',
-          signed_at: now,
-          billing_day: new Date().getDate(),
-          contract_number: contractNumber,
-          start_date: startDate,
-          end_date: endDate,
-        })
-        .eq('quote_id', agreement.quote_id)
-        .eq('status', 'pending_signature')
+      // INSERT the contract — created fresh at signing time
+      const { error: contractErr } = await supabase.from('contracts').insert({
+        customer_id: quote.customer_id,
+        quote_id: agreement.quote_id,
+        type: 'rental',
+        status: 'active',
+        monthly_amount: agreement.monthly_amount,
+        signed_at: now,
+        billing_day: new Date().getDate(),
+        contract_number: contractNumber,
+        start_date: startDate,
+        end_date: endDate,
+      })
+      if (contractErr) throw contractErr
 
       setAgreement(prev => prev ? { ...prev, status: 'signed', signed_at: now, signed_name: signedName } : prev)
       setStep('stripe_card_save'); scrollTop()
