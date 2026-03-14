@@ -84,6 +84,7 @@ interface Agreement {
   signed_name?: string | null
   terms_snapshot?: any
   line_items_snapshot?: any
+  quote_id?: string
 }
 
 interface Invoice {
@@ -701,7 +702,6 @@ export function QuoteReviewPage() {
     }
   }
 
-  // ─── UPDATED: jsPDF download (true PDF, no print dialog) ──────
   async function handleDownloadAgreement() {
     setDownloading(true)
     setError('')
@@ -720,7 +720,6 @@ export function QuoteReviewPage() {
       const terms: TermBlock[] = ag.terms_snapshot?.blocks || rentalTerms
       const html = generateAgreementHTML(ag, quote?.customer, terms)
 
-      // Render HTML in hidden iframe so all CSS loads correctly
       const iframe = document.createElement('iframe')
       iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;height:3000px;border:none;visibility:hidden;'
       document.body.appendChild(iframe)
@@ -728,17 +727,15 @@ export function QuoteReviewPage() {
       await new Promise<void>((resolve) => {
         iframe.onload = () => resolve()
         iframe.srcdoc = html
-        setTimeout(resolve, 3000) // fallback timeout
+        setTimeout(resolve, 3000)
       })
 
       const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
       if (!iframeDoc) throw new Error('Could not access iframe document')
 
-      // Hide the print button from the PDF
       const noPrint = iframeDoc.querySelector('.no-print') as HTMLElement | null
       if (noPrint) noPrint.style.display = 'none'
 
-      // Dynamically import jsPDF + html2canvas (lazy — only loads when button clicked)
       const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
         import('html2canvas'),
         import('jspdf'),
@@ -761,7 +758,6 @@ export function QuoteReviewPage() {
 
       pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, imgW, imgH)
 
-      // Add extra pages if agreement is longer than one page
       let heightLeft = imgH - pageH
       let offset = -pageH
       while (heightLeft > 0) {
@@ -783,18 +779,17 @@ export function QuoteReviewPage() {
     if (searchParams.get('paid') === '1') {
       if (token) {
         supabase.from('quotes').select('*')
-  .eq('public_token', token).maybeSingle()
           .eq('public_token', token).maybeSingle()
           .then(async ({ data }) => {
             if (data) {
               setQuote(data)
               if (data.lead_id) {
-  await supabase.from('leads').update({
-    stage: 'agreement_signed',
-    stage_entered_at: new Date().toISOString(),
-    stage_changed_at: new Date().toISOString(),
-  }).eq('id', data.lead_id)
-}
+                await supabase.from('leads').update({
+                  stage: 'agreement_signed',
+                  stage_entered_at: new Date().toISOString(),
+                  stage_changed_at: new Date().toISOString(),
+                }).eq('id', data.lead_id)
+              }
               if (data.commercial_type === 'rental') {
                 const { data: ag } = await supabase.from('agreements').select('*').eq('quote_id', data.id).maybeSingle()
                 if (ag) setAgreement(ag)
@@ -951,20 +946,54 @@ export function QuoteReviewPage() {
     setSigning(false)
   }
 
+  // ── FIXED: handleSignAgreement ────────────────────────────────
+  // CHANGED: Now sets contract_number, start_date, end_date when activating
+  // the contract. Previously these were null causing the Billing Plan section
+  // to not display correctly on the customer profile.
   async function handleSignAgreement(signedName: string) {
     if (!agreement) return
     setSigning(true); setError('')
     try {
       const ip = await getIp()
       const now = new Date().toISOString()
+
+      // Generate sequential contract number
+      const year = new Date().getFullYear()
+      const { data: lastContract } = await supabase
+        .from('contracts')
+        .select('contract_number')
+        .like('contract_number', `RA-${year}-%`)
+        .order('contract_number', { ascending: false })
+        .limit(1)
+      const lastNum = lastContract?.[0]?.contract_number
+        ? parseInt(lastContract[0].contract_number.split('-')[2]) : 0
+      const contractNumber = `RA-${year}-${String(lastNum + 1).padStart(4, '0')}`
+
+      // Contract dates: start = today, end = 36 months from today
+      const startDate = now.split('T')[0]
+      const endDateObj = new Date()
+      endDateObj.setMonth(endDateObj.getMonth() + 36)
+      const endDate = endDateObj.toISOString().split('T')[0]
+
+      // Sign the agreement
       const { error: e } = await supabase.from('agreements').update({
         status: 'signed', signed_at: now, signed_name: signedName, signed_ip: ip,
       }).eq('id', agreement.id)
       if (e) throw e
+
+      // Activate the contract with all required fields
       await supabase.from('contracts')
-        .update({ status: 'active', signed_at: now, billing_day: new Date().getDate() })
+        .update({
+          status: 'active',
+          signed_at: now,
+          billing_day: new Date().getDate(),
+          contract_number: contractNumber,
+          start_date: startDate,
+          end_date: endDate,
+        })
         .eq('quote_id', agreement.quote_id)
         .eq('status', 'pending_signature')
+
       setAgreement(prev => prev ? { ...prev, status: 'signed', signed_at: now, signed_name: signedName } : prev)
       setStep('stripe_card_save'); scrollTop()
     } catch (e: any) { setError(e.message) }
@@ -1167,7 +1196,6 @@ export function QuoteReviewPage() {
     </div>
   )
 
-  // ── Complete ──────────────────────────────────────────────────
   if (step === 'complete') return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
@@ -1202,7 +1230,6 @@ export function QuoteReviewPage() {
     </div>
   )
 
-  // ── Main document flow ────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50" ref={topRef}>
       <div className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
