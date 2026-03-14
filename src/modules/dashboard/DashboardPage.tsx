@@ -65,11 +65,14 @@ function useTodaysJobs() {
   return useQuery({
     queryKey: ['dashboard', 'todays_jobs'],
     queryFn: async () => {
-      const today = new Date().toISOString().split('T')[0]
+      const now = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
       const { data, error } = await supabase
         .from('jobs')
         .select('id, customer_name_snapshot, service_address_snapshot, system_type, status, scheduled_date, assigned_technician_name')
-        .eq('scheduled_date', today)
+        .gte('scheduled_date', today + 'T00:00:00')
+        .lte('scheduled_date', today + 'T23:59:59')
         .order('status', { ascending: true })
       if (error) throw error
       return data || []
@@ -98,15 +101,22 @@ function useJobsThisWeek() {
     queryKey: ['dashboard', 'jobs_this_week'],
     queryFn: async () => {
       const now = new Date()
-      const startOfWeek = new Date(now)
-      startOfWeek.setDate(now.getDate() - now.getDay())
-      const endOfWeek = new Date(startOfWeek)
-      endOfWeek.setDate(startOfWeek.getDate() + 6)
+      const pad = (n: number) => String(n).padStart(2, '0')
+
+      // Use local date math — avoids UTC offset shifting the week boundary
+      const startDate = new Date(now)
+      startDate.setDate(now.getDate() - now.getDay()) // Sunday
+      const endDate = new Date(startDate)
+      endDate.setDate(startDate.getDate() + 6) // Saturday
+
+      const startStr = `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())}`
+      const endStr   = `${endDate.getFullYear()}-${pad(endDate.getMonth() + 1)}-${pad(endDate.getDate())}T23:59:59`
+
       const { data, error } = await supabase
         .from('jobs')
-        .select('id, status')
-        .gte('scheduled_date', startOfWeek.toISOString().split('T')[0])
-        .lte('scheduled_date', endOfWeek.toISOString().split('T')[0])
+        .select('id, status, scheduled_date')
+        .gte('scheduled_date', startStr)
+        .lte('scheduled_date', endStr)
       if (error) throw error
       return data || []
     },
@@ -256,12 +266,14 @@ function useWeekCalendarEvents(userId: string | undefined, role: string | null) 
     queryKey: ['dashboard', 'week_calendar', userId, role],
     queryFn: async () => {
       const now = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
       const startOfWeek = new Date(now)
       startOfWeek.setDate(now.getDate() - now.getDay())
+
       const days = Array.from({ length: 7 }, (_, i) => {
         const d = new Date(startOfWeek)
         d.setDate(startOfWeek.getDate() + i)
-        return d.toISOString().split('T')[0]
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
       })
       const start = days[0]
       const end = days[6]
@@ -302,7 +314,7 @@ function useWeekCalendarEvents(userId: string | undefined, role: string | null) 
           .from('jobs')
           .select('id, customer_name_snapshot, status, scheduled_date, assigned_technician_name, system_type')
           .gte('scheduled_date', start)
-          .lte('scheduled_date', end)
+          .lte('scheduled_date', end + 'T23:59:59')
           .not('status', 'eq', 'cancelled')
 
         if (role === 'technician' && userId) {
@@ -311,8 +323,9 @@ function useWeekCalendarEvents(userId: string | undefined, role: string | null) 
 
         const { data: jobs } = await jobQuery
         for (const j of (jobs || [])) {
-          if (results[j.scheduled_date]) {
-            results[j.scheduled_date].jobs.push(j)
+          const dayKey = j.scheduled_date.split('T')[0]
+          if (results[dayKey]) {
+            results[dayKey].jobs.push(j)
           }
         }
       }
@@ -360,11 +373,15 @@ function formatHour(h: number): string {
 }
 
 function isToday(dateStr: string): boolean {
-  return dateStr === new Date().toISOString().split('T')[0]
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return dateStr === `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
 }
 
 function isTomorrow(dateStr: string): boolean {
-  return dateStr === new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  const tom = new Date(Date.now() + 24 * 60 * 60 * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return dateStr === `${tom.getFullYear()}-${pad(tom.getMonth() + 1)}-${pad(tom.getDate())}`
 }
 
 function visitDayLabel(dateStr: string): string {
