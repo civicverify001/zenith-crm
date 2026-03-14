@@ -610,6 +610,218 @@ function DataQualitySection() {
   )
 }
 
+
+// ─── Customers & Rentals Section ───────────────────────────────
+
+const LIFECYCLE_COLORS: Record<string, string> = {
+  active:       '#4ade80',
+  service_due:  '#fbbf24',
+  renewal_due:  '#fb923c',
+  upsell:       '#38bdf8',
+  at_risk:      '#f87171',
+  inactive:     '#64748b',
+  unknown:      '#334155',
+}
+
+const LIFECYCLE_LABELS: Record<string, string> = {
+  active:       'Active',
+  service_due:  'Service Due',
+  renewal_due:  'Renewal Due',
+  upsell:       'Upsell',
+  at_risk:      'At Risk',
+  inactive:     'Inactive',
+  unknown:      'Unknown',
+}
+
+const SYSTEM_TYPE_LABELS: Record<string, string> = {
+  ro:                'RO System',
+  ro_install:        'RO System',
+  softener:          'Water Softener',
+  softener_only:     'Water Softener',
+  whole_home_filter: 'Whole Home Filter',
+  iron_filter:       'Iron Filter',
+  dual_tank:         'Dual Tank',
+  advanced_softener: 'Advanced Softener',
+  unknown:           'Unknown',
+}
+
+const SYSTEM_COLORS = ['#38bdf8','#4ade80','#a78bfa','#fb923c','#22d3ee','#fbbf24','#f87171','#34d399']
+
+function CustomersSection({ range }: { range: DateRange }) {
+  const { data: kpis, isLoading: kl } = useQuery({
+    queryKey: ['reports', 'customer_kpis'],
+    queryFn: () => rs.getCustomerKPIs(),
+    refetchInterval: 120_000,
+  })
+  const { data: lifecycle = [], isLoading: ll } = useQuery({
+    queryKey: ['reports', 'customer_lifecycle'],
+    queryFn: () => rs.getCustomerLifecycleDistribution(),
+  })
+  const { data: systemDist = [], isLoading: sdl } = useQuery({
+    queryKey: ['reports', 'system_type_dist'],
+    queryFn: () => rs.getSystemTypeDistribution(),
+  })
+  const { data: newByMonth = [], isLoading: nml } = useQuery({
+    queryKey: ['reports', 'new_customers_by_month'],
+    queryFn: () => rs.getNewCustomersByMonth(6),
+  })
+  const { data: customers = [], isLoading: cl } = useQuery({
+    queryKey: ['reports', 'customers_drilldown'],
+    queryFn: () => rs.getCustomersDrilldown(150),
+  })
+
+  const k = kpis || { totalCustomers: 0, activeCustomers: 0, atRisk: 0, renewalsIn30: 0, serviceDue: 0 }
+
+  // Donut chart using SVG
+  const totalSystems = systemDist.reduce((s, d) => s + d.count, 0)
+  let cumAngle = -90 // start at top
+  const donutSlices = systemDist.map((d, i) => {
+    const pct   = totalSystems > 0 ? d.count / totalSystems : 0
+    const angle = pct * 360
+    const start = cumAngle
+    cumAngle   += angle
+    const r     = 52, cx = 70, cy = 70
+    const toRad = (deg: number) => (deg * Math.PI) / 180
+    const x1 = cx + r * Math.cos(toRad(start))
+    const y1 = cy + r * Math.sin(toRad(start))
+    const x2 = cx + r * Math.cos(toRad(start + angle))
+    const y2 = cy + r * Math.sin(toRad(start + angle))
+    const large = angle > 180 ? 1 : 0
+    const path = `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`
+    return { ...d, path, color: SYSTEM_COLORS[i % SYSTEM_COLORS.length], pct }
+  })
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ marginBottom: 4 }}>
+        <h2 style={{ color: '#e2e8f0', fontWeight: 800, fontSize: 18, margin: 0, letterSpacing: '-0.01em' }}>Customers & Rentals</h2>
+        <p style={{ color: '#475569', fontSize: 12, marginTop: 4, marginBottom: 0 }}>
+          lifecycle_status reliability depends on automation rules. Verify before acting on at-risk counts.
+        </p>
+      </div>
+
+      {/* KPI Row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+        <KPICard label="Total Customers"  value={kl ? '…' : String(k.totalCustomers)}  icon="👥" accent="#38bdf8" />
+        <KPICard label="Active"           value={kl ? '…' : String(k.activeCustomers)} icon="✅" accent="#4ade80" sub="lifecycle = active" />
+        <KPICard label="At Risk"          value={kl ? '…' : String(k.atRisk)}          icon="🔴"
+          accent={k.atRisk > 0 ? '#f87171' : '#4ade80'} sub="Needs attention" />
+        <KPICard label="Renewals in 30d"  value={kl ? '…' : String(k.renewalsIn30)}    icon="↻"
+          accent={k.renewalsIn30 > 0 ? '#fbbf24' : '#4ade80'} sub="Active contracts" />
+        <KPICard label="Service Due"      value={kl ? '…' : String(k.serviceDue)}      icon="🔧"
+          accent={k.serviceDue > 0 ? '#fb923c' : '#4ade80'} sub="Due or overdue" />
+      </div>
+
+      {/* Charts Row */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
+
+        {/* Lifecycle distribution bar */}
+        <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: '16px 18px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#cbd5e1', marginBottom: 16 }}>Customer Lifecycle</div>
+          {ll ? <LoadingState small /> : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {lifecycle.length === 0 ? (
+                <div style={{ color: '#334155', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>No customers yet</div>
+              ) : lifecycle.map(item => {
+                const max = Math.max(...lifecycle.map(l => l.count), 1)
+                const c = LIFECYCLE_COLORS[item.status] || '#64748b'
+                return (
+                  <div key={item.status}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, color: '#94a3b8' }}>{LIFECYCLE_LABELS[item.status] || item.status}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: c }}>{item.count}</span>
+                    </div>
+                    <div style={{ height: 8, background: '#0d1a26', borderRadius: 4, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${(item.count / max) * 100}%`, background: c, borderRadius: 4, boxShadow: `0 0 6px ${c}40` }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* New customers by month */}
+        <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: '16px 18px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#cbd5e1', marginBottom: 16 }}>New Customers by Month</div>
+          {nml ? <LoadingState small /> : (
+            <VerticalBarChart
+              data={newByMonth.map(m => ({ label: m.month, value: m.count }))}
+              color="#38bdf8" height={110}
+            />
+          )}
+        </div>
+
+        {/* System type donut */}
+        <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: '16px 18px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#cbd5e1', marginBottom: 12 }}>Installed Systems</div>
+          {sdl ? <LoadingState small /> : totalSystems === 0 ? (
+            <div style={{ color: '#334155', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>No systems recorded</div>
+          ) : (
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <svg width="140" height="140" viewBox="0 0 140 140" style={{ flexShrink: 0 }}>
+                {donutSlices.map((s, i) => (
+                  <path key={i} d={s.path} fill={s.color} opacity={0.85} />
+                ))}
+                {/* Donut hole */}
+                <circle cx="70" cy="70" r="30" fill="#0f1923" />
+                <text x="70" y="73" textAnchor="middle" fill="#e2e8f0" fontSize="14" fontWeight="800">{totalSystems}</text>
+                <text x="70" y="86" textAnchor="middle" fill="#475569" fontSize="9">systems</text>
+              </svg>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {donutSlices.map((s, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: s.color, flexShrink: 0 }} />
+                    <span style={{ fontSize: 10, color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {SYSTEM_TYPE_LABELS[s.type] || s.type}
+                    </span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: s.color, flexShrink: 0 }}>{s.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Customers drilldown table */}
+      {cl ? <LoadingState small /> : (
+        <DrilldownTable
+          columns={[
+            { key: 'full_name',        label: 'Customer' },
+            { key: 'phone',            label: 'Phone' },
+            { key: 'lifecycle_status', label: 'Status', render: (v: string) => {
+              const c = LIFECYCLE_COLORS[v] || '#64748b'
+              return <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 700, background: `${c}18`, color: c, border: `1px solid ${c}30` }}>{LIFECYCLE_LABELS[v] || v || '—'}</span>
+            }},
+            { key: 'contract', label: 'Contract Type', render: (v: any) => v ? (
+              <span style={{ fontSize: 11, color: '#94a3b8' }}>{v.type} · {v.monthly_amount ? `$${Number(v.monthly_amount).toFixed(0)}/mo` : '—'}</span>
+            ) : <span style={{ color: '#334155' }}>None</span> },
+            { key: 'systems', label: 'Systems', render: (v: any[]) => v?.length
+              ? v.map((s: any) => SYSTEM_TYPE_LABELS[s.system_type] || s.system_type).join(', ')
+              : <span style={{ color: '#334155' }}>None</span>
+            },
+            { key: 'last_payment_at', label: 'Last Payment', render: (v: string) => v ? fmtDate(v.split('T')[0]) : <span style={{ color: '#f59e0b' }}>None recorded</span> },
+            { key: 'created_at', label: 'Customer Since', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
+          ]}
+          rows={customers}
+          emptyText="No customers found"
+          onExport={() => downloadCSV(
+            customers.map((c: any) => ({
+              name: c.full_name, phone: c.phone, status: c.lifecycle_status,
+              contract_type: c.contract?.type || '', monthly: c.contract?.monthly_amount || '',
+              systems: (c.systems || []).map((s: any) => s.system_type).join('; '),
+              last_payment: c.last_payment_at || '',
+              customer_since: c.created_at || '',
+            })),
+            'customers.csv'
+          )}
+        />
+      )}
+    </div>
+  )
+}
+
 // ─── Date Range Bar ─────────────────────────────────────────────
 function DateRangeBar({ range, onChange }: { range: DateRange; onChange: (r: DateRange) => void }) {
   const presets = [
@@ -635,13 +847,14 @@ function DateRangeBar({ range, onChange }: { range: DateRange; onChange: (r: Dat
 }
 
 // ─── Nav Tab Config ─────────────────────────────────────────────
-type Section = 'overview' | 'revenue' | 'installs' | 'pipeline' | 'quality'
+type Section = 'overview' | 'revenue' | 'installs' | 'pipeline' | 'customers' | 'quality'
 
 const NAV_TABS: { id: Section; label: string; icon: string; color: string; bg: string; adminOnly?: boolean }[] = [
   { id: 'overview',  label: 'Executive Overview',  icon: '◉',  color: '#38bdf8', bg: 'rgba(56,189,248,0.12)'  },
   { id: 'revenue',   label: 'Revenue & Billing',   icon: '💰', color: '#4ade80', bg: 'rgba(74,222,128,0.12)'  },
   { id: 'installs',  label: 'Installations',       icon: '🔧', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)'  },
   { id: 'pipeline',  label: 'Pipeline Snapshot',   icon: '⬡',  color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
+  { id: 'customers', label: 'Customers & Rentals',  icon: '👥', color: '#34d399', bg: 'rgba(52,211,153,0.12)'  },
   { id: 'quality',   label: 'Data Quality',        icon: '🔍', color: '#fb923c', bg: 'rgba(251,146,60,0.12)',  adminOnly: true },
 ]
 
@@ -722,6 +935,7 @@ export function ReportsPage() {
         {activeSection === 'revenue'  && <RevenueSection   range={range} />}
         {activeSection === 'installs' && <InstallationsSection range={range} />}
         {activeSection === 'pipeline' && <PipelineSection  range={range} />}
+        {activeSection === 'customers' && <CustomersSection range={range} />}
         {activeSection === 'quality'  && isAdmin && <DataQualitySection />}
       </div>
     </div>
