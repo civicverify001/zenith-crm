@@ -472,7 +472,7 @@ export async function getDataQualityExceptions() {
 
 export async function getCustomerKPIs() {
   try {
-    const [activeRes, atRiskRes, allRes] = await Promise.all([
+    const [activeRes, atRiskRes, allRes, renewalRes] = await Promise.all([
       supabase.from('customers')
         .select('*', { count: 'exact', head: true })
         .eq('lifecycle_status', 'active'),
@@ -481,28 +481,28 @@ export async function getCustomerKPIs() {
         .eq('lifecycle_status', 'at_risk'),
       supabase.from('customers')
         .select('*', { count: 'exact', head: true }),
+      supabase.from('contracts')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'active')
+        .gte('end_date', localDateStr())
+        .lte('end_date', localDateStr(new Date(Date.now() + 30 * 86400000))),
     ])
 
-    // Renewals in 30 days
-    const today = localDateStr()
-    const in30  = localDateStr(new Date(Date.now() + 30 * 86400000))
-    const { count: renewalCount } = await supabase.from('contracts')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'active')
-      .gte('end_date', today)
-      .lte('end_date', in30)
-
-    // Service due / overdue
-    const { count: serviceDue } = await supabase.from('service_schedule_items')
-      .select('*', { count: 'exact', head: true })
-      .in('status', ['due', 'overdue'])
+    let serviceDue = 0
+    try {
+      const { count } = await supabase
+        .from('service_schedule_items')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'overdue')
+      serviceDue = count ?? 0
+    } catch (_) { serviceDue = 0 }
 
     return {
-      totalCustomers:  allRes.count    ?? 0,
-      activeCustomers: activeRes.count ?? 0,
-      atRisk:          atRiskRes.count ?? 0,
-      renewalsIn30:    renewalCount    ?? 0,
-      serviceDue:      serviceDue      ?? 0,
+      totalCustomers:  allRes.count     ?? 0,
+      activeCustomers: activeRes.count  ?? 0,
+      atRisk:          atRiskRes.count  ?? 0,
+      renewalsIn30:    renewalRes.count ?? 0,
+      serviceDue,
     }
   } catch (err) {
     console.error('getCustomerKPIs:', err)
