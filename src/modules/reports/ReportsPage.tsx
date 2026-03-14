@@ -962,6 +962,332 @@ function CustomersSection({ range }: { range: DateRange }) {
   )
 }
 
+
+// ─── Rep Performance Section ────────────────────────────────────
+function RepPerformanceSection() {
+  const { data: reps = [], isLoading } = useQuery({
+    queryKey: ['reports', 'rep_performance'],
+    queryFn: () => rs.getRepPerformance(),
+    refetchInterval: 120_000,
+  })
+
+  if (isLoading) return <LoadingState />
+
+  const topCloser  = reps.length ? reps.reduce((a, b) => a.closeRate  > b.closeRate  ? a : b, reps[0]) : null
+  const mostLeads  = reps.length ? reps.reduce((a, b) => a.totalLeads > b.totalLeads ? a : b, reps[0]) : null
+  const mostQuotes = reps.length ? reps.reduce((a, b) => a.quotesSent > b.quotesSent ? a : b, reps[0]) : null
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <h2 style={{ color: '#e2e8f0', fontWeight: 800, fontSize: 18, margin: 0 }}>Rep Performance</h2>
+        <p style={{ color: '#475569', fontSize: 12, marginTop: 4, marginBottom: 0 }}>
+          Quote attribution is indirect — via lead assignment. Labeled approximate.
+        </p>
+      </div>
+
+      {reps.length === 0 ? (
+        <div style={{ padding: '40px', textAlign: 'center', color: '#334155', fontSize: 14 }}>No rep data available yet</div>
+      ) : (
+        <>
+          {/* Top performers */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            {topCloser && <KPICard label="Best Close Rate" value={`${topCloser.closeRate}%`} icon="🏆" accent="#4ade80" sub={topCloser.name} />}
+            {mostLeads && <KPICard label="Most Leads" value={String(mostLeads.totalLeads)} icon="⬡" accent="#38bdf8" sub={mostLeads.name} />}
+            {mostQuotes && <KPICard label="Most Quotes Sent" value={String(mostQuotes.quotesSent)} icon="📋" accent="#f472b6" sub={mostQuotes.name} />}
+          </div>
+
+          {/* Rep table */}
+          <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, overflow: 'hidden' }}>
+            <div style={{ padding: '12px 16px', background: '#162232', borderBottom: '1px solid #1e3a4f' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                {reps.length} rep{reps.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    {['Rep', 'Role', 'Leads', 'Won', 'Lost', 'Quotes Sent', 'Accepted', 'Close Rate', 'Deal Value', 'Installs'].map(h => (
+                      <th key={h} style={{ padding: '9px 14px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.06em', borderBottom: '1px solid #1e3a4f', background: '#0d1a26', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {reps.map((rep, i) => (
+                    <tr key={rep.id} style={{ borderBottom: '1px solid #0d1a26' }}>
+                      <td style={{ padding: '10px 14px', fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{rep.name}</td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 700, background: rep.role === 'admin' ? 'rgba(13,126,163,0.15)' : 'rgba(100,116,139,0.15)', color: rep.role === 'admin' ? '#0d7ea3' : '#94a3b8' }}>{rep.role}</span>
+                      </td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, color: '#94a3b8' }}>{rep.totalLeads}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, fontWeight: 700, color: '#4ade80' }}>{rep.wonLeads}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, color: '#f87171' }}>{rep.lostLeads}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, color: '#94a3b8' }}>{rep.quotesSent}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, fontWeight: 700, color: '#4ade80' }}>{rep.quotesWon}</td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div style={{ flex: 1, height: 6, background: '#0d1a26', borderRadius: 3, overflow: 'hidden', minWidth: 60 }}>
+                            <div style={{ height: '100%', width: `${rep.closeRate}%`, background: rep.closeRate >= 50 ? '#4ade80' : rep.closeRate >= 25 ? '#fbbf24' : '#f87171', borderRadius: 3 }} />
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: rep.closeRate >= 50 ? '#4ade80' : rep.closeRate >= 25 ? '#fbbf24' : '#f87171', minWidth: 32 }}>{rep.closeRate}%</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, color: '#a78bfa', fontWeight: 600 }}>{fmt$(rep.totalValue)}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, color: '#94a3b8' }}>{rep.installs}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style={{ padding: '10px 14px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 8, fontSize: 11, color: '#64748b' }}>
+            ⓘ Quote close rate is approximate — quotes are attributed to reps via lead assignment. Quotes without a linked lead are excluded.
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── Quotes & Commercial Section ───────────────────────────────
+function QuotesCommercialSection({ range }: { range: DateRange }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['reports', 'quotes_summary'],
+    queryFn: () => rs.getQuotesSummary(),
+  })
+
+  if (isLoading) return <LoadingState />
+
+  const s = data?.summary
+  const quotes = data?.quotes || []
+
+  const STATUS_COLOR: Record<string, string> = {
+    draft: '#64748b', sent: '#38bdf8', viewed: '#a78bfa',
+    accepted: '#4ade80', signed: '#4ade80', declined: '#f87171', expired: '#f59e0b',
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <h2 style={{ color: '#e2e8f0', fontWeight: 800, fontSize: 18, margin: 0 }}>Quotes & Commercial</h2>
+        <p style={{ color: '#475569', fontSize: 12, marginTop: 4, marginBottom: 0 }}>
+          Avg days to accept uses updated_at as proxy — approximate.
+        </p>
+      </div>
+
+      {/* KPI row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+        <KPICard label="Total Quotes" value={s ? String(s.total) : '…'} icon="📋" accent="#22d3ee" />
+        <KPICard label="Acceptance Rate" value={s ? `${s.acceptanceRate}%` : '…'} icon="✅"
+          accent={s && s.acceptanceRate >= 30 ? '#4ade80' : '#fbbf24'} sub="Sent → accepted" />
+        <KPICard label="Avg Days to Accept" value={s ? String(s.avgDaysToAccept) : '…'} icon="📅"
+          accent="#a78bfa" sub="Approximate" tooltip="Based on updated_at when status changed to accepted. Approximate." />
+        <KPICard label="Avg Deal Value" value={s ? fmt$(s.avgQuoteValue) : '…'} icon="💰" accent="#4ade80" sub="Accepted quotes" />
+        <KPICard label="Open Pipeline Value" value={s ? fmt$(s.totalPipeline) : '…'} icon="⬡" accent="#38bdf8" sub="Sent + viewed" />
+      </div>
+
+      {/* Status + Commercial type */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: '16px 18px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#cbd5e1', marginBottom: 14 }}>Quote Status Breakdown</div>
+          {s && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[
+                { label: 'Draft',    count: s.draft,    color: '#64748b' },
+                { label: 'Sent',     count: s.sent,     color: '#38bdf8' },
+                { label: 'Viewed',   count: s.viewed,   color: '#a78bfa' },
+                { label: 'Accepted', count: s.accepted, color: '#4ade80' },
+                { label: 'Declined', count: s.declined, color: '#f87171' },
+                { label: 'Expired',  count: s.expired,  color: '#f59e0b' },
+              ].filter(r => r.count > 0).map(row => {
+                const pct = s.total > 0 ? Math.round((row.count / s.total) * 100) : 0
+                return (
+                  <div key={row.label}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, color: '#94a3b8' }}>{row.label}</span>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: row.color }}>{row.count}</span>
+                        <span style={{ fontSize: 10, color: '#475569' }}>{pct}%</span>
+                      </div>
+                    </div>
+                    <div style={{ height: 8, background: '#0d1a26', borderRadius: 4, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: row.color, borderRadius: 4, boxShadow: `0 0 6px ${row.color}40` }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: '16px 18px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#cbd5e1', marginBottom: 14 }}>Commercial Type Split</div>
+          {s && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[
+                { label: 'Rental',   count: s.rental,   color: '#4ade80' },
+                { label: 'Purchase', count: s.purchase, color: '#38bdf8' },
+                { label: 'Financed', count: s.financed, color: '#a78bfa' },
+              ].filter(r => r.count > 0).map(row => {
+                const total = s.rental + s.purchase + s.financed
+                const pct = total > 0 ? Math.round((row.count / total) * 100) : 0
+                return (
+                  <div key={row.label}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, color: '#94a3b8' }}>{row.label}</span>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: row.color }}>{row.count}</span>
+                        <span style={{ fontSize: 10, color: '#475569' }}>{pct}%</span>
+                      </div>
+                    </div>
+                    <div style={{ height: 10, background: '#0d1a26', borderRadius: 20, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg, ${row.color}99, ${row.color})`, borderRadius: 20 }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Quotes drilldown */}
+      <DrilldownTable
+        columns={[
+          { key: 'created_at', label: 'Date', render: (v: string) => v ? fmtDate(v.split('T')[0]) : '—' },
+          { key: 'status', label: 'Status', render: (v: string) => (
+            <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 700,
+              background: `${STATUS_COLOR[v] || '#64748b'}18`, color: STATUS_COLOR[v] || '#94a3b8' }}>{v}</span>
+          )},
+          { key: 'commercial_type', label: 'Type', render: (v: string) => v || <span style={{ color: '#334155' }}>—</span> },
+          { key: 'monthly_amount', label: 'Monthly', render: (v: any) => v ? fmt$(Number(v)) : '—' },
+          { key: 'one_time_amount', label: 'One-time', render: (v: any) => v ? fmt$(Number(v)) : '—' },
+          { key: 'view_count', label: 'Views', render: (v: any) => v || 0 },
+        ]}
+        rows={quotes.slice(0, 100)}
+        emptyText="No quotes found"
+        onExport={() => downloadCSV(quotes.slice(0,100).map((q: any) => ({
+          date: q.created_at?.split('T')[0], status: q.status,
+          type: q.commercial_type, monthly: q.monthly_amount, one_time: q.one_time_amount, views: q.view_count
+        })), 'quotes.csv')}
+      />
+    </div>
+  )
+}
+
+// ─── Marketing Sources Section ──────────────────────────────────
+function MarketingSourcesSection() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['reports', 'lead_sources'],
+    queryFn: () => rs.getLeadSourceBreakdown(),
+  })
+
+  if (isLoading) return <LoadingState />
+
+  const sources = data?.sources || []
+  const utmCampaigns = data?.utmCampaigns || []
+  const total = data?.totalLeads || 0
+  const maxCount = Math.max(...sources.map(s => s.total), 1)
+
+  const SOURCE_COLORS = ['#38bdf8','#4ade80','#a78bfa','#fb923c','#f472b6','#22d3ee','#fbbf24','#f87171']
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <h2 style={{ color: '#e2e8f0', fontWeight: 800, fontSize: 18, margin: 0 }}>Marketing Sources</h2>
+        <p style={{ color: '#475569', fontSize: 12, marginTop: 4, marginBottom: 0 }}>
+          Conversion rate = leads won / total leads per source. Revenue by source not available without contract-level payment linkage.
+        </p>
+      </div>
+
+      {/* KPI row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        <KPICard label="Total Leads" value={String(total)} icon="⬡" accent="#38bdf8" />
+        <KPICard label="Lead Sources" value={String(sources.length)} icon="📡" accent="#a78bfa" />
+        <KPICard label="Best Source" value={sources[0]?.source || '—'} icon="🏆" accent="#4ade80"
+          sub={sources[0] ? `${sources[0].total} leads` : ''} />
+        <KPICard label="Best Conversion" value={sources.length ? `${Math.max(...sources.map(s => s.conversionRate))}%` : '—'}
+          icon="✅" accent="#34d399"
+          sub={sources.sort((a,b) => b.conversionRate - a.conversionRate)[0]?.source || ''} />
+      </div>
+
+      {/* Source breakdown */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: '16px 18px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#cbd5e1', marginBottom: 14 }}>Leads by Source</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {sources.slice(0, 8).map((s, i) => (
+              <div key={s.source}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ fontSize: 11, color: '#94a3b8', textTransform: 'capitalize' }}>{s.source.replace(/_/g, ' ')}</span>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: SOURCE_COLORS[i % SOURCE_COLORS.length] }}>{s.total}</span>
+                    <span style={{ fontSize: 10, color: '#4ade80', fontWeight: 600 }}>{s.won} won</span>
+                  </div>
+                </div>
+                <div style={{ height: 8, background: '#0d1a26', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${(s.total / maxCount) * 100}%`, background: SOURCE_COLORS[i % SOURCE_COLORS.length], borderRadius: 4 }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: '16px 18px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#cbd5e1', marginBottom: 14 }}>Conversion Rate by Source</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {[...sources].sort((a,b) => b.conversionRate - a.conversionRate).slice(0,8).map((s, i) => {
+              const c = s.conversionRate >= 50 ? '#4ade80' : s.conversionRate >= 25 ? '#fbbf24' : '#f87171'
+              return (
+                <div key={s.source} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 11, color: '#94a3b8', width: 120, flexShrink: 0, textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {s.source.replace(/_/g, ' ')}
+                  </span>
+                  <div style={{ flex: 1, height: 8, background: '#0d1a26', borderRadius: 4, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${s.conversionRate}%`, background: c, borderRadius: 4 }} />
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: c, width: 36, textAlign: 'right', flexShrink: 0 }}>{s.conversionRate}%</span>
+                </div>
+              )
+            })}
+          </div>
+
+          {utmCampaigns.length > 0 && (
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #1e3a4f' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>UTM Campaigns</div>
+              {utmCampaigns.map((c, i) => (
+                <div key={c.campaign} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid #0d1a26' }}>
+                  <span style={{ fontSize: 11, color: '#94a3b8' }}>{c.campaign}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#38bdf8' }}>{c.count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Source drilldown table */}
+      <DrilldownTable
+        columns={[
+          { key: 'source', label: 'Source', render: (v: string) => <span style={{ textTransform: 'capitalize' }}>{v.replace(/_/g,' ')}</span> },
+          { key: 'total', label: 'Total Leads' },
+          { key: 'active', label: 'Active' },
+          { key: 'won', label: 'Won', render: (v: number) => <span style={{ color: '#4ade80', fontWeight: 700 }}>{v}</span> },
+          { key: 'lost', label: 'Lost', render: (v: number) => <span style={{ color: '#f87171' }}>{v}</span> },
+          { key: 'conversionRate', label: 'Close Rate', render: (v: number) => (
+            <span style={{ fontWeight: 700, color: v >= 50 ? '#4ade80' : v >= 25 ? '#fbbf24' : '#f87171' }}>{v}%</span>
+          )},
+        ]}
+        rows={sources}
+        emptyText="No lead source data"
+        onExport={() => downloadCSV(sources, 'lead_sources.csv')}
+      />
+    </div>
+  )
+}
+
 // ─── Date Range Bar ─────────────────────────────────────────────
 function DateRangeBar({ range, onChange }: { range: DateRange; onChange: (r: DateRange) => void }) {
   const presets = [
@@ -987,7 +1313,7 @@ function DateRangeBar({ range, onChange }: { range: DateRange; onChange: (r: Dat
 }
 
 // ─── Nav Tab Config ─────────────────────────────────────────────
-type Section = 'overview' | 'revenue' | 'installs' | 'pipeline' | 'customers' | 'quality'
+type Section = 'overview' | 'revenue' | 'installs' | 'pipeline' | 'customers' | 'reps' | 'quotes' | 'marketing' | 'quality'
 
 const NAV_TABS: { id: Section; label: string; icon: string; color: string; bg: string; adminOnly?: boolean }[] = [
   { id: 'overview',  label: 'Executive Overview',  icon: '◉',  color: '#38bdf8', bg: 'rgba(56,189,248,0.12)'  },
@@ -995,7 +1321,10 @@ const NAV_TABS: { id: Section; label: string; icon: string; color: string; bg: s
   { id: 'installs',  label: 'Installations',       icon: '🔧', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)'  },
   { id: 'pipeline',  label: 'Pipeline Snapshot',   icon: '⬡',  color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
   { id: 'customers', label: 'Customers & Rentals',  icon: '👥', color: '#34d399', bg: 'rgba(52,211,153,0.12)'  },
-  { id: 'quality',   label: 'Data Quality',        icon: '🔍', color: '#fb923c', bg: 'rgba(251,146,60,0.12)',  adminOnly: true },
+  { id: 'reps',      label: 'Rep Performance',      icon: '👤', color: '#f472b6', bg: 'rgba(244,114,182,0.12)' },
+  { id: 'quotes',    label: 'Quotes & Commercial',   icon: '📋', color: '#22d3ee', bg: 'rgba(34,211,238,0.12)'  },
+  { id: 'marketing', label: 'Marketing Sources',     icon: '📡', color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
+  { id: 'quality',   label: 'Data Quality',          icon: '🔍', color: '#fb923c', bg: 'rgba(251,146,60,0.12)',  adminOnly: true },
 ]
 
 // ─── Main Page ──────────────────────────────────────────────────
@@ -1056,17 +1385,7 @@ export function ReportsPage() {
         })}
 
         {/* P2 coming soon tabs — grayed out, not clickable */}
-        {['Rep Performance', 'Quotes & Commercial', 'Marketing'].map(label => (
-          <div key={label} style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '10px 16px', borderBottom: '3px solid transparent',
-            color: '#1e3a4f', fontSize: 12, fontWeight: 500, flexShrink: 0,
-            cursor: 'not-allowed', borderRadius: '8px 8px 0 0',
-          }}>
-            {label}
-            <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 10, background: '#1e2a38', color: '#334155', fontWeight: 700, textTransform: 'uppercase' }}>P2</span>
-          </div>
-        ))}
+
       </div>
 
       {/* Section content */}
@@ -1076,7 +1395,10 @@ export function ReportsPage() {
         {activeSection === 'installs' && <InstallationsSection range={range} />}
         {activeSection === 'pipeline' && <PipelineSection  range={range} />}
         {activeSection === 'customers' && <CustomersSection range={range} />}
-        {activeSection === 'quality'  && isAdmin && <DataQualitySection />}
+        {activeSection === 'reps'      && <RepPerformanceSection />}
+        {activeSection === 'quotes'    && <QuotesCommercialSection range={range} />}
+        {activeSection === 'marketing' && <MarketingSourcesSection />}
+        {activeSection === 'quality'   && isAdmin && <DataQualitySection />}
       </div>
     </div>
   )
