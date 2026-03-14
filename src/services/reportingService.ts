@@ -670,23 +670,59 @@ export async function getNewCustomersByMonth(months = 6): Promise<{ month: strin
 // ─── Rental vs Purchase vs Financed ───────────────────────────
 export async function getCommercialTypeSplit(): Promise<{ type: string; count: number; totalValue: number }[]> {
   try {
-    const { data, error } = await supabase
-      .from('contracts')
-      .select('type, monthly_amount, total_value')
+    // Source: installed_systems.ownership_type — more reliable than contracts.type
+    // because purchases do not always create a contracts row
+    const { data: systems, error } = await supabase
+      .from('installed_systems')
+      .select('ownership_type, customer_id')
     if (error) throw error
+
+    // Get monthly amounts for rentals from contracts
+    const { data: contracts } = await supabase
+      .from('contracts')
+      .select('customer_id, monthly_amount, type')
+      .eq('status', 'active')
+
+    const rentalAmounts: Record<string, number> = {}
+    for (const c of (contracts || [])) {
+      rentalAmounts[c.customer_id] = (rentalAmounts[c.customer_id] || 0) + (Number(c.monthly_amount) || 0)
+    }
+
+    // Get purchase amounts from succeeded payment_transactions (one-time payments)
+    const { data: payments } = await supabase
+      .from('payment_transactions')
+      .select('customer_id, amount, type')
+      .eq('status', 'succeeded')
+      .in('type', ['link', 'manual'])
+
+    const purchaseAmounts: Record<string, number> = {}
+    for (const p of (payments || [])) {
+      purchaseAmounts[p.customer_id] = (purchaseAmounts[p.customer_id] || 0) + (Number(p.amount) || 0)
+    }
 
     const map: Record<string, { count: number; totalValue: number }> = {}
     for (const row of (data || [])) {
-      const t = row.type || 'unknown'
+      const t = row.ownership_type || 'unknown'
       if (!map[t]) map[t] = { count: 0, totalValue: 0 }
       map[t].count++
-      map[t].totalValue += Number(row.monthly_amount) || 0
+      if (t === 'rented')    map[t].totalValue += rentalAmounts[row.customer_id]  || 0
+      if (t === 'purchased') map[t].totalValue += purchaseAmounts[row.customer_id] || 0
+    }
+
+    // Normalize key names for display
+    const normalized: Record<string, { count: number; totalValue: number }> = {}
+    const keyMap: Record<string, string> = { rented: 'rental', purchased: 'purchase', financed: 'financed' }
+    for (const [k, v] of Object.entries(map)) {
+      const display = keyMap[k] || k
+      if (!normalized[display]) normalized[display] = { count: 0, totalValue: 0 }
+      normalized[display].count      += v.count
+      normalized[display].totalValue += v.totalValue
     }
 
     const order = ['rental', 'purchase', 'financed', 'unknown']
     return order
-      .filter(t => map[t])
-      .map(t => ({ type: t, count: map[t].count, totalValue: map[t].totalValue }))
+      .filter(t => normalized[t])
+      .map(t => ({ type: t, count: normalized[t].count, totalValue: normalized[t].totalValue }))
   } catch (err) {
     console.error('getCommercialTypeSplit:', err)
     return []
@@ -748,13 +784,16 @@ export async function getGrossMarginEstimate() {
       .eq('status', 'active')
       .eq('type', 'rental')
 
-    const { data: paidInvoices } = await supabase
-      .from('invoices')
+    // Purchase revenue: use payment_transactions (succeeded, non-autopay)
+    // because invoices may not reach status=paid even after Stripe payment
+    const { data: purchasePayments } = await supabase
+      .from('payment_transactions')
       .select('amount')
-      .eq('status', 'paid')
+      .eq('status', 'succeeded')
+      .in('type', ['link', 'manual'])
 
-    const rentalRevenue   = (rentalContracts || []).reduce((s, c) => s + (Number(c.monthly_amount) || 0), 0)
-    const purchaseRevenue = (paidInvoices    || []).reduce((s, i) => s + (Number(i.amount) || 0), 0)
+    const rentalRevenue   = (rentalContracts  || []).reduce((s, c) => s + (Number(c.monthly_amount) || 0), 0)
+    const purchaseRevenue = (purchasePayments || []).reduce((s, p) => s + (Number(p.amount)         || 0), 0)
     const totalRevenue    = rentalRevenue + purchaseRevenue
 
     // Cost side — via product catalog vendor_cost
