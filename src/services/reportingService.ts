@@ -358,7 +358,7 @@ export async function getLeadsDrilldown(limit = 100) {
     const { data, error } = await supabase
       .from('leads')
       .select('id, full_name, phone, stage, source, assigned_rep_id, created_at')
-      .not('stage', 'in', '("won","lost","dnd","future_follow_up")')
+      .filter('stage', 'not.in', '(won,lost,dnd,future_follow_up)'))
       .order('created_at', { ascending: false })
       .limit(limit)
     if (error) throw error
@@ -389,7 +389,7 @@ export async function getDataQualityExceptions() {
       supabase.from('leads')
         .select('id, full_name, created_at, stage')
         .or('source.is.null,source.eq.')
-        .not('stage', 'in', '(won,lost,dnd)')
+        .filter('stage', 'not.in', '(won,lost,dnd)')
         .order('created_at', { ascending: false })
         .limit(50),
 
