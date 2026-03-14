@@ -202,7 +202,7 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
 
         {/* Analytics — coming soon */}
         <Route path="/marketing" element={guard('/marketing', <ComingSoon {...cs.marketing} />)} />
-        <Route path="/reports"   element={guard('/reports',   <ComingSoon {...cs.reports} />)} />
+        <Route path="/reports"  element={guard('/reports',  <ReportsPage />)} />
 
         {/* Admin only */}
         <Route path="/admin/terms" element={
