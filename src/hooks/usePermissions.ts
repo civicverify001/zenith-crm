@@ -1,14 +1,14 @@
-import { useAuth } from './useAuth'
+vimport { useAuth } from './useAuth'
 
 type Resource = string
 type Action = string
 
 // Action-level permission matrix
 const PERMISSIONS: Record<string, Record<string, string[]>> = {
-  admin:      { leads: ['assign_rep', 'create', 'delete', 'edit', 'view'], quotes: ['edit', 'delete', 'view'], customers: ['edit', 'delete', 'view'], dispatch: ['edit', 'view'], installations: ['edit', 'view'] },
-  frontdesk:  { leads: ['assign_rep', 'create', 'edit', 'view'], quotes: ['view'], customers: ['edit', 'view'], dispatch: ['view'], installations: ['view'] },
-  salesrep:   { leads: ['assign_rep', 'create', 'edit', 'view'], quotes: ['edit', 'view'], customers: ['view'], dispatch: [], installations: [] },
-  technician: { leads: [], quotes: [], customers: ['view'], dispatch: ['view'], installations: ['edit', 'view'] },
+  admin:      { leads: ['assign_rep', 'create', 'delete', 'edit', 'view'], quotes: ['edit', 'delete', 'view'], customers: ['edit', 'delete', 'view'], dispatch: ['edit', 'view'], installations: ['edit', 'view'], service_plans: ['create', 'edit', 'delete', 'view', 'manage_templates', 'override_price'] },
+  frontdesk:  { leads: ['assign_rep', 'create', 'edit', 'view'], quotes: ['view'], customers: ['edit', 'view'], dispatch: ['view'], installations: ['view'], service_plans: ['create', 'view', 'pause'] },
+  salesrep:   { leads: ['assign_rep', 'create', 'edit', 'view'], quotes: ['edit', 'view'], customers: ['view'], dispatch: [], installations: [], service_plans: ['create', 'view'] },
+  technician: { leads: [], quotes: [], customers: ['view'], dispatch: ['view'], installations: ['edit', 'view'], service_plans: ['view'] },
 }
 
 // Page definitions with group, icon, label
