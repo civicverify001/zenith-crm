@@ -2,6 +2,7 @@
 // Vercel Cron Job — runs daily at 6 AM EST
 // Section 1: Charges rental contracts on their billing_day
 // Section 2: Charges service plans where next_billing_date <= today
+//            + Creates fulfillment_requests for tech_visit plans (Phase 3.5)
 //
 // Add to vercel.json:
 // {
@@ -158,6 +159,7 @@ export default async function handler(req, res) {
   const results = {
     processed: 0, succeeded: 0, failed: 0, skipped: 0, errors: [],
     plans_processed: 0, plans_succeeded: 0, plans_failed: 0, plans_skipped: 0, plans_errors: [],
+    fulfillment_created: 0,
   }
 
   try {
@@ -331,9 +333,13 @@ export default async function handler(req, res) {
 
     if (duePlans && duePlans.length > 0) {
       const planIds = [...new Set(duePlans.map(p => p.plan_id))]
-      const { data: planTemplates } = await supabase.from('service_plans').select('id, name').in('id', planIds)
+      const { data: planTemplates } = await supabase.from('service_plans').select('id, name, fulfillment_type').in('id', planIds)
       const planNameMap = {}
-      if (planTemplates) for (const t of planTemplates) planNameMap[t.id] = t.name
+      const planFulfillmentMap = {}
+      if (planTemplates) for (const t of planTemplates) {
+        planNameMap[t.id] = t.name
+        planFulfillmentMap[t.id] = t.fulfillment_type
+      }
 
       for (const plan of duePlans) {
         results.plans_processed++
@@ -384,14 +390,15 @@ export default async function handler(req, res) {
             results.plans_errors.push({ plan_id: plan.id, customer_name: customer.full_name, reason: stripeErr.message, stripe_code: stripeErr.code })
           }
 
-          await supabase.from('payment_transactions').insert({
+          // Insert payment_transactions and capture the ID for fulfillment linking
+          const { data: txRecord } = await supabase.from('payment_transactions').insert({
             customer_id: customer.id, payment_method_id: paymentMethod.id,
             amount: plan.price, status: chargeSucceeded ? 'succeeded' : 'failed',
             type: 'service_plan', external_id: paymentIntent?.id || null, description,
             attempted_at: new Date().toISOString(),
             completed_at: chargeSucceeded ? new Date().toISOString() : null,
             failure_reason: chargeSucceeded ? null : (results.plans_errors[results.plans_errors.length - 1]?.reason || 'unknown'),
-          })
+          }).select('id').single()
 
           if (chargeSucceeded) {
             results.plans_succeeded++
@@ -409,6 +416,50 @@ export default async function handler(req, res) {
               title: `Payment succeeded: ${planName} — $${plan.price}`,
               actor_id: null, metadata: { plan_id: plan.id, amount: plan.price, payment_intent: paymentIntent?.id, next_billing_date: isOneTime ? null : nextDate },
             }).then(() => {}).catch(() => {})
+
+            // ══════════════════════════════════════════════════
+            // PHASE 3.5: Create fulfillment request for tech visit plans
+            // ══════════════════════════════════════════════════
+            // After successful charge, if this plan's fulfillment_type is
+            // tech_visit or maintenance_visit, create a fulfillment_requests
+            // row so front desk knows to schedule the service visit.
+            // Shipment-type plans are handled by api/cron/fulfillment.js.
+            // ══════════════════════════════════════════════════
+            const fulfillmentType = planFulfillmentMap[plan.plan_id]
+
+            if (fulfillmentType === 'tech_visit' || fulfillmentType === 'maintenance_visit') {
+              try {
+                const { error: frError } = await supabase
+                  .from('fulfillment_requests')
+                  .insert({
+                    customer_id: plan.customer_id,
+                    customer_service_plan_id: plan.id,
+                    type: fulfillmentType,
+                    status: 'paid_awaiting_schedule',
+                    payment_transaction_id: txRecord?.id || null,
+                    due_date: today,
+                    notes: `Auto-created by autopay after successful ${planName} charge`,
+                  })
+
+                if (frError) {
+                  // Partial unique index catches duplicates — log but don't fail
+                  if (frError.code === '23505') {
+                    console.log(`[autopay] Fulfillment request already exists for plan ${plan.id} on ${today} — skipping`)
+                  } else {
+                    console.error(`[autopay] Failed to create fulfillment request for plan ${plan.id}:`, frError.message)
+                  }
+                } else {
+                  results.fulfillment_created++
+                  console.log(`[autopay] Created fulfillment request for plan ${plan.id} (${fulfillmentType})`)
+                }
+              } catch (frErr) {
+                // Non-blocking — charge already succeeded
+                console.error('[autopay] Fulfillment request error:', frErr.message)
+              }
+            }
+            // ══════════════════════════════════════════════════
+            // END PHASE 3.5 PATCH
+            // ══════════════════════════════════════════════════
 
             // ── SEND: Service plan receipt ────────────────────
             if (customer.email) {
@@ -488,6 +539,7 @@ export default async function handler(req, res) {
         `Autopay: ${results.succeeded}/${results.processed} rentals`,
         results.plans_processed > 0 ? `${results.plans_succeeded}/${results.plans_processed} plans` : null,
         (results.failed + results.plans_failed) > 0 ? `${results.failed + results.plans_failed} failed` : null,
+        results.fulfillment_created > 0 ? `${results.fulfillment_created} fulfillment queued` : null,
       ].filter(Boolean).join(', ')
 
       await supabase.from('email_log').insert({
