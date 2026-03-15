@@ -12,12 +12,10 @@ function today(): string { return new Date().toISOString().split('T')[0] }
 
 // ═══════════════════════════════════════════════════════════════
 // CALCULATE BUYOUT (step 1 of 2 — does NOT execute)
-// Table fixes: rental_contracts → contracts, product_catalog → products
-// Junction fix: rental_contract_systems removed — use installed_systems by customer_id
-// Field fixes: total_paid / payments_made / install_fees derived from payment_transactions
+// Uses retail_price_snapshot from installed_systems — no products join needed
 // ═══════════════════════════════════════════════════════════════
 export async function calculateBuyout(contractId: string, calculatedBy: string): Promise<any> {
-  // ── Load contract from real table ──────────────────────────
+  // ── Load contract ──────────────────────────────────────────
   const { data: contract, error: contractErr } = await supabase
     .from('contracts')
     .select('id, customer_id, monthly_amount, start_date, status, type')
@@ -35,37 +33,32 @@ export async function calculateBuyout(contractId: string, calculatedBy: string):
     .eq('status', 'succeeded')
 
   const allTxs = txs || []
-  const rentalTxs    = allTxs.filter((t: any) => t.type === 'autopay' || t.type === 'rental')
-  const installTxs   = allTxs.filter((t: any) => t.type === 'install_fee' || (t.type === 'manual' && t.amount > 0))
+  const rentalTxs  = allTxs.filter((t: any) => t.type === 'autopay' || t.type === 'rental')
+  const installTxs = allTxs.filter((t: any) => t.type === 'install_fee')
 
   const totalPaid        = rentalTxs.reduce((sum: number, t: any) => sum + Number(t.amount), 0)
   const paymentsMade     = rentalTxs.length
   const totalInstallFees = installTxs.reduce((sum: number, t: any) => sum + Number(t.amount), 0)
 
-  // ── Get rented installed systems for this customer ─────────
+  // ── Get rented installed systems — use retail_price_snapshot ─
   const { data: systems } = await supabase
     .from('installed_systems')
-    .select('id, product_id')
+    .select('id, product_catalog_id, retail_price_snapshot')
     .eq('customer_id', contract.customer_id)
     .eq('ownership_type', 'rented')
+    .eq('is_active', true)
 
   const activeSystems = systems || []
   if (!activeSystems.length) throw new Error('No active rented systems on this account')
 
-  // ── Get current retail prices from products table ──────────
-  const productIds = activeSystems.map((s: any) => s.product_id).filter(Boolean)
-  let currentRetailTotal = 0
-  if (productIds.length > 0) {
-    const { data: products } = await supabase
-      .from('products')
-      .select('retail_price')
-      .in('id', productIds)
-    currentRetailTotal = (products || []).reduce((sum: number, p: any) => sum + Number(p.retail_price || 0), 0)
-  }
+  // Use snapshotted retail prices — no products table join needed
+  const currentRetailTotal = activeSystems.reduce(
+    (sum: number, s: any) => sum + Number(s.retail_price_snapshot || 0), 0
+  )
 
   // ── Buyout formula: retail - install reimb - rental credit ─
-  const rawCredit    = totalPaid * 0.50
-  const creditCap    = currentRetailTotal * 0.50
+  const rawCredit     = totalPaid * 0.50
+  const creditCap     = currentRetailTotal * 0.50
   const appliedCredit = Math.min(rawCredit, creditCap)
   const installReimb  = totalInstallFees
   const buyoutPrice   = Math.max(currentRetailTotal - installReimb - appliedCredit, 0)
@@ -107,7 +100,7 @@ export async function calculateBuyout(contractId: string, calculatedBy: string):
 
 // ═══════════════════════════════════════════════════════════════
 // EXECUTE BUYOUT (step 2 of 2)
-// Updates contracts.status = 'completed' (only column that exists)
+// Updates contracts.status = 'completed'
 // Updates installed_systems ownership_type rented → purchased
 // ═══════════════════════════════════════════════════════════════
 export async function executeBuyout(calculationId: string, actor: ActorInfo): Promise<void> {
@@ -130,7 +123,7 @@ export async function executeBuyout(calculationId: string, actor: ActorInfo): Pr
     executed_by:  actor.actor_id,
   }).eq('id', calculationId)
 
-  // ── Update contract status (only columns that exist) ───────
+  // ── Update contract status ─────────────────────────────────
   await supabase.from('contracts').update({
     status:     'completed',
     updated_at: new Date().toISOString(),
@@ -151,13 +144,15 @@ export async function executeBuyout(calculationId: string, actor: ActorInfo): Pr
   // ── Convert all rented systems → purchased ─────────────────
   const { data: systems } = await supabase
     .from('installed_systems')
-    .select('id, product_id')
+    .select('id, product_catalog_id')
     .eq('customer_id', customerId)
     .eq('ownership_type', 'rented')
+    .eq('is_active', true)
 
   const systemIds = (systems || []).map((s: any) => s.id)
 
   for (const sysId of systemIds) {
+    // Flip ownership
     await supabase.from('installed_systems').update({
       ownership_type: 'purchased',
     }).eq('id', sysId)
@@ -165,15 +160,15 @@ export async function executeBuyout(calculationId: string, actor: ActorInfo): Pr
     // Add compliance requirements for purchased systems
     const { data: system } = await supabase
       .from('installed_systems')
-      .select('product_id, customer_id')
+      .select('product_catalog_id, customer_id')
       .eq('id', sysId)
       .single()
 
-    if (system?.product_id) {
+    if (system?.product_catalog_id) {
       const { data: templates } = await supabase
         .from('compliance_rule_templates')
         .select('*')
-        .eq('product_id', system.product_id)
+        .eq('product_catalog_id', system.product_catalog_id)
         .eq('requirement_type', 'maintenance_plan_renewal')
         .eq('applies_to_purchased', true)
         .eq('is_active', true)
@@ -182,16 +177,16 @@ export async function executeBuyout(calculationId: string, actor: ActorInfo): Pr
         const { data: req } = await supabase
           .from('compliance_requirements')
           .insert({
-            installed_system_id:         sysId,
-            customer_id:                 system.customer_id,
-            source_template_id:          tmpl.id,
-            requirement_type:            tmpl.requirement_type,
-            interval_months:             tmpl.interval_months,
+            installed_system_id:          sysId,
+            customer_id:                  system.customer_id,
+            source_template_id:           tmpl.id,
+            requirement_type:             tmpl.requirement_type,
+            interval_months:              tmpl.interval_months,
             must_purchase_through_zenith: tmpl.must_purchase_through_zenith,
-            proof_accepted_types:        tmpl.proof_accepted_types,
-            grace_period_months:         tmpl.grace_period_months,
-            affects_warranty:            tmpl.affects_warranty,
-            requires_active_plan:        tmpl.requires_active_plan,
+            proof_accepted_types:         tmpl.proof_accepted_types,
+            grace_period_months:          tmpl.grace_period_months,
+            affects_warranty:             tmpl.affects_warranty,
+            requires_active_plan:         tmpl.requires_active_plan,
           })
           .select('id')
           .single()
@@ -218,13 +213,13 @@ export async function executeBuyout(calculationId: string, actor: ActorInfo): Pr
 
   // ── Create new paid annual plan ────────────────────────────
   await supabase.from('maintenance_plans').insert({
-    customer_id:       customerId,
-    status:            'active',
-    plan_type:         'annual_standard',
-    price_snapshot:    199,
-    start_date:        t,
-    renewal_date:      addMonths(t, 12),
-    auto_renew:        true,
+    customer_id:        customerId,
+    status:             'active',
+    plan_type:          'annual_standard',
+    price_snapshot:     199,
+    start_date:         t,
+    renewal_date:       addMonths(t, 12),
+    auto_renew:         true,
     included_in_rental: false,
   })
 
