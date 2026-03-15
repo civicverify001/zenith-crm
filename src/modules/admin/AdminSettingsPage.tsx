@@ -1,5 +1,5 @@
 // src/modules/admin/AdminSettingsPage.tsx
-// Admin Settings — tabbed page: Qualifying Checklist | Site Visit Checklist | Term Blocks | Service Plans
+// Admin Settings — tabbed page: Qualifying Checklist | Site Visit Checklist | Term Blocks | Service Plans | Email Templates
 import { EmailTemplatesTab } from './EmailTemplatesTab'
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
@@ -946,7 +946,7 @@ function TermBlocksTab() {
 }
 
 // ════════════════════════════════════════════════════════════════
-// TAB 4: SERVICE PLAN TEMPLATES
+// TAB 4: SERVICE PLAN TEMPLATES (with product picker)
 // ════════════════════════════════════════════════════════════════
 
 const PRODUCT_CATEGORIES = [
@@ -965,6 +965,7 @@ function ServicePlansTemplateTab() {
   const [editing, setEditing] = useState<ServicePlanTemplate | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [products, setProducts] = useState<{ id: string; name: string }[]>([])
 
   // Form state
   const [fName, setFName] = useState('')
@@ -977,8 +978,14 @@ function ServicePlansTemplateTab() {
   const [fCategories, setFCategories] = useState<string[]>([])
   const [fRequiresSystem, setFRequiresSystem] = useState(true)
   const [fAutoActivate, setFAutoActivate] = useState(false)
+  const [fProductId, setFProductId] = useState('')
 
-  useEffect(() => { loadTemplates() }, [])
+  useEffect(() => {
+    loadTemplates()
+    supabase.from('products').select('id, name').eq('is_active', true).order('name').then(({ data }) => {
+      setProducts((data || []).map(p => ({ id: p.id, name: p.name })))
+    })
+  }, [])
 
   async function loadTemplates() {
     setLoading(true)
@@ -994,7 +1001,7 @@ function ServicePlansTemplateTab() {
   function resetForm() {
     setFName(''); setFDesc(''); setFNotes(''); setFCycle('yearly'); setFPrice('')
     setFFulfillment('none'); setFInterval(''); setFCategories([])
-    setFRequiresSystem(true); setFAutoActivate(false)
+    setFRequiresSystem(true); setFAutoActivate(false); setFProductId('')
     setEditing(null); setError('')
   }
 
@@ -1015,6 +1022,7 @@ function ServicePlansTemplateTab() {
     setFCategories(Array.isArray(t.applies_to_categories) ? t.applies_to_categories : [])
     setFRequiresSystem(t.requires_installed_system)
     setFAutoActivate(t.auto_activate_on_install)
+    setFProductId((t as any).product_id || '')
     setShowForm(true)
     setError('')
   }
@@ -1042,8 +1050,18 @@ function ServicePlansTemplateTab() {
     try {
       if (editing) {
         await updatePlanTemplate(editing.id, input)
+        // Save product_id directly
+        if (fFulfillment === 'shipment' && fProductId) {
+          await supabase.from('service_plans').update({ product_id: fProductId }).eq('id', editing.id)
+        } else if (fFulfillment !== 'shipment') {
+          await supabase.from('service_plans').update({ product_id: null }).eq('id', editing.id)
+        }
       } else {
-        await createPlanTemplate(input)
+        const created = await createPlanTemplate(input)
+        // Save product_id on newly created template
+        if (created && fFulfillment === 'shipment' && fProductId) {
+          await supabase.from('service_plans').update({ product_id: fProductId }).eq('id', created.id)
+        }
       }
       setShowForm(false)
       resetForm()
@@ -1182,6 +1200,22 @@ function ServicePlansTemplateTab() {
               )}
             </div>
 
+            {/* Row 3.5: Shipped Product (only for shipment fulfillment) */}
+            {fFulfillment === 'shipment' && (
+              <div>
+                <label style={labelStyle}>Shipped Product <span style={{ color: '#f59e0b' }}>— what goes in the box</span></label>
+                <select value={fProductId} onChange={e => setFProductId(e.target.value)} style={inputStyle}>
+                  <option value="" style={{ background: '#0f1923' }}>Select product to ship...</option>
+                  {products.map(p => <option key={p.id} value={p.id} style={{ background: '#0f1923' }}>{p.name}</option>)}
+                </select>
+                {!fProductId && (
+                  <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 4 }}>
+                    ⚠️ Fulfillment cron will skip this plan until a product is linked
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Row 4: Description */}
             <div>
               <label style={labelStyle}>Customer-Facing Description</label>
@@ -1291,7 +1325,9 @@ function ServicePlansTemplateTab() {
               </tr>
             </thead>
             <tbody>
-              {templates.map((t, idx) => (
+              {templates.map((t, idx) => {
+                const productName = products.find(p => p.id === (t as any).product_id)?.name
+                return (
                 <tr key={t.id} style={{ opacity: t.is_active ? 1 : 0.4 }}>
                   <td style={{ ...tdStyle, color: '#64748b', fontFamily: 'monospace' }}>{idx + 1}</td>
                   <td style={tdStyle}>
@@ -1344,6 +1380,16 @@ function ServicePlansTemplateTab() {
                         Every {t.fulfillment_interval_months} mo
                       </div>
                     )}
+                    {t.fulfillment_type === 'shipment' && productName && (
+                      <div style={{ fontSize: 10, color: '#a855f7', marginTop: 2 }}>
+                        📦 {productName}
+                      </div>
+                    )}
+                    {t.fulfillment_type === 'shipment' && !productName && (
+                      <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 2 }}>
+                        ⚠️ No product linked
+                      </div>
+                    )}
                   </td>
                   <td style={{ ...tdStyle, textAlign: 'center' }}>
                     <ActiveBadge active={t.is_active} onClick={() => handleToggleActive(t)} />
@@ -1379,7 +1425,8 @@ function ServicePlansTemplateTab() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
