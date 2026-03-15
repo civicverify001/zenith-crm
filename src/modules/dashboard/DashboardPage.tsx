@@ -163,7 +163,6 @@ function useMyUpcomingVisits(userId: string | undefined, isAdmin: boolean) {
       let q = supabase.from('site_visits')
         .select('id, lead_id, assigned_rep_id, visit_date, visit_hour, status')
         .gte('visit_date', today).lte('visit_date', nextWeek)
-        .not('status', 'eq', 'cancelled')
         .order('visit_date', { ascending: true }).order('visit_hour', { ascending: true }).limit(10)
       if (!isAdmin) q = q.eq('assigned_rep_id', userId)
       const { data: visits, error } = await q
