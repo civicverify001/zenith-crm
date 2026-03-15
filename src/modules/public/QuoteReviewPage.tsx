@@ -1331,7 +1331,7 @@ export function QuoteReviewPage() {
                     <th className="px-6 py-3 text-right font-semibold">Total</th>
                   </tr></thead>
                   <tbody>
-                    {lineItems.map(item => (
+                    {lineItems.filter((i: any) => i.item_type !== 'service_plan').map(item => (
                       <tr key={item.id} className="border-b border-gray-50">
                         <td className="px-6 py-4 text-sm text-gray-800">{item.description}</td>
                         <td className="px-4 py-4 text-sm text-gray-600 text-center">{item.quantity}</td>
@@ -1360,7 +1360,32 @@ export function QuoteReviewPage() {
                 </div>
               </div>
             )}
-
+{lineItems.some((i: any) => i.item_type === 'service_plan') && (
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-6 py-3 bg-amber-50 border-b border-amber-100 text-xs font-bold text-amber-700 uppercase tracking-wide">
+                  Included Service Plans
+                </div>
+                <div className="px-6 py-3 text-xs text-gray-500 border-b border-gray-100">
+                  The following service plans are included with this quote. Plans activate after your installation is complete.
+                </div>
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-xs text-gray-400 border-b border-gray-100">
+                      <th className="px-6 py-2 text-left font-semibold">Service Plan</th>
+                      <th className="px-6 py-2 text-right font-semibold">Price</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lineItems.filter((i: any) => i.item_type === 'service_plan').map((item: any) => (
+                      <tr key={item.id} className="border-b border-gray-50 bg-amber-50/30">
+                        <td className="px-6 py-3 text-sm text-gray-800 font-medium">{item.description}</td>
+                        <td className="px-6 py-3 text-sm font-semibold text-amber-700 text-right">{fmt(item.unit_price)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
             {flowType === 'rental' && (
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                 <div className="text-xs font-bold text-blue-700 mb-1">Rental Agreement Notice</div>
