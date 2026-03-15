@@ -143,6 +143,7 @@ export default function AdminSettingsPage() {
         {activeTab === 'site_visit'    && <SiteVisitQuestionsTab />}
         {activeTab === 'terms'         && <TermBlocksTab />}
         {activeTab === 'service_plans' && <ServicePlansTemplateTab />}
+        {activeTab === 'email_templates' && <EmailTemplatesTab />}
       </div>
     </div>
   )
