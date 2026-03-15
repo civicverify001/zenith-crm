@@ -370,10 +370,10 @@ function CreateShipmentDrawer({ onClose, onCreated, userId }: {
 
   // Load customers + products
   useEffect(() => {
-    supabase.from('customers').select('id, first_name, last_name').order('first_name').then(({ data }) => {
+    supabase.from('customers').select('id, full_name').order('full_name').then(({ data }) => {
       setCustomers((data || []).map(c => ({
         id: c.id,
-        name: [c.first_name, c.last_name].filter(Boolean).join(' '),
+        name: c.full_name || '',
       })))
     })
     supabase.from('products').select('id, name').eq('is_active', true).order('name').then(({ data }) => {
