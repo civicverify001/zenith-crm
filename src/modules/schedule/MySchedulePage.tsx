@@ -161,13 +161,25 @@ export function MySchedulePage() {
     }
 
     if (showJobs) {
+      // FIX: removed assigned_technician_name (doesn't exist) → assigned_technician_id
+      // FIX: removed .not('status', 'eq', 'cancelled') — 'cancelled' not in job_status_enum
       const { data: jobs } = await supabase
         .from('jobs')
-        .select('id, customer_name_snapshot, service_address_snapshot, system_type, status, scheduled_date, assigned_technician_name, source_quote_id')
+        .select('id, customer_name_snapshot, service_address_snapshot, system_type, status, scheduled_date, assigned_technician_id, source_quote_id')
         .gte('scheduled_date', rangeStart).lte('scheduled_date', rangeEnd)
-        .not('status', 'eq', 'cancelled')
 
       if (jobs?.length) {
+        // Fetch tech names from user_profiles for assigned jobs
+        const techIds = [...new Set(jobs.map((j: any) => j.assigned_technician_id).filter(Boolean))]
+        let techMap: Record<string, string> = {}
+        if (techIds.length) {
+          const { data: profiles } = await supabase
+            .from('user_profiles')
+            .select('id, full_name')
+            .in('id', techIds)
+          techMap = Object.fromEntries((profiles || []).map((p: any) => [p.id, p.full_name]))
+        }
+
         const quoteIds = [...new Set(jobs.map((j: any) => j.source_quote_id).filter(Boolean))]
         let lineMap: Record<string, string[]> = {}
         if (quoteIds.length) {
@@ -178,6 +190,7 @@ export function MySchedulePage() {
             lineMap[l.quote_id].push(l.description)
           }
         }
+
         for (const j of jobs) {
           const products = j.source_quote_id && lineMap[j.source_quote_id]
             ? lineMap[j.source_quote_id]
@@ -188,7 +201,8 @@ export function MySchedulePage() {
             customerName: j.customer_name_snapshot || 'Unknown',
             address: j.service_address_snapshot || '',
             systemType: j.system_type || '', status: j.status,
-            techName: j.assigned_technician_name || '', products,
+            techName: j.assigned_technician_id ? (techMap[j.assigned_technician_id] || '') : '',
+            products,
           })
         }
       }
@@ -251,7 +265,7 @@ export function MySchedulePage() {
       .slice(0, 10)
   }
 
-  // ── Upoming list for mobile ─────────────────────────────────────
+  // Upcoming list for mobile
   const todayStr = isoDate(new Date())
   const in14     = isoDate(addDays(new Date(), 14))
   const upcoming = events
@@ -322,24 +336,17 @@ export function MySchedulePage() {
             return upcoming.map(ev => {
               const showHeader = ev.date !== lastDate
               lastDate = ev.date
-              const isEvToday = ev.date === todayStr
+              const isEvToday  = ev.date === todayStr
               const isTomorrow = ev.date === isoDate(addDays(new Date(), 1))
-              const dateLabel = isEvToday ? 'Today' : isTomorrow ? 'Tomorrow'
+              const dateLabel  = isEvToday ? 'Today' : isTomorrow ? 'Tomorrow'
                 : new Date(ev.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
               const accent = chipColor(ev)
 
               return (
                 <div key={ev.id}>
                   {showHeader && (
-                    <div style={{
-                      display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6,
-                      marginTop: lastDate && lastDate !== ev.date ? 4 : 0,
-                    }}>
-                      <span style={{
-                        fontSize: 12, fontWeight: 800,
-                        color: isEvToday ? '#0d7ea3' : '#64748b',
-                        textTransform: 'uppercase', letterSpacing: '0.06em',
-                      }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, marginTop: lastDate && lastDate !== ev.date ? 4 : 0 }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: isEvToday ? '#0d7ea3' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                         {dateLabel}
                       </span>
                       <div style={{ flex: 1, height: 1, background: '#1e3a4f' }} />
@@ -349,25 +356,17 @@ export function MySchedulePage() {
                     onClick={() => setSelected(ev)}
                     style={{
                       width: '100%', textAlign: 'left', cursor: 'pointer',
-                      background: '#0f1923',
-                      border: `1px solid ${accent}30`,
-                      borderLeft: `4px solid ${accent}`,
-                      borderRadius: 14, padding: '14px 16px',
-                      display: 'flex', alignItems: 'center', gap: 14,
-                      transition: 'background 0.12s',
+                      background: '#0f1923', border: `1px solid ${accent}30`,
+                      borderLeft: `4px solid ${accent}`, borderRadius: 14, padding: '14px 16px',
+                      display: 'flex', alignItems: 'center', gap: 14, transition: 'background 0.12s',
                     }}
                     onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#162232' }}
                     onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#0f1923' }}
                   >
                     {/* Icon */}
-                    <div style={{
-                      width: 44, height: 44, borderRadius: 12, flexShrink: 0,
-                      background: `${accent}15`, border: `1px solid ${accent}25`,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
-                    }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, background: `${accent}15`, border: `1px solid ${accent}25`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
                       {ev.kind === 'visit' ? '📍' : '🔧'}
                     </div>
-
                     {/* Info */}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -386,16 +385,9 @@ export function MySchedulePage() {
                         <div style={{ fontSize: 11, color: '#475569', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.address}</div>
                       )}
                     </div>
-
                     {/* Status badge */}
                     <div style={{ flexShrink: 0, textAlign: 'right' }}>
-                      <span style={{
-                        fontSize: 10, padding: '3px 9px', borderRadius: 20, fontWeight: 700,
-                        background: `${STATUS_COLOR[ev.status] || '#64748b'}18`,
-                        color: STATUS_COLOR[ev.status] || '#64748b',
-                        border: `1px solid ${STATUS_COLOR[ev.status] || '#64748b'}30`,
-                        display: 'block', whiteSpace: 'nowrap',
-                      }}>
+                      <span style={{ fontSize: 10, padding: '3px 9px', borderRadius: 20, fontWeight: 700, background: `${STATUS_COLOR[ev.status] || '#64748b'}18`, color: STATUS_COLOR[ev.status] || '#64748b', border: `1px solid ${STATUS_COLOR[ev.status] || '#64748b'}30`, display: 'block', whiteSpace: 'nowrap' }}>
                         {ev.status.replace(/_/g, ' ')}
                       </span>
                       <div style={{ fontSize: 10, color: '#334155', marginTop: 4 }}>tap to view</div>
