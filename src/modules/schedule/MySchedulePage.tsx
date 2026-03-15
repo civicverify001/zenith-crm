@@ -29,11 +29,14 @@ interface JobEvent {
   kind: 'job'
   id: string
   date: string
+  scheduledTime: string
   customerName: string
   address: string
   systemType: string
   status: string
   techName: string
+  phone: string
+  email: string
   products: string[]
 }
 
@@ -45,6 +48,13 @@ function formatHour(h: number) {
   if (h < 12) return `${h}:00 AM`
   if (h === 12) return '12:00 PM'
   return `${h - 12}:00 PM`
+}
+
+function formatScheduledTime(isoStr: string): string {
+  if (!isoStr) return ''
+  const d = new Date(isoStr)
+  if (isNaN(d.getTime())) return ''
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
 function isoDate(d: Date) {
@@ -101,18 +111,14 @@ export function MySchedulePage() {
     ? isoDate(addDays(endOfMonth(cursor), 6))
     : isoDate(addDays(cursor, 6 - cursor.getDay()))
 
-  // Fetch qualifying question labels once (uuid → text)
   useEffect(() => {
-    supabase
-      .from('qualifying_questions')
-      .select('id, question_text')
-      .then(({ data }) => {
-        if (data) {
-          const map: Record<string, string> = {}
-          for (const q of data) map[q.id] = q.question_text
-          setQuestionLabels(map)
-        }
-      })
+    supabase.from('qualifying_questions').select('id, question_text').then(({ data }) => {
+      if (data) {
+        const map: Record<string, string> = {}
+        for (const q of data) map[q.id] = q.question_text
+        setQuestionLabels(map)
+      }
+    })
   }, [])
 
   useEffect(() => {
@@ -161,25 +167,22 @@ export function MySchedulePage() {
     }
 
     if (showJobs) {
-      // FIX: removed assigned_technician_name (doesn't exist) → assigned_technician_id
-      // FIX: removed .not('status', 'eq', 'cancelled') — 'cancelled' not in job_status_enum
       const { data: jobs } = await supabase
         .from('jobs')
-        .select('id, customer_name_snapshot, service_address_snapshot, system_type, status, scheduled_date, assigned_technician_id, source_quote_id')
+        .select('id, customer_name_snapshot, service_address_snapshot, system_type, status, scheduled_date, assigned_technician_id, source_quote_id, phone_snapshot, email_snapshot')
         .gte('scheduled_date', rangeStart).lte('scheduled_date', rangeEnd)
 
       if (jobs?.length) {
-        // Fetch tech names from user_profiles for assigned jobs
+        // Resolve tech names from user_profiles
         const techIds = [...new Set(jobs.map((j: any) => j.assigned_technician_id).filter(Boolean))]
         let techMap: Record<string, string> = {}
         if (techIds.length) {
           const { data: profiles } = await supabase
-            .from('user_profiles')
-            .select('id, full_name')
-            .in('id', techIds)
+            .from('user_profiles').select('id, full_name').in('id', techIds)
           techMap = Object.fromEntries((profiles || []).map((p: any) => [p.id, p.full_name]))
         }
 
+        // Resolve product names from quote line items
         const quoteIds = [...new Set(jobs.map((j: any) => j.source_quote_id).filter(Boolean))]
         let lineMap: Record<string, string[]> = {}
         if (quoteIds.length) {
@@ -198,10 +201,13 @@ export function MySchedulePage() {
           all.push({
             kind: 'job', id: j.id,
             date: (j.scheduled_date || '').split('T')[0],
+            scheduledTime: j.scheduled_date || '',
             customerName: j.customer_name_snapshot || 'Unknown',
             address: j.service_address_snapshot || '',
             systemType: j.system_type || '', status: j.status,
             techName: j.assigned_technician_id ? (techMap[j.assigned_technician_id] || '') : '',
+            phone: j.phone_snapshot || '',
+            email: j.email_snapshot || '',
             products,
           })
         }
@@ -212,7 +218,6 @@ export function MySchedulePage() {
     setLoading(false)
   }
 
-  // Calendar grid helpers
   function getMonthDays(): string[] {
     const first = startOfMonth(cursor), last = endOfMonth(cursor)
     const days: string[] = []
@@ -265,7 +270,6 @@ export function MySchedulePage() {
       .slice(0, 10)
   }
 
-  // Upcoming list for mobile
   const todayStr = isoDate(new Date())
   const in14     = isoDate(addDays(new Date(), 14))
   const upcoming = events
@@ -281,11 +285,7 @@ export function MySchedulePage() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
 
       {/* ── Header ─────────────────────────────────────────────── */}
-      <div style={{
-        flexShrink: 0,
-        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-        marginBottom: 16, flexWrap: 'wrap', gap: 12,
-      }}>
+      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h1 style={{ color: '#e2e8f0', fontWeight: 800, fontSize: 22, margin: 0, letterSpacing: '-0.01em' }}>
             {isTech ? 'My Install Schedule' : isSales ? 'My Visit Schedule' : 'Team Schedule'}
@@ -296,23 +296,14 @@ export function MySchedulePage() {
             {showJobs   && <span style={{ marginLeft: 10, color: '#fb923c', fontSize: 12 }}>● installs</span>}
           </p>
         </div>
-
-        {/* Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {/* View toggle */}
           <div style={{ display: 'flex', background: '#162232', border: '1px solid #1e3a4f', borderRadius: 10, overflow: 'hidden' }}>
             {(['month', 'week'] as const).map(v => (
-              <button key={v} onClick={() => setView(v)} style={{
-                padding: '8px 18px', fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none',
-                background: view === v ? '#0d7ea3' : 'transparent',
-                color: view === v ? '#fff' : '#64748b',
-                transition: 'all 0.15s',
-              }}>
+              <button key={v} onClick={() => setView(v)} style={{ padding: '8px 18px', fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', background: view === v ? '#0d7ea3' : 'transparent', color: view === v ? '#fff' : '#64748b', transition: 'all 0.15s' }}>
                 {v === 'month' ? 'Month' : 'Week'}
               </button>
             ))}
           </div>
-          {/* Nav */}
           <button onClick={prevPeriod} style={{ width: 34, height: 34, borderRadius: 8, border: '1px solid #1e3a4f', background: '#162232', color: '#94a3b8', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
           <button onClick={goToday}   style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid #1e3a4f', background: '#162232', color: '#94a3b8', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>Today</button>
           <button onClick={nextPeriod} style={{ width: 34, height: 34, borderRadius: 8, border: '1px solid #1e3a4f', background: '#162232', color: '#94a3b8', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
@@ -341,51 +332,47 @@ export function MySchedulePage() {
               const dateLabel  = isEvToday ? 'Today' : isTomorrow ? 'Tomorrow'
                 : new Date(ev.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
               const accent = chipColor(ev)
+              const timeLabel = ev.kind === 'visit'
+                ? formatHour(ev.hour)
+                : ev.scheduledTime ? formatScheduledTime(ev.scheduledTime) : ''
 
               return (
                 <div key={ev.id}>
                   {showHeader && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, marginTop: lastDate && lastDate !== ev.date ? 4 : 0 }}>
-                      <span style={{ fontSize: 12, fontWeight: 800, color: isEvToday ? '#0d7ea3' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                        {dateLabel}
-                      </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: isEvToday ? '#0d7ea3' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{dateLabel}</span>
                       <div style={{ flex: 1, height: 1, background: '#1e3a4f' }} />
                     </div>
                   )}
                   <button
                     onClick={() => setSelected(ev)}
-                    style={{
-                      width: '100%', textAlign: 'left', cursor: 'pointer',
-                      background: '#0f1923', border: `1px solid ${accent}30`,
-                      borderLeft: `4px solid ${accent}`, borderRadius: 14, padding: '14px 16px',
-                      display: 'flex', alignItems: 'center', gap: 14, transition: 'background 0.12s',
-                    }}
+                    style={{ width: '100%', textAlign: 'left', cursor: 'pointer', background: '#0f1923', border: `1px solid ${accent}30`, borderLeft: `4px solid ${accent}`, borderRadius: 14, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14 }}
                     onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#162232' }}
                     onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#0f1923' }}
                   >
-                    {/* Icon */}
                     <div style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, background: `${accent}15`, border: `1px solid ${accent}25`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
                       {ev.kind === 'visit' ? '📍' : '🔧'}
                     </div>
-                    {/* Info */}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {ev.kind === 'visit' ? ev.leadName : ev.customerName}
                       </div>
                       <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>
                         {ev.kind === 'visit'
-                          ? `${formatHour(ev.hour)} · Site Visit`
-                          : `${SYSTEM_LABELS[ev.systemType] || ev.systemType || 'Install'}${ev.techName ? ` · ${ev.techName}` : ''}`
+                          ? `${timeLabel} · Site Visit`
+                          : `${SYSTEM_LABELS[ev.systemType] || ev.systemType || 'Install'}${timeLabel ? ` · ${timeLabel}` : ''}${ev.techName ? ` · ${ev.techName}` : ''}`
                         }
                       </div>
                       {ev.kind === 'visit' && ev.leadPhone && (
                         <div style={{ fontSize: 12, color: '#22d3ee', marginTop: 2 }}>{ev.leadPhone}</div>
                       )}
+                      {ev.kind === 'job' && ev.phone && (
+                        <div style={{ fontSize: 12, color: '#fb923c', marginTop: 2 }}>{ev.phone}</div>
+                      )}
                       {ev.kind === 'job' && ev.address && (
                         <div style={{ fontSize: 11, color: '#475569', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.address}</div>
                       )}
                     </div>
-                    {/* Status badge */}
                     <div style={{ flexShrink: 0, textAlign: 'right' }}>
                       <span style={{ fontSize: 10, padding: '3px 9px', borderRadius: 20, fontWeight: 700, background: `${STATUS_COLOR[ev.status] || '#64748b'}18`, color: STATUS_COLOR[ev.status] || '#64748b', border: `1px solid ${STATUS_COLOR[ev.status] || '#64748b'}30`, display: 'block', whiteSpace: 'nowrap' }}>
                         {ev.status.replace(/_/g, ' ')}
@@ -401,72 +388,47 @@ export function MySchedulePage() {
       </div>
 
       {/* ── DESKTOP: Full calendar grid ─────────────────────────── */}
-      <div
-        className="hidden md:flex"
-        style={{ flex: 1, overflow: 'hidden', flexDirection: 'column', background: '#162232', border: '1px solid #1e3a4f', borderRadius: 16 }}
-      >
-        {/* Day headers */}
+      <div className="hidden md:flex" style={{ flex: 1, overflow: 'hidden', flexDirection: 'column', background: '#162232', border: '1px solid #1e3a4f', borderRadius: 16 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', borderBottom: '1px solid #1e3a4f', flexShrink: 0 }}>
           {DAY_NAMES_SHORT.map(d => (
-            <div key={d} style={{ padding: '10px 8px', textAlign: 'center', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              {d}
-            </div>
+            <div key={d} style={{ padding: '10px 8px', textAlign: 'center', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{d}</div>
           ))}
         </div>
-
-        {/* Grid cells */}
-        <div style={{
-          flex: 1, overflowY: 'auto',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(7, 1fr)',
-          gridTemplateRows: view === 'month' ? `repeat(${days.length / 7}, 1fr)` : '1fr',
-        }}>
+        <div style={{ flex: 1, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gridTemplateRows: view === 'month' ? `repeat(${days.length / 7}, 1fr)` : '1fr' }}>
           {days.map((day, idx) => {
             const isThisMonth = new Date(day + 'T00:00:00').getMonth() === cursor.getMonth()
             const isToday     = day === today
             const dayEvents   = eventsForDay(day)
             const isWeekend   = [0, 6].includes(new Date(day + 'T00:00:00').getDay())
             return (
-              <div key={day} style={{
-                borderRight: (idx % 7) < 6 ? '1px solid #1e3a4f' : 'none',
-                borderBottom: idx < days.length - 7 ? '1px solid #1e3a4f' : 'none',
-                background: isWeekend && view === 'month' ? 'rgba(0,0,0,0.1)' : 'transparent',
-                opacity: view === 'month' && !isThisMonth ? 0.35 : 1,
-                padding: '6px 6px 8px', minHeight: view === 'month' ? 100 : undefined, overflow: 'hidden',
-              }}>
+              <div key={day} style={{ borderRight: (idx % 7) < 6 ? '1px solid #1e3a4f' : 'none', borderBottom: idx < days.length - 7 ? '1px solid #1e3a4f' : 'none', background: isWeekend && view === 'month' ? 'rgba(0,0,0,0.1)' : 'transparent', opacity: view === 'month' && !isThisMonth ? 0.35 : 1, padding: '6px 6px 8px', minHeight: view === 'month' ? 100 : undefined, overflow: 'hidden' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <div style={{
-                    width: 28, height: 28, borderRadius: '50%',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: isToday ? '#0d7ea3' : 'transparent',
-                    color: isToday ? '#fff' : '#94a3b8',
-                    fontSize: 13, fontWeight: isToday ? 800 : 500,
-                    boxShadow: isToday ? '0 0 10px rgba(13,126,163,0.4)' : 'none',
-                  }}>
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isToday ? '#0d7ea3' : 'transparent', color: isToday ? '#fff' : '#94a3b8', fontSize: 13, fontWeight: isToday ? 800 : 500, boxShadow: isToday ? '0 0 10px rgba(13,126,163,0.4)' : 'none' }}>
                     {new Date(day + 'T00:00:00').getDate()}
                   </div>
                   {dayEvents.length > 0 && <span style={{ fontSize: 10, color: '#475569', fontWeight: 600 }}>{dayEvents.length}</span>}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  {(view === 'month' ? dayEvents.slice(0, 3) : dayEvents).map(ev => (
-                    <button key={ev.id} onClick={() => setSelected(ev)} style={{
-                      display: 'flex', alignItems: 'center', gap: 5,
-                      padding: '4px 8px', borderRadius: 6,
-                      background: `${chipColor(ev)}18`, border: `1px solid ${chipColor(ev)}35`,
-                      cursor: 'pointer', textAlign: 'left', width: '100%',
-                    }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = `${chipColor(ev)}30` }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = `${chipColor(ev)}18` }}
-                    >
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: chipColor(ev), flexShrink: 0 }} />
-                      <span style={{ fontSize: 11, color: '#e2e8f0', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                        {ev.kind === 'visit' ? `${formatHour(ev.hour)} ${ev.leadName}` : ev.customerName}
-                      </span>
-                    </button>
-                  ))}
+                  {(view === 'month' ? dayEvents.slice(0, 3) : dayEvents).map(ev => {
+                    const timeLabel = ev.kind === 'visit'
+                      ? formatHour(ev.hour)
+                      : ev.scheduledTime ? formatScheduledTime(ev.scheduledTime) : ''
+                    return (
+                      <button key={ev.id} onClick={() => setSelected(ev)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 6, background: `${chipColor(ev)}18`, border: `1px solid ${chipColor(ev)}35`, cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = `${chipColor(ev)}30` }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = `${chipColor(ev)}18` }}
+                      >
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: chipColor(ev), flexShrink: 0 }} />
+                        <span style={{ fontSize: 11, color: '#e2e8f0', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                          {ev.kind === 'visit'
+                            ? `${timeLabel} ${ev.leadName}`
+                            : `${timeLabel ? timeLabel + ' ' : ''}${ev.customerName}`}
+                        </span>
+                      </button>
+                    )
+                  })}
                   {view === 'month' && dayEvents.length > 3 && (
-                    <button onClick={() => { setCursor(new Date(day + 'T00:00:00')); setView('week') }}
-                      style={{ fontSize: 10, color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '0 8px' }}>
+                    <button onClick={() => { setCursor(new Date(day + 'T00:00:00')); setView('week') }} style={{ fontSize: 10, color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '0 8px' }}>
                       +{dayEvents.length - 3} more
                     </button>
                   )}
@@ -480,24 +442,12 @@ export function MySchedulePage() {
       {/* ── Event Detail Modal ──────────────────────────────────── */}
       {selected && (
         <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 50,
-            display: 'flex', alignItems: 'flex-end',
-            justifyContent: 'center', padding: '0',
-            background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)',
-          }}
+          style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)' }}
           className="sm:items-center sm:p-4"
           onClick={e => { if (e.target === e.currentTarget) setSelected(null) }}
         >
-          <div style={{
-            width: '100%', maxWidth: 560,
-            background: '#0f1923',
-            border: '1px solid #1e3a4f',
-            borderTop: `3px solid ${chipColor(selected)}`,
-            borderRadius: '20px 20px 0 0',
-            maxHeight: '92vh',
-            display: 'flex', flexDirection: 'column', overflow: 'hidden',
-          }}
+          <div
+            style={{ width: '100%', maxWidth: 560, background: '#0f1923', border: '1px solid #1e3a4f', borderTop: `3px solid ${chipColor(selected)}`, borderRadius: '20px 20px 0 0', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
             className="sm:rounded-[20px]"
           >
             {/* Drag handle — mobile */}
@@ -506,19 +456,9 @@ export function MySchedulePage() {
             </div>
 
             {/* Modal header */}
-            <div style={{
-              flexShrink: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '14px 20px 16px',
-              background: `linear-gradient(135deg, ${chipColor(selected)}10, transparent)`,
-              borderBottom: '1px solid #1e3a4f',
-            }}>
+            <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px 16px', background: `linear-gradient(135deg, ${chipColor(selected)}10, transparent)`, borderBottom: '1px solid #1e3a4f' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <div style={{
-                  width: 48, height: 48, borderRadius: 12, flexShrink: 0,
-                  background: `${chipColor(selected)}18`, border: `1px solid ${chipColor(selected)}30`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
-                }}>
+                <div style={{ width: 48, height: 48, borderRadius: 12, flexShrink: 0, background: `${chipColor(selected)}18`, border: `1px solid ${chipColor(selected)}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>
                   {selected.kind === 'visit' ? '📍' : '🔧'}
                 </div>
                 <div>
@@ -528,26 +468,17 @@ export function MySchedulePage() {
                   <div style={{ color: '#64748b', fontSize: 13, marginTop: 3 }}>
                     {selected.kind === 'visit'
                       ? `Site Visit · ${formatHour(selected.hour)}`
-                      : `Install · ${SYSTEM_LABELS[selected.systemType] || selected.systemType || 'Job'}`}
+                      : `Install · ${SYSTEM_LABELS[selected.systemType] || selected.systemType || 'Job'}${selected.scheduledTime ? ' · ' + formatScheduledTime(selected.scheduledTime) : ''}`}
                     {' · '}
                     {new Date(selected.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                   </div>
                 </div>
               </div>
-              <button onClick={() => setSelected(null)} style={{
-                color: '#475569', background: 'rgba(255,255,255,0.05)', border: '1px solid #1e3a4f',
-                borderRadius: 8, width: 34, height: 34, fontSize: 18, cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-              }}>×</button>
+              <button onClick={() => setSelected(null)} style={{ color: '#475569', background: 'rgba(255,255,255,0.05)', border: '1px solid #1e3a4f', borderRadius: 8, width: 34, height: 34, fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>×</button>
             </div>
 
             {/* Scrollable body */}
-            <div style={{
-              flex: 1, overflowY: 'auto', overflowX: 'hidden',
-              padding: '20px 20px',
-              display: 'flex', flexDirection: 'column', gap: 14,
-              WebkitOverflowScrolling: 'touch',
-            }}>
+            <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '20px 20px', display: 'flex', flexDirection: 'column', gap: 14, WebkitOverflowScrolling: 'touch' }}>
 
               {/* ── VISIT body ── */}
               {selected.kind === 'visit' && (() => {
@@ -555,14 +486,8 @@ export function MySchedulePage() {
                 const qaItems  = resolveQA(selected.qualifyingAnswers)
                 return (
                   <>
-                    {/* Status + time row */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                      <span style={{
-                        fontSize: 12, padding: '5px 14px', borderRadius: 20, fontWeight: 700,
-                        background: `${STATUS_COLOR[selected.status] || '#64748b'}18`,
-                        color: STATUS_COLOR[selected.status] || '#64748b',
-                        border: `1px solid ${STATUS_COLOR[selected.status] || '#64748b'}35`,
-                      }}>
+                      <span style={{ fontSize: 12, padding: '5px 14px', borderRadius: 20, fontWeight: 700, background: `${STATUS_COLOR[selected.status] || '#64748b'}18`, color: STATUS_COLOR[selected.status] || '#64748b', border: `1px solid ${STATUS_COLOR[selected.status] || '#64748b'}35` }}>
                         {selected.status.replace(/_/g, ' ')}
                       </span>
                       <span style={{ fontSize: 13, color: '#64748b' }}>🕐 {formatHour(selected.hour)}</span>
@@ -571,14 +496,12 @@ export function MySchedulePage() {
                       </span>
                     </div>
 
-                    {/* Contact */}
                     <InfoCard title="Contact Information" icon="👤" accent="#38bdf8">
                       <InfoRow icon="📞" label="Phone" value={selected.leadPhone || '—'} href={selected.leadPhone ? `tel:${selected.leadPhone}` : undefined} valueColor="#38bdf8" />
                       {selected.leadEmail && <InfoRow icon="✉️" label="Email" value={selected.leadEmail} href={`mailto:${selected.leadEmail}`} valueColor="#38bdf8" />}
                       {fullAddr && <InfoRow icon="📍" label="Address" value={fullAddr} />}
                     </InfoCard>
 
-                    {/* Water concern */}
                     {selected.waterConcern && (
                       <InfoCard title="Water Concern" icon="💧" accent="#22d3ee">
                         <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(34,211,238,0.06)', border: '1px solid rgba(34,211,238,0.15)' }}>
@@ -587,15 +510,10 @@ export function MySchedulePage() {
                       </InfoCard>
                     )}
 
-                    {/* Qualifying answers with real labels */}
                     {qaItems.length > 0 && (
                       <InfoCard title="Qualifying Answers" icon="📋" accent="#818cf8">
                         {qaItems.map((item, i) => (
-                          <div key={i} style={{
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16,
-                            padding: '10px 0',
-                            borderBottom: i < qaItems.length - 1 ? '1px solid #0d1a26' : 'none',
-                          }}>
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, padding: '10px 0', borderBottom: i < qaItems.length - 1 ? '1px solid #0d1a26' : 'none' }}>
                             <span style={{ fontSize: 13, color: '#64748b', fontWeight: 500, flex: 1, lineHeight: 1.4 }}>{item.label}</span>
                             <span style={{ fontSize: 13, color: '#cbd5e1', fontWeight: 700, textAlign: 'right', flexShrink: 0, maxWidth: '55%', lineHeight: 1.4 }}>{item.value}</span>
                           </div>
@@ -603,7 +521,6 @@ export function MySchedulePage() {
                       </InfoCard>
                     )}
 
-                    {/* Notes */}
                     {selected.notes && (
                       <InfoCard title="Notes" icon="📝" accent="#fbbf24">
                         <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)' }}>
@@ -623,33 +540,35 @@ export function MySchedulePage() {
               {selected.kind === 'job' && (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                    <span style={{
-                      fontSize: 12, padding: '5px 14px', borderRadius: 20, fontWeight: 700,
-                      background: `${STATUS_COLOR[selected.status] || '#64748b'}18`,
-                      color: STATUS_COLOR[selected.status] || '#64748b',
-                      border: `1px solid ${STATUS_COLOR[selected.status] || '#64748b'}35`,
-                    }}>
+                    <span style={{ fontSize: 12, padding: '5px 14px', borderRadius: 20, fontWeight: 700, background: `${STATUS_COLOR[selected.status] || '#64748b'}18`, color: STATUS_COLOR[selected.status] || '#64748b', border: `1px solid ${STATUS_COLOR[selected.status] || '#64748b'}35` }}>
                       {selected.status.replace(/_/g, ' ')}
                     </span>
+                    {selected.scheduledTime && (
+                      <span style={{ fontSize: 13, color: '#64748b' }}>🕐 {formatScheduledTime(selected.scheduledTime)}</span>
+                    )}
                     <span style={{ fontSize: 13, color: '#64748b' }}>
                       📅 {DAY_NAMES_FULL[new Date(selected.date + 'T00:00:00').getDay()]}, {new Date(selected.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}
                     </span>
                   </div>
 
+                  {/* Customer contact */}
+                  <InfoCard title="Customer" icon="👤" accent="#fb923c">
+                    {selected.phone && <InfoRow icon="📞" label="Phone" value={selected.phone} href={`tel:${selected.phone}`} valueColor="#fb923c" />}
+                    {selected.email && <InfoRow icon="✉️" label="Email" value={selected.email} href={`mailto:${selected.email}`} valueColor="#fb923c" />}
+                    {selected.address && <InfoRow icon="📍" label="Address" value={selected.address} />}
+                  </InfoCard>
+
+                  {/* Job details */}
                   <InfoCard title="Job Details" icon="🔧" accent="#fb923c">
-                    {selected.address  && <InfoRow icon="📍" label="Address"    value={selected.address}  />}
                     {selected.techName && <InfoRow icon="👷" label="Technician" value={selected.techName} />}
+                    {!selected.techName && <div style={{ padding: '10px 0', fontSize: 13, color: '#475569' }}>No technician assigned yet</div>}
                   </InfoCard>
 
                   {selected.products.length > 0 && (
                     <InfoCard title="Products to Install" icon="🏷️" accent="#fb923c">
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                         {selected.products.map((p, i) => (
-                          <div key={i} style={{
-                            display: 'flex', alignItems: 'center', gap: 12,
-                            padding: '11px 14px', borderRadius: 10,
-                            background: 'rgba(251,146,60,0.08)', border: '1px solid rgba(251,146,60,0.2)',
-                          }}>
+                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', borderRadius: 10, background: 'rgba(251,146,60,0.08)', border: '1px solid rgba(251,146,60,0.2)' }}>
                             <span style={{ fontSize: 16 }}>🏷️</span>
                             <span style={{ color: '#e2e8f0', fontSize: 14, fontWeight: 600 }}>{p}</span>
                           </div>
@@ -662,42 +581,21 @@ export function MySchedulePage() {
             </div>
 
             {/* Fixed footer */}
-            <div style={{
-              flexShrink: 0, padding: '14px 20px 20px',
-              borderTop: '1px solid #1e3a4f', display: 'flex', gap: 10,
-              background: '#0d1a26',
-            }}>
+            <div style={{ flexShrink: 0, padding: '14px 20px 20px', borderTop: '1px solid #1e3a4f', display: 'flex', gap: 10, background: '#0d1a26' }}>
               {selected.kind === 'visit' && (
-                <button
-                  onClick={() => { setSelected(null); navigate(`/leads?lead=${selected.leadId}`) }}
-                  style={{
-                    flex: 1, padding: '13px 0', borderRadius: 12, fontSize: 14, fontWeight: 800,
-                    background: 'linear-gradient(135deg, #0d7ea3, #0369a1)', color: '#fff', border: 'none', cursor: 'pointer',
-                    letterSpacing: '-0.01em',
-                  }}
-                >
+                <button onClick={() => { setSelected(null); navigate(`/leads?lead=${selected.leadId}`) }}
+                  style={{ flex: 1, padding: '13px 0', borderRadius: 12, fontSize: 14, fontWeight: 800, background: 'linear-gradient(135deg, #0d7ea3, #0369a1)', color: '#fff', border: 'none', cursor: 'pointer', letterSpacing: '-0.01em' }}>
                   Open Lead →
                 </button>
               )}
               {selected.kind === 'job' && (
-                <button
-                  onClick={() => { setSelected(null); navigate(`/installations/${selected.id}`) }}
-                  style={{
-                    flex: 1, padding: '13px 0', borderRadius: 12, fontSize: 14, fontWeight: 800,
-                    background: 'linear-gradient(135deg, #ea580c, #c2410c)', color: '#fff', border: 'none', cursor: 'pointer',
-                    letterSpacing: '-0.01em',
-                  }}
-                >
+                <button onClick={() => { setSelected(null); navigate(`/installations/${selected.id}`) }}
+                  style={{ flex: 1, padding: '13px 0', borderRadius: 12, fontSize: 14, fontWeight: 800, background: 'linear-gradient(135deg, #ea580c, #c2410c)', color: '#fff', border: 'none', cursor: 'pointer', letterSpacing: '-0.01em' }}>
                   Open Install →
                 </button>
               )}
-              <button
-                onClick={() => setSelected(null)}
-                style={{
-                  padding: '13px 20px', borderRadius: 12, fontSize: 14, color: '#64748b',
-                  background: 'rgba(255,255,255,0.04)', border: '1px solid #1e3a4f', cursor: 'pointer', fontWeight: 600,
-                }}
-              >
+              <button onClick={() => setSelected(null)}
+                style={{ padding: '13px 20px', borderRadius: 12, fontSize: 14, color: '#64748b', background: 'rgba(255,255,255,0.04)', border: '1px solid #1e3a4f', cursor: 'pointer', fontWeight: 600 }}>
                 Close
               </button>
             </div>
@@ -715,10 +613,7 @@ function InfoCard({ title, icon, accent, children }: {
 }) {
   return (
     <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 12, overflow: 'hidden' }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
-        borderBottom: '1px solid #1e3a4f', background: `${accent}08`,
-      }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid #1e3a4f', background: `${accent}08` }}>
         <span style={{ fontSize: 14 }}>{icon}</span>
         <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.07em' }}>{title}</span>
       </div>
