@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { path: '/dispatch',      label: 'Dispatch',        icon: '📅', hex: '#a78bfa', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
   { path: '/installations', label: 'Installations',   icon: '🔧', hex: '#fb923c', soon: false, roles: ['admin','technician'] as UserRole[] },
   { path: '/shipping',      label: 'Shipping',        icon: '🚚', hex: '#06b6d4', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
+  { path: '/fulfillment',   label: 'Fulfillment',     icon: '🔔', hex: '#fbbf24', soon: false, roles: ['admin','frontdesk','technician'] as UserRole[] },
   { path: '/customers',     label: 'Customers',       icon: '👥', hex: '#4ade80', soon: false, roles: ['admin','frontdesk','salesrep'] as UserRole[] },
   { path: '/products',      label: 'Products',        icon: '🏷️', hex: '#fbbf24', soon: false, roles: ['admin'] as UserRole[] },
   { path: '/services',      label: 'Contracts',       icon: '📝', hex: '#818cf8', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
