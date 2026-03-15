@@ -15,9 +15,10 @@ import { CustomerDocumentsTab } from './tabs/CustomerDocumentsTab'
 import { BillingTab } from './tabs/BillingTab'
 import { CustomerQuotesTab } from './tabs/CustomerQuotesTab'
 import { ServicePlansTab } from './tabs/ServicePlansTab'
+import ShipmentsTab from './tabs/ShipmentsTab'
 import SiteSurveyCapture from '../leads/SiteSurveyCapture'
 
-type CustTab = 'overview' | 'systems' | 'rental' | 'billing' | 'quotes' | 'service_plans' | 'maintenance' | 'activity' | 'documents'
+type CustTab = 'overview' | 'systems' | 'rental' | 'billing' | 'quotes' | 'service_plans' | 'shipments' | 'maintenance' | 'activity' | 'documents'
 
 function formatDate(d: string | null) {
   if (!d) return '—'
@@ -75,6 +76,7 @@ export function CustomerDetailPage() {
     { key: 'billing',        label: 'Billing',          show: true },
     { key: 'quotes',         label: 'Quotes',           show: true },
     { key: 'service_plans',  label: 'Service Plans',    show: true },
+    { key: 'shipments',      label: 'Shipments',        show: true },
     { key: 'maintenance',    label: 'Maintenance',      show: false }, // replaced by Service Plans tab
     { key: 'activity',       label: 'Activity',         show: true },
     { key: 'documents',      label: 'Documents',        show: true },
@@ -203,6 +205,7 @@ export function CustomerDetailPage() {
           />
         )}
         {activeTab === 'service_plans'  && <ServicePlansTab customerId={customer.id} />}
+        {activeTab === 'shipments'      && <ShipmentsTab customerId={customer.id} />}
         {activeTab === 'maintenance'    && <MaintenanceComplianceTab customerId={customer.id} />}
         {activeTab === 'activity'       && <CustomerActivityTab customerId={customer.id} />}
         {activeTab === 'documents'      && <CustomerDocumentsTab customerId={customer.id} />}
