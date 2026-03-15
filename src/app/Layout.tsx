@@ -99,16 +99,16 @@ function SidebarContent({
         borderBottom: '1px solid #162232',
       }}>
         <div style={{
-          width: 34, height: 34, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: 38, height: 38, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)', flexShrink: 0,
           boxShadow: '0 0 20px rgba(59,130,246,0.35)',
         }}>
-          <span style={{ color: '#fff', fontWeight: 900, fontSize: 15 }}>Z</span>
+          <span style={{ color: '#fff', fontWeight: 900, fontSize: 17 }}>Z</span>
         </div>
         {sidebarOpen && (
           <div>
-            <div style={{ color: '#f1f5f9', fontWeight: 800, fontSize: 14, lineHeight: 1.2 }}>Zenith Pure</div>
-            <div style={{ color: '#334155', fontSize: 10, marginTop: 2, fontWeight: 500 }}>Solutions CRM</div>
+            <div style={{ color: '#f1f5f9', fontWeight: 800, fontSize: 15, lineHeight: 1.2 }}>Zenith Pure</div>
+            <div style={{ color: '#475569', fontSize: 11, marginTop: 2, fontWeight: 500 }}>Solutions CRM</div>
           </div>
         )}
       </div>
@@ -120,9 +120,9 @@ function SidebarContent({
             {/* Group divider label */}
             {sidebarOpen ? (
               <div style={{
-                padding: gi === 0 ? '6px 16px 5px' : '12px 16px 5px',
-                fontSize: 9, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase',
-                color: '#334155',
+                padding: gi === 0 ? '8px 16px 6px' : '14px 16px 6px',
+                fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase',
+                color: '#64748b',
               }}>
                 {GROUP_LABELS[groupKey] || groupKey}
               </div>
@@ -135,25 +135,25 @@ function SidebarContent({
               if (item.soon) {
                 return (
                   <div key={item.path} style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: sidebarOpen ? '6px 10px' : '6px 0', margin: sidebarOpen ? '1px 6px' : '1px 4px',
-                    borderRadius: 8, opacity: 0.3, cursor: 'not-allowed',
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: sidebarOpen ? '7px 10px' : '7px 0', margin: sidebarOpen ? '2px 6px' : '2px 4px',
+                    borderRadius: 10, opacity: 0.35, cursor: 'not-allowed',
                     justifyContent: sidebarOpen ? 'flex-start' : 'center',
                   }}>
                     <div style={{
-                      width: 28, height: 28, borderRadius: 7, flexShrink: 0,
+                      width: 34, height: 34, borderRadius: 9, flexShrink: 0,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: '#0d1a26', fontSize: 13,
+                      background: '#0d1a26', fontSize: 16,
                     }}>
                       {item.icon}
                     </div>
                     {sidebarOpen && (
                       <>
-                        <span style={{ fontSize: 12, color: '#334155', flex: 1 }}>{item.label}</span>
+                        <span style={{ fontSize: 13, color: '#475569', flex: 1 }}>{item.label}</span>
                         <span style={{
-                          fontSize: 7, fontWeight: 800, letterSpacing: '0.08em',
-                          padding: '2px 5px', borderRadius: 8,
-                          background: '#0d1a26', color: '#334155',
+                          fontSize: 8, fontWeight: 800, letterSpacing: '0.08em',
+                          padding: '2px 6px', borderRadius: 8,
+                          background: '#0d1a26', color: '#475569',
                         }}>SOON</span>
                       </>
                     )}
@@ -166,16 +166,16 @@ function SidebarContent({
                   {({ isActive }) => (
                     <div
                       style={{
-                        display: 'flex', alignItems: 'center', gap: 10, position: 'relative',
-                        padding: sidebarOpen ? '6px 10px' : '6px 0',
-                        margin: sidebarOpen ? '1px 6px' : '1px 4px',
-                        borderRadius: 8, cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: 12, position: 'relative',
+                        padding: sidebarOpen ? '8px 10px' : '8px 0',
+                        margin: sidebarOpen ? '2px 6px' : '2px 4px',
+                        borderRadius: 10, cursor: 'pointer',
                         justifyContent: sidebarOpen ? 'flex-start' : 'center',
-                        background: isActive ? `${item.hex}10` : 'transparent',
+                        background: isActive ? `${item.hex}15` : 'transparent',
                         transition: 'all 0.15s ease',
                       }}
                       onMouseEnter={e => {
-                        if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
+                        if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
                       }}
                       onMouseLeave={e => {
                         if (!isActive) e.currentTarget.style.background = 'transparent'
@@ -184,20 +184,20 @@ function SidebarContent({
                       {/* Active left bar */}
                       {isActive && sidebarOpen && (
                         <div style={{
-                          position: 'absolute', left: 0, top: 6, bottom: 6, width: 3,
+                          position: 'absolute', left: 0, top: 8, bottom: 8, width: 3,
                           borderRadius: '0 3px 3px 0', background: item.hex,
-                          boxShadow: `0 0 8px ${item.hex}50`,
+                          boxShadow: `0 0 10px ${item.hex}60`,
                         }} />
                       )}
 
                       {/* Icon box */}
                       <div style={{
-                        width: 28, height: 28, borderRadius: 7, flexShrink: 0,
+                        width: 34, height: 34, borderRadius: 9, flexShrink: 0,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 13,
-                        background: isActive ? `${item.hex}20` : `${item.hex}08`,
-                        border: `1px solid ${isActive ? `${item.hex}30` : 'transparent'}`,
-                        boxShadow: isActive ? `0 0 12px ${item.hex}15` : 'none',
+                        fontSize: 16,
+                        background: isActive ? `${item.hex}25` : `${item.hex}10`,
+                        border: `1px solid ${isActive ? `${item.hex}40` : `${item.hex}12`}`,
+                        boxShadow: isActive ? `0 0 14px ${item.hex}20` : 'none',
                         transition: 'all 0.15s ease',
                       }}>
                         {item.icon}
@@ -206,8 +206,8 @@ function SidebarContent({
                       {/* Label */}
                       {sidebarOpen && (
                         <span style={{
-                          fontSize: 12, fontWeight: isActive ? 700 : 500,
-                          color: isActive ? item.hex : '#64748b',
+                          fontSize: 13.5, fontWeight: isActive ? 700 : 500,
+                          color: isActive ? item.hex : '#94a3b8',
                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                           transition: 'color 0.15s ease',
                         }}>
@@ -231,21 +231,21 @@ function SidebarContent({
             padding: '8px 10px', borderRadius: 10,
             background: '#0d1a26', border: '1px solid #162232',
           }}>
-            <Avatar name={profile.full_name} size={7} />
+            <Avatar name={profile.full_name} size={8} />
             {sidebarOpen && (
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{
-                  fontSize: 12, fontWeight: 600, color: '#cbd5e1',
+                  fontSize: 13, fontWeight: 600, color: '#e2e8f0',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
                   {profile.full_name}
                 </div>
                 {role && (
                   <span style={{
-                    display: 'inline-block', marginTop: 2,
-                    fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 5,
-                    background: `${ROLE_HEX[role]}12`, color: ROLE_HEX[role],
-                    border: `1px solid ${ROLE_HEX[role]}20`,
+                    display: 'inline-block', marginTop: 3,
+                    fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6,
+                    background: `${ROLE_HEX[role]}15`, color: ROLE_HEX[role],
+                    border: `1px solid ${ROLE_HEX[role]}25`,
                     letterSpacing: '0.04em',
                   }}>
                     {ROLE_LABELS[role]}
@@ -310,7 +310,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <div
         className="md:hidden"
         style={{
-          position: 'fixed', insetBlock: 0, left: 0, zIndex: 50, width: 230,
+          position: 'fixed', insetBlock: 0, left: 0, zIndex: 50, width: 240,
           borderRight: '1px solid #162232',
           transform: mobileOpen ? 'translateX(0)' : 'translateX(-100%)',
           transition: 'transform 0.25s ease',
@@ -338,7 +338,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         className="hidden md:flex"
         style={{
           flexDirection: 'column', flexShrink: 0,
-          width: sidebarOpen ? 210 : 56,
+          width: sidebarOpen ? 230 : 60,
           borderRight: '1px solid #162232',
           transition: 'width 0.2s ease',
         }}
