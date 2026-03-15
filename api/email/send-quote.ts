@@ -7,8 +7,8 @@ const RESEND_KEY = process.env.RESEND_API_KEY!
 const DOMAIN     = process.env.RESEND_DOMAIN || 'zenithpuresolutions.com'
 const APP_URL    = process.env.VITE_APP_URL  || 'https://zenith-crm-ten.vercel.app'
 
-const fmt     = (n: number) => new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n)
-const fmtDate = (s: string|null) => s ? new Date(s).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '—'
+const fmt     = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
+const fmtDate = (s: string | null) => s ? new Date(s).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—'
 
 async function sendViaResend(to: string, subject: string, html: string, fromEmail: string, fromName: string) {
   const r = await fetch('https://api.resend.com/emails', {
@@ -20,61 +20,124 @@ async function sendViaResend(to: string, subject: string, html: string, fromEmai
 }
 
 function quoteHtml(quote: any, customer: any, items: any[], senderName: string) {
-  const total = parseFloat(quote.total)||0
-  const tax   = parseFloat(quote.tax_amount)||0
-  const sub   = parseFloat(quote.subtotal)||0
-  const acceptUrl = `${APP_URL}/quotes/accept/${quote.accept_token}`
-  const rows = items.map(li=>`<tr>
-    <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;color:#334155">${li.description}</td>
-    <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;text-align:center;color:#64748b">${li.quantity}</td>
-    <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;text-align:right;color:#64748b">${fmt(parseFloat(li.unit_price))}</td>
-    <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:600;color:#0f172a">${fmt(parseFloat(li.total))}</td>
-  </tr>`).join('')
+  const total = parseFloat(quote.total) || 0
+  const tax   = parseFloat(quote.tax_amount) || 0
+  const sub   = parseFloat(quote.subtotal) || 0
+  const reviewUrl = `${APP_URL}/q/${quote.public_token || quote.accept_token}`
 
-  return `<!DOCTYPE html><html><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif">
-  <div style="max-width:600px;margin:32px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.07)">
-    <div style="background:#0f1e2e;padding:32px;text-align:center">
-      <h1 style="color:#fff;margin:0;font-size:22px">Zenith Pure Solutions</h1>
-      <p style="color:#7fb3d0;margin:6px 0 0;font-size:13px">Clean Water. Pure Simple.</p>
-    </div>
-    <div style="padding:32px">
-      <h2 style="color:#0f1e2e;margin:0 0 16px">Your Quote is Ready, ${customer.full_name||''}</h2>
-      <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:20px;margin-bottom:24px">
-        <p style="margin:0;font-size:11px;color:#0ea5e9;font-weight:600;text-transform:uppercase">Quote Number</p>
-        <p style="margin:4px 0 0;font-size:22px;font-weight:700;color:#0f1e2e;font-family:monospace">${quote.quote_number}</p>
-        <p style="margin:8px 0 0;font-size:12px;color:#dc2626;font-weight:600">Valid until ${fmtDate(quote.valid_until)}</p>
-      </div>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
-        <thead><tr style="background:#f8fafc">
-          <th style="padding:10px 16px;text-align:left;font-size:11px;color:#94a3b8;border-bottom:2px solid #e2e8f0">Item</th>
-          <th style="padding:10px 16px;text-align:center;font-size:11px;color:#94a3b8;border-bottom:2px solid #e2e8f0">Qty</th>
-          <th style="padding:10px 16px;text-align:right;font-size:11px;color:#94a3b8;border-bottom:2px solid #e2e8f0">Unit</th>
-          <th style="padding:10px 16px;text-align:right;font-size:11px;color:#94a3b8;border-bottom:2px solid #e2e8f0">Total</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
+  // FIX: render line item rows — filter out service_plan items for display
+  const displayItems = items.filter((li: any) => li.item_type !== 'service_plan')
+  const rows = displayItems.map((li: any) => `
+    <tr>
+      <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:14px">${li.description || '—'}</td>
+      <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;text-align:center;color:#64748b;font-size:14px">${li.quantity || 1}</td>
+      <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;text-align:right;color:#64748b;font-size:14px">${fmt(parseFloat(li.unit_price) || 0)}</td>
+      <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:600;color:#0f172a;font-size:14px">${fmt(parseFloat(li.total) || 0)}</td>
+    </tr>`).join('')
+
+  const emptyRow = displayItems.length === 0
+    ? `<tr><td colspan="4" style="padding:20px 16px;text-align:center;color:#94a3b8;font-size:13px">No line items</td></tr>`
+    : ''
+
+  // Service plan section (if any)
+  const planItems = items.filter((li: any) => li.item_type === 'service_plan')
+  const planSection = planItems.length > 0 ? `
+    <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:16px;margin-bottom:24px">
+      <p style="margin:0 0 10px;font-size:12px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:0.06em">Included Service Plans</p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${planItems.map((p: any) => `
+          <tr>
+            <td style="font-size:13px;color:#78350f;padding:4px 0">${p.description}</td>
+            <td style="font-size:13px;color:#92400e;font-weight:600;text-align:right;padding:4px 0">${fmt(parseFloat(p.unit_price) || 0)}/${p.billing_cycle || 'mo'}</td>
+          </tr>`).join('')}
       </table>
-      <div style="background:#f8fafc;border-radius:10px;padding:16px;margin-bottom:28px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="color:#64748b">Subtotal</span><span style="font-weight:600">${fmt(sub)}</span></div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:10px"><span style="color:#64748b">Tax (7% Indiana)</span><span style="font-weight:600">${fmt(tax)}</span></div>
-        <div style="display:flex;justify-content:space-between;padding-top:10px;border-top:2px solid #e2e8f0">
-          <span style="font-size:18px;font-weight:700;color:#0f1e2e">Total</span>
-          <span style="font-size:22px;font-weight:700;color:#0f1e2e">${fmt(total)}</span>
-        </div>
-      </div>
-      <div style="text-align:center;margin-bottom:28px">
-        <a href="${acceptUrl}" style="display:inline-block;background:#0ea5e9;color:#fff;text-decoration:none;padding:16px 40px;border-radius:12px;font-size:16px;font-weight:700">
-          Review &amp; Accept Quote &rarr;
-        </a>
-      </div>
-      <div style="background:#fff8ed;border:1px solid #fed7aa;border-radius:10px;padding:16px">
-        <p style="margin:0;color:#92400e;font-size:14px;font-weight:600">Questions?</p>
-        <p style="margin:6px 0 0;color:#b45309;font-size:13px">Reply directly to this email — ${senderName} will get back to you.</p>
-      </div>
+    </div>` : ''
+
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:32px 16px;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;">
+
+  <!-- Header -->
+  <tr><td style="background:#0f1e2e;padding:32px;text-align:center;">
+    <h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:700;">Zenith Pure Solutions</h1>
+    <p style="color:#7fb3d0;margin:6px 0 0;font-size:13px;">Clean Water. Pure Simple.</p>
+  </td></tr>
+
+  <!-- Body -->
+  <tr><td style="padding:32px;">
+
+    <h2 style="color:#0f1e2e;margin:0 0 16px;font-size:20px;">Your Quote is Ready, ${customer.full_name || ''}</h2>
+
+    <!-- Quote number box -->
+    <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:20px;margin-bottom:24px;">
+      <p style="margin:0;font-size:11px;color:#0ea5e9;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">Quote Number</p>
+      <p style="margin:4px 0 0;font-size:22px;font-weight:700;color:#0f1e2e;font-family:monospace;">${quote.quote_number}</p>
+      <p style="margin:8px 0 0;font-size:12px;color:#dc2626;font-weight:600;">Valid until ${fmtDate(quote.valid_until)}</p>
     </div>
-    <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:20px;text-align:center">
-      <p style="margin:0;font-size:12px;color:#94a3b8">Zenith Pure Solutions LLC &middot; Indianapolis, IN</p>
+
+    <!-- Line items table -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:16px;">
+      <thead>
+        <tr style="background:#f8fafc;">
+          <th style="padding:10px 16px;text-align:left;font-size:11px;color:#94a3b8;font-weight:700;border-bottom:2px solid #e2e8f0;text-transform:uppercase;">Item</th>
+          <th style="padding:10px 16px;text-align:center;font-size:11px;color:#94a3b8;font-weight:700;border-bottom:2px solid #e2e8f0;text-transform:uppercase;">Qty</th>
+          <th style="padding:10px 16px;text-align:right;font-size:11px;color:#94a3b8;font-weight:700;border-bottom:2px solid #e2e8f0;text-transform:uppercase;">Unit</th>
+          <th style="padding:10px 16px;text-align:right;font-size:11px;color:#94a3b8;font-weight:700;border-bottom:2px solid #e2e8f0;text-transform:uppercase;">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+        ${emptyRow}
+      </tbody>
+    </table>
+
+    <!-- FIX: totals use table not flexbox (Gmail strips display:flex) -->
+    <div style="background:#f8fafc;border-radius:10px;padding:16px;margin-bottom:28px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="color:#64748b;font-size:14px;padding:4px 0;">Subtotal</td>
+          <td style="text-align:right;font-weight:600;color:#0f172a;font-size:14px;padding:4px 0;">${fmt(sub)}</td>
+        </tr>
+        <tr>
+          <td style="color:#64748b;font-size:14px;padding:4px 0 10px;">Tax (7% Indiana)</td>
+          <td style="text-align:right;font-weight:600;color:#0f172a;font-size:14px;padding:4px 0 10px;">${fmt(tax)}</td>
+        </tr>
+        <tr style="border-top:2px solid #e2e8f0;">
+          <td style="font-size:18px;font-weight:700;color:#0f1e2e;padding-top:10px;">Total</td>
+          <td style="text-align:right;font-size:22px;font-weight:700;color:#0f1e2e;padding-top:10px;">${fmt(total)}</td>
+        </tr>
+      </table>
     </div>
-  </div>
+
+    ${planSection}
+
+    <!-- CTA button -->
+    <div style="text-align:center;margin-bottom:28px;">
+      <a href="${reviewUrl}" style="display:inline-block;background:#0ea5e9;color:#ffffff;text-decoration:none;padding:16px 40px;border-radius:12px;font-size:16px;font-weight:700;">
+        Review &amp; Accept Quote &rarr;
+      </a>
+    </div>
+
+    <!-- Questions box -->
+    <div style="background:#fff8ed;border:1px solid #fed7aa;border-radius:10px;padding:16px;">
+      <p style="margin:0;color:#92400e;font-size:14px;font-weight:600;">Questions?</p>
+      <p style="margin:6px 0 0;color:#b45309;font-size:13px;">Reply directly to this email — ${senderName} will get back to you.</p>
+    </div>
+
+  </td></tr>
+
+  <!-- Footer -->
+  <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:20px;text-align:center;">
+    <p style="margin:0;font-size:12px;color:#94a3b8;">Zenith Pure Solutions LLC &middot; 6951 E 30th St, Suite B &middot; Indianapolis, IN 46219</p>
+    <p style="margin:4px 0 0;font-size:12px;color:#94a3b8;">info@zenithpuresolutions.com &middot; (317) 690-4172</p>
+  </td></tr>
+
+</table>
+</td></tr></table>
 </body></html>`
 }
 
@@ -87,28 +150,68 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const fromName  = senderName  || 'Zenith Pure Solutions'
 
   try {
-    const { data: quote } = await supabase.from('quotes').select('*,quote_line_items(*)').eq('id',quoteId).single()
+    // Fetch quote without relation join — we load line items separately
+    const { data: quote } = await supabase
+      .from('quotes').select('*').eq('id', quoteId).single()
     if (!quote) return res.status(404).json({ error: 'Quote not found' })
 
-    const { data: customer } = await supabase.from('customers').select('full_name,email').eq('id',quote.customer_id).single()
+    const { data: customer } = await supabase
+      .from('customers').select('full_name, email').eq('id', quote.customer_id).single()
     if (!customer?.email) return res.status(400).json({ error: 'Customer has no email' })
+
+    // FIX: read from document_line_items first (authoritative), fall back to quote_line_items
+    let { data: lineItems } = await supabase
+      .from('document_line_items')
+      .select('*')
+      .eq('document_id', quoteId)
+      .order('sort_order')
+
+    if (!lineItems || lineItems.length === 0) {
+      const { data: legacy } = await supabase
+        .from('quote_line_items')
+        .select('*')
+        .eq('quote_id', quoteId)
+        .order('sort_order')
+      lineItems = legacy || []
+    }
 
     await sendViaResend(
       customer.email,
       `Your Quote from ${fromName} — ${quote.quote_number}`,
-      quoteHtml(quote, customer, quote.quote_line_items||[], fromName),
-      fromEmail, fromName,
+      quoteHtml(quote, customer, lineItems, fromName),
+      fromEmail,
+      fromName,
     )
 
-    await supabase.from('quotes').update({ status:'sent', sent_at: new Date().toISOString() }).eq('id',quoteId)
+    // Update quote status to sent + set tokens if not already set
+    const updates: any = {
+      status: 'sent',
+      sent_at: new Date().toISOString(),
+    }
+    if (!quote.accept_token) updates.accept_token = crypto.randomUUID()
+    if (!quote.public_token) updates.public_token = updates.accept_token || quote.accept_token
+
+    await supabase.from('quotes').update(updates).eq('id', quoteId)
+
     await supabase.from('document_audit_log').insert({
-      entity_type:'quote', entity_id:quoteId, event:'sent', actor_type:'staff',
-      metadata:{ email:customer.email, sent_by:fromEmail },
+      entity_type: 'quote', entity_id: quoteId, event: 'sent', actor_type: 'staff',
+      metadata: { email: customer.email, sent_by: fromEmail },
     })
 
-    return res.status(200).json({ ok:true, to:customer.email, from:fromEmail })
-  } catch(err:any) {
+    // Log to email_log
+    await supabase.from('email_log').insert({
+      customer_id: quote.customer_id,
+      email_type: 'quote_sent',
+      to_address: customer.email,
+      subject: `Your Quote from ${fromName} — ${quote.quote_number}`,
+      status: 'sent',
+      sent_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    })
+
+    return res.status(200).json({ ok: true, to: customer.email, from: fromEmail })
+  } catch (err: any) {
     console.error(err)
-    return res.status(500).json({ error:err.message })
+    return res.status(500).json({ error: err.message })
   }
 }
