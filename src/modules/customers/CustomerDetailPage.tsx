@@ -14,9 +14,10 @@ import { CustomerActivityTab } from './tabs/CustomerActivityTab'
 import { CustomerDocumentsTab } from './tabs/CustomerDocumentsTab'
 import { BillingTab } from './tabs/BillingTab'
 import { CustomerQuotesTab } from './tabs/CustomerQuotesTab'
+import { ServicePlansTab } from './tabs/ServicePlansTab'
 import SiteSurveyCapture from '../leads/SiteSurveyCapture'
 
-type CustTab = 'overview' | 'systems' | 'rental' | 'billing' | 'quotes' | 'maintenance' | 'activity' | 'documents'
+type CustTab = 'overview' | 'systems' | 'rental' | 'billing' | 'quotes' | 'service_plans' | 'maintenance' | 'activity' | 'documents'
 
 function formatDate(d: string | null) {
   if (!d) return '—'
@@ -68,14 +69,15 @@ export function CustomerDetailPage() {
 
   // ─── Tabs ─────────────────────────────────────────────────
   const TABS: { key: CustTab; label: string; show: boolean }[] = [
-    { key: 'overview',    label: 'Overview',       show: true },
-    { key: 'systems',     label: 'Systems',         show: true },
-    { key: 'rental',      label: 'Rental & Buyout', show: hasRentals },
-    { key: 'billing',     label: 'Billing',         show: true },
-    { key: 'quotes',      label: 'Quotes',          show: true },
-    { key: 'maintenance', label: 'Maintenance',     show: true },
-    { key: 'activity',    label: 'Activity',        show: true },
-    { key: 'documents',   label: 'Documents',       show: true },
+    { key: 'overview',       label: 'Overview',        show: true },
+    { key: 'systems',        label: 'Systems',          show: true },
+    { key: 'rental',         label: 'Rental & Buyout',  show: hasRentals },
+    { key: 'billing',        label: 'Billing',          show: true },
+    { key: 'quotes',         label: 'Quotes',           show: true },
+    { key: 'service_plans',  label: 'Service Plans',    show: true },
+    { key: 'maintenance',    label: 'Maintenance',      show: true },
+    { key: 'activity',       label: 'Activity',         show: true },
+    { key: 'documents',      label: 'Documents',        show: true },
   ]
 
   return (
@@ -188,11 +190,11 @@ export function CustomerDetailPage() {
 
       {/* ─── Tab Content ─────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto py-5">
-        {activeTab === 'overview'    && <CustomerOverviewTab customer={customer} />}
-        {activeTab === 'systems'     && <InstalledSystemsTab customerId={customer.id} />}
-        {activeTab === 'rental'      && <RentalBuyoutTab customerId={customer.id} />}
-        {activeTab === 'billing'     && <BillingTab customerId={customer.id} customer={customer} />}
-        {activeTab === 'quotes'      && (
+        {activeTab === 'overview'       && <CustomerOverviewTab customer={customer} />}
+        {activeTab === 'systems'        && <InstalledSystemsTab customerId={customer.id} />}
+        {activeTab === 'rental'         && <RentalBuyoutTab customerId={customer.id} />}
+        {activeTab === 'billing'        && <BillingTab customerId={customer.id} customer={customer} />}
+        {activeTab === 'quotes'         && (
           <CustomerQuotesTab
             customerId={customer.id}
             customerName={customer.full_name}
@@ -200,9 +202,10 @@ export function CustomerDetailPage() {
             customerPhone={customer.phone}
           />
         )}
-        {activeTab === 'maintenance' && <MaintenanceComplianceTab customerId={customer.id} />}
-        {activeTab === 'activity'    && <CustomerActivityTab customerId={customer.id} />}
-        {activeTab === 'documents'   && <CustomerDocumentsTab customerId={customer.id} />}
+        {activeTab === 'service_plans'  && <ServicePlansTab customerId={customer.id} />}
+        {activeTab === 'maintenance'    && <MaintenanceComplianceTab customerId={customer.id} />}
+        {activeTab === 'activity'       && <CustomerActivityTab customerId={customer.id} />}
+        {activeTab === 'documents'      && <CustomerDocumentsTab customerId={customer.id} />}
       </div>
     </div>
   )
