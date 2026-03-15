@@ -137,7 +137,6 @@ function useFailedPayments() {
     queryKey: ['dashboard', 'failed_payments'],
     queryFn: async () => {
       const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
-      // FIX: no customers FK registered — fetch separately
       const { data, error } = await supabase.from('payment_transactions')
         .select('id, amount, failure_reason, attempted_at, description, customer_id')
         .eq('status', 'failed').gte('attempted_at', cutoff)
@@ -198,7 +197,6 @@ function usePendingProofReview() {
   return useQuery({
     queryKey: ['dashboard', 'pending_proof_review'],
     queryFn: async () => {
-      // FIX: handover_signed may not exist — just query complete jobs without second filter
       const { data, error } = await supabase.from('jobs')
         .select('id, customer_name_snapshot, service_address_snapshot, system_type, status, scheduled_date')
         .eq('status', 'complete')
@@ -266,7 +264,6 @@ function useExpiringQuotes() {
       const t  = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`
       const i7 = new Date(Date.now() + 7 * 86400000)
       const i7s = `${i7.getFullYear()}-${pad(i7.getMonth()+1)}-${pad(i7.getDate())}T23:59:59`
-      // FIX: quotes has no FK to customers — use customer_name column directly
       const { data, error } = await supabase.from('quotes')
         .select('id, quote_number, valid_until, monthly_amount, total, customer_id, customer_name')
         .in('status', ['sent', 'viewed']).gte('valid_until', t).lte('valid_until', i7s)
@@ -282,7 +279,6 @@ function useLowInventoryAlerts() {
   return useQuery({
     queryKey: ['dashboard', 'low_inventory'],
     queryFn: async () => {
-      // FIX: quantity_on_hand (not qty_on_hand), name via products join
       const { data, error } = await supabase.from('inventory_items')
         .select('id, sku, quantity_on_hand, reorder_point, product_id, products(name)')
         .not('reorder_point', 'is', null)
@@ -291,6 +287,24 @@ function useLowInventoryAlerts() {
       return (data || []).filter((i: any) => i.quantity_on_hand <= i.reorder_point)
     },
     refetchInterval: 120_000,
+  })
+}
+
+function useShipmentsDue() {
+  return useQuery({
+    queryKey: ['dashboard', 'shipments_due'],
+    queryFn: async () => {
+      const today = new Date().toISOString().split('T')[0]
+      const endOfWeek = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
+      const { data, error } = await supabase.from('shipments')
+        .select('id, customer_id, product_id, status, scheduled_date, ship_to_city, ship_to_state, type, products(name), customers!inner(full_name)')
+        .eq('status', 'pending')
+        .lte('scheduled_date', endOfWeek)
+        .order('scheduled_date', { ascending: true }).limit(10)
+      if (error) throw error
+      return data || []
+    },
+    refetchInterval: 60_000,
   })
 }
 
@@ -633,6 +647,7 @@ export function DashboardPage() {
   const { data: unassignedJobs = [] }     = useUnassignedJobs()
   const { data: expiringQuotes = [] }     = useExpiringQuotes()
   const { data: lowInventory = [] }       = useLowInventoryAlerts()
+  const { data: shipmentsDue = [] }       = useShipmentsDue()
 
   const hour = new Date().getHours()
   const greeting = profile
@@ -642,7 +657,7 @@ export function DashboardPage() {
   const completedThisWeek = jobsThisWeek.filter((j: any) => j.status === 'complete').length
   const scheduledToday    = todaysJobs.filter((j: any) => j.status === 'scheduled').length
   const inProgressToday   = todaysJobs.filter((j: any) => j.status === 'in_progress').length
-  const urgentCount = overdueFollowUps.length + overdueServices.length + failedPayments.length + pendingProof.length + unsignedAgreements.length + unassignedJobs.length
+  const urgentCount = overdueFollowUps.length + overdueServices.length + failedPayments.length + pendingProof.length + unsignedAgreements.length + unassignedJobs.length + shipmentsDue.length
 
   return (
     <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -739,7 +754,6 @@ export function DashboardPage() {
               const dl = daysUntil(q.valid_until)
               return (
                 <Row key={q.id} onClick={() => navigate('/quotes')}>
-                  {/* FIX: use q.customer_name (column on quotes table) */}
                   <RowLeft primary={q.customer_name || 'Unknown'} secondary={`${q.quote_number} · ${q.monthly_amount ? `$${Number(q.monthly_amount).toFixed(2)}/mo` : q.total ? `$${Number(q.total).toFixed(2)}` : ''}`} />
                   <RowRight>
                     <div style={{ textAlign: 'right' }}>
@@ -859,6 +873,23 @@ export function DashboardPage() {
             ))}
             {lowInventory.length === 0 && <EmptyRow text="All stock levels OK" />}
             <MoreLink count={lowInventory.length} limit={5} onClick={() => navigate('/inventory')} />
+          </ActionCard>
+        )}
+
+        {isAdmin && (
+          <ActionCard title="Shipments Due" icon="🚚" count={shipmentsDue.length} accent="#06b6d4" urgent={shipmentsDue.length > 0} onClick={() => navigate('/shipping')}>
+            {shipmentsDue.slice(0, 5).map((s: any) => (
+              <Row key={s.id} onClick={() => navigate('/shipping')}>
+                <RowLeft primary={(s.customers as any)?.full_name || 'Unknown'} secondary={`${(s.products as any)?.name || s.type} · ${s.ship_to_city || ''}`} />
+                <RowRight>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: '#06b6d4' }}>{s.scheduled_date ? fmt(s.scheduled_date) : 'No date'}</div>
+                  </div>
+                </RowRight>
+              </Row>
+            ))}
+            {shipmentsDue.length === 0 && <EmptyRow text="No shipments due this week" />}
+            <MoreLink count={shipmentsDue.length} limit={5} onClick={() => navigate('/shipping')} />
           </ActionCard>
         )}
 
