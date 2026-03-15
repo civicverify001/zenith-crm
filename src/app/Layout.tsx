@@ -5,41 +5,56 @@ import { usePermissions } from '../hooks/usePermissions'
 import { supabase } from '../lib/supabase'
 import type { UserRole } from '../types/domain.types'
 
-// ─── Nav items config ─────────────────────────────────────────────
-const NAV_ITEMS = [
-  { path: '/dashboard',     label: 'Dashboard',      icon: '◉',  hex: '#60a5fa', soon: false, roles: ['admin','frontdesk','salesrep','technician'] as UserRole[] },
-  { path: '/schedule',      label: 'My Schedule',    icon: '🗓️', hex: '#34d399', soon: false, roles: ['admin','frontdesk','salesrep','technician'] as UserRole[] },
-  { path: '/leads',         label: 'Pipeline',        icon: '⬡',  hex: '#22d3ee', soon: false, roles: ['admin','frontdesk','salesrep'] as UserRole[] },
-  { path: '/quotes',        label: 'Quotes',          icon: '📋', hex: '#22d3ee', soon: false, roles: ['admin','frontdesk','salesrep'] as UserRole[] },
-  { path: '/invoices',      label: 'Invoices',        icon: '🧾', hex: '#34d399', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
-  { path: '/follow-ups',    label: 'Follow-Ups',      icon: '📞', hex: '#f472b6', soon: false, roles: ['admin','frontdesk','salesrep'] as UserRole[] },
-  { path: '/dispatch',      label: 'Dispatch',        icon: '📅', hex: '#a78bfa', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
-  { path: '/installations', label: 'Installations',   icon: '🔧', hex: '#fb923c', soon: false, roles: ['admin','technician'] as UserRole[] },
-  { path: '/shipping',      label: 'Shipping',        icon: '🚚', hex: '#06b6d4', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
-  { path: '/fulfillment',   label: 'Fulfillment',     icon: '🔔', hex: '#fbbf24', soon: false, roles: ['admin','frontdesk','technician'] as UserRole[] },
-  { path: '/customers',     label: 'Customers',       icon: '👥', hex: '#4ade80', soon: false, roles: ['admin','frontdesk','salesrep'] as UserRole[] },
-  { path: '/products',      label: 'Products',        icon: '🏷️', hex: '#fbbf24', soon: false, roles: ['admin'] as UserRole[] },
-  { path: '/services',      label: 'Contracts',       icon: '📝', hex: '#818cf8', soon: false, roles: ['admin','frontdesk'] as UserRole[] },
-  { path: '/admin/terms',   label: 'Admin Settings',  icon: '⚙️', hex: '#8b5cf6', soon: false, roles: ['admin'] as UserRole[] },
-  { path: '/accounting',    label: 'Accounting',      icon: '💰', hex: '#facc15', soon: false, roles: ['admin'] as UserRole[] },
-  { path: '/inventory',     label: 'Inventory',       icon: '📦', hex: '#2dd4bf', soon: false, roles: ['admin'] as UserRole[] },
-  { path: '/admin/users',   label: 'Team & Users',    icon: '👤', hex: '#f87171', soon: false, roles: ['admin'] as UserRole[] },
-  { path: '/marketing',     label: 'Marketing ROI',   icon: '📊', hex: '#fb7185', soon: true,  roles: ['admin'] as UserRole[] },
-  { path: '/reports',       label: 'Reports',         icon: '📈', hex: '#38bdf8', soon: false,  roles: ['admin'] as UserRole[] },
+// ─── Nav items with groups ────────────────────────────────────────
+interface NavItem {
+  path: string
+  label: string
+  icon: string
+  hex: string
+  group: string
+  soon: boolean
+  roles: UserRole[]
+}
+
+const NAV_ITEMS: NavItem[] = [
+  // Core
+  { path: '/dashboard',     label: 'Dashboard',    icon: '◉',  hex: '#60a5fa', group: 'Core',       soon: false, roles: ['admin','frontdesk','salesrep','technician'] },
+  { path: '/schedule',      label: 'My Schedule',  icon: '🗓️', hex: '#34d399', group: 'Core',       soon: false, roles: ['admin','frontdesk','salesrep','technician'] },
+  { path: '/customers',     label: 'Customers',    icon: '👥', hex: '#4ade80', group: 'Core',       soon: false, roles: ['admin','frontdesk','salesrep'] },
+  { path: '/follow-ups',    label: 'Follow-Ups',   icon: '📞', hex: '#f472b6', group: 'Core',       soon: false, roles: ['admin','frontdesk','salesrep'] },
+  // Sales
+  { path: '/leads',         label: 'Pipeline',     icon: '⬡',  hex: '#22d3ee', group: 'Sales',      soon: false, roles: ['admin','frontdesk','salesrep'] },
+  { path: '/quotes',        label: 'Quotes',       icon: '📋', hex: '#38bdf8', group: 'Sales',      soon: false, roles: ['admin','frontdesk','salesrep'] },
+  { path: '/services',      label: 'Contracts',    icon: '📝', hex: '#818cf8', group: 'Sales',      soon: false, roles: ['admin','frontdesk'] },
+  { path: '/invoices',      label: 'Invoices',     icon: '🧾', hex: '#34d399', group: 'Sales',      soon: false, roles: ['admin','frontdesk'] },
+  // Operations
+  { path: '/dispatch',      label: 'Dispatch',     icon: '📅', hex: '#a78bfa', group: 'Ops',        soon: false, roles: ['admin','frontdesk'] },
+  { path: '/installations', label: 'Installs',     icon: '🔧', hex: '#fb923c', group: 'Ops',        soon: false, roles: ['admin','technician'] },
+  { path: '/shipping',      label: 'Shipping',     icon: '🚚', hex: '#06b6d4', group: 'Ops',        soon: false, roles: ['admin','frontdesk'] },
+  { path: '/fulfillment',   label: 'Fulfillment',  icon: '🔔', hex: '#fbbf24', group: 'Ops',        soon: false, roles: ['admin','frontdesk','technician'] },
+  { path: '/inventory',     label: 'Inventory',    icon: '📦', hex: '#2dd4bf', group: 'Ops',        soon: false, roles: ['admin'] },
+  // Finance & Reports
+  { path: '/accounting',    label: 'Accounting',   icon: '💰', hex: '#facc15', group: 'Finance',    soon: false, roles: ['admin'] },
+  { path: '/reports',       label: 'Reports',      icon: '📈', hex: '#38bdf8', group: 'Finance',    soon: false, roles: ['admin'] },
+  // Admin
+  { path: '/products',      label: 'Products',     icon: '🏷️', hex: '#fbbf24', group: 'Admin',      soon: false, roles: ['admin'] },
+  { path: '/admin/terms',   label: 'Settings',     icon: '⚙️', hex: '#8b5cf6', group: 'Admin',      soon: false, roles: ['admin'] },
+  { path: '/admin/users',   label: 'Team',         icon: '👤', hex: '#f87171', group: 'Admin',      soon: false, roles: ['admin'] },
+  { path: '/marketing',     label: 'Marketing',    icon: '📊', hex: '#fb7185', group: 'Soon',       soon: true,  roles: ['admin'] },
 ]
 
+const GROUP_ORDER = ['Core', 'Sales', 'Ops', 'Finance', 'Admin', 'Soon']
+
+const GROUP_LABELS: Record<string, string> = {
+  'Core': 'CORE', 'Sales': 'SALES', 'Ops': 'OPERATIONS', 'Finance': 'FINANCE', 'Admin': 'ADMIN', 'Soon': 'COMING SOON',
+}
+
 const ROLE_LABELS: Record<UserRole, string> = {
-  admin:      'Admin',
-  frontdesk:  'Front Desk',
-  salesrep:   'Sales Rep',
-  technician: 'Technician',
+  admin: 'Admin', frontdesk: 'Front Desk', salesrep: 'Sales Rep', technician: 'Technician',
 }
 
 const ROLE_HEX: Record<UserRole, string> = {
-  admin:      '#60a5fa',
-  frontdesk:  '#a78bfa',
-  salesrep:   '#4ade80',
-  technician: '#fb923c',
+  admin: '#60a5fa', frontdesk: '#a78bfa', salesrep: '#4ade80', technician: '#fb923c',
 }
 
 function Avatar({ name, size = 8 }: { name: string; size?: number }) {
@@ -48,131 +63,191 @@ function Avatar({ name, size = 8 }: { name: string; size?: number }) {
   const color = colors[name.charCodeAt(0) % colors.length]
   return (
     <div
-      className="rounded-full flex items-center justify-center text-white font-bold flex-shrink-0"
-      style={{ width: size * 4, height: size * 4, fontSize: size * 1.6, backgroundColor: color }}
+      style={{
+        width: size * 4, height: size * 4, fontSize: size * 1.6,
+        borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: '#fff', fontWeight: 700, flexShrink: 0, backgroundColor: color,
+      }}
     >
       {initials}
     </div>
   )
 }
 
-// ─── Sidebar inner content (shared between desktop + mobile drawer) ──
+// ─── Sidebar inner content ────────────────────────────────────────
 function SidebarContent({
   visibleNav, profile, role, sidebarOpen, onClose, onSignOut,
 }: {
-  visibleNav: typeof NAV_ITEMS
+  visibleNav: NavItem[]
   profile: any
   role: UserRole | null
   sidebarOpen: boolean
   onClose: () => void
   onSignOut: () => void
 }) {
-  const liveItems = visibleNav.filter(i => !i.soon)
-  const soonItems = visibleNav.filter(i => i.soon)
+  const grouped: Record<string, NavItem[]> = {}
+  for (const item of visibleNav) {
+    if (!grouped[item.group]) grouped[item.group] = []
+    grouped[item.group].push(item)
+  }
 
   return (
-    <div className="flex flex-col h-full">
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0b1420' }}>
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 py-4 border-b border-border">
-        <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-          style={{ backgroundColor: '#3b82f6', boxShadow: '0 0 14px #3b82f650' }}
-        >
-          <span className="text-white font-black text-sm">Z</span>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12, padding: '16px 14px 14px',
+        borderBottom: '1px solid #162232',
+      }}>
+        <div style={{
+          width: 34, height: 34, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)', flexShrink: 0,
+          boxShadow: '0 0 20px rgba(59,130,246,0.35)',
+        }}>
+          <span style={{ color: '#fff', fontWeight: 900, fontSize: 15 }}>Z</span>
         </div>
         {sidebarOpen && (
-          <div className="overflow-hidden">
-            <div className="text-white font-bold text-sm leading-tight">Zenith Pure</div>
-            <div className="text-slate-500 text-xs">Solutions CRM</div>
+          <div>
+            <div style={{ color: '#f1f5f9', fontWeight: 800, fontSize: 14, lineHeight: 1.2 }}>Zenith Pure</div>
+            <div style={{ color: '#334155', fontSize: 10, marginTop: 2, fontWeight: 500 }}>Solutions CRM</div>
           </div>
         )}
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 py-3 overflow-y-auto">
-        {liveItems.map(item => (
-          <NavLink key={item.path} to={item.path} className="block" onClick={onClose}>
-            {({ isActive }) => (
-              <div
-                className="flex items-center gap-3 px-3 py-2.5 mx-2 mb-0.5 rounded-lg text-sm transition-all"
-                style={isActive
-                  ? { backgroundColor: `${item.hex}1a`, color: item.hex, fontWeight: 600 }
-                  : { color: '#94a3b8' }
-                }
-                onMouseEnter={e => {
-                  if (!isActive) {
-                    const el = e.currentTarget as HTMLDivElement
-                    el.style.backgroundColor = 'rgba(255,255,255,0.05)'
-                    el.style.color = '#e2e8f0'
-                  }
-                }}
-                onMouseLeave={e => {
-                  if (!isActive) {
-                    const el = e.currentTarget as HTMLDivElement
-                    el.style.backgroundColor = 'transparent'
-                    el.style.color = '#94a3b8'
-                  }
-                }}
-              >
-                <span
-                  className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: isActive ? item.hex : 'transparent' }}
-                />
-                <span className="text-base flex-shrink-0 leading-none">{item.icon}</span>
-                {sidebarOpen && <span className="truncate">{item.label}</span>}
+      {/* Nav groups */}
+      <nav style={{ flex: 1, overflowY: 'auto', padding: '6px 0 10px' }}>
+        {GROUP_ORDER.filter(g => grouped[g]?.length).map((groupKey, gi) => (
+          <div key={groupKey} style={{ marginBottom: 2 }}>
+            {/* Group divider label */}
+            {sidebarOpen ? (
+              <div style={{
+                padding: gi === 0 ? '6px 16px 5px' : '12px 16px 5px',
+                fontSize: 9, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase',
+                color: '#334155',
+              }}>
+                {GROUP_LABELS[groupKey] || groupKey}
               </div>
+            ) : (
+              gi > 0 && <div style={{ height: 1, background: '#162232', margin: '8px 8px' }} />
             )}
-          </NavLink>
-        ))}
 
-        {soonItems.length > 0 && (
-          <div className="flex items-center gap-2 px-4 py-2 mt-2">
-            <div className="flex-1 h-px bg-border" />
-            {sidebarOpen && (
-              <span className="text-slate-600 text-xs font-semibold uppercase tracking-wider whitespace-nowrap">
-                Coming Soon
-              </span>
-            )}
-            <div className="flex-1 h-px bg-border" />
-          </div>
-        )}
+            {/* Items */}
+            {grouped[groupKey].map(item => {
+              if (item.soon) {
+                return (
+                  <div key={item.path} style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: sidebarOpen ? '6px 10px' : '6px 0', margin: sidebarOpen ? '1px 6px' : '1px 4px',
+                    borderRadius: 8, opacity: 0.3, cursor: 'not-allowed',
+                    justifyContent: sidebarOpen ? 'flex-start' : 'center',
+                  }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: 7, flexShrink: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: '#0d1a26', fontSize: 13,
+                    }}>
+                      {item.icon}
+                    </div>
+                    {sidebarOpen && (
+                      <>
+                        <span style={{ fontSize: 12, color: '#334155', flex: 1 }}>{item.label}</span>
+                        <span style={{
+                          fontSize: 7, fontWeight: 800, letterSpacing: '0.08em',
+                          padding: '2px 5px', borderRadius: 8,
+                          background: '#0d1a26', color: '#334155',
+                        }}>SOON</span>
+                      </>
+                    )}
+                  </div>
+                )
+              }
 
-        {soonItems.map(item => (
-          <div
-            key={item.path}
-            className="flex items-center gap-3 px-3 py-2.5 mx-2 mb-0.5 rounded-lg text-sm select-none"
-            style={{ opacity: 0.38, cursor: 'not-allowed', color: '#94a3b8' }}
-          >
-            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" />
-            <span className="text-base flex-shrink-0 leading-none">{item.icon}</span>
-            {sidebarOpen && (
-              <>
-                <span className="truncate">{item.label}</span>
-                <span
-                  className="ml-auto font-bold px-1.5 py-0.5 rounded-full flex-shrink-0"
-                  style={{ fontSize: '9px', letterSpacing: '0.05em', backgroundColor: '#1e293b', color: '#64748b' }}
-                >
-                  SOON
-                </span>
-              </>
-            )}
+              return (
+                <NavLink key={item.path} to={item.path} style={{ textDecoration: 'none', display: 'block' }} onClick={onClose}>
+                  {({ isActive }) => (
+                    <div
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10, position: 'relative',
+                        padding: sidebarOpen ? '6px 10px' : '6px 0',
+                        margin: sidebarOpen ? '1px 6px' : '1px 4px',
+                        borderRadius: 8, cursor: 'pointer',
+                        justifyContent: sidebarOpen ? 'flex-start' : 'center',
+                        background: isActive ? `${item.hex}10` : 'transparent',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={e => {
+                        if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
+                      }}
+                      onMouseLeave={e => {
+                        if (!isActive) e.currentTarget.style.background = 'transparent'
+                      }}
+                    >
+                      {/* Active left bar */}
+                      {isActive && sidebarOpen && (
+                        <div style={{
+                          position: 'absolute', left: 0, top: 6, bottom: 6, width: 3,
+                          borderRadius: '0 3px 3px 0', background: item.hex,
+                          boxShadow: `0 0 8px ${item.hex}50`,
+                        }} />
+                      )}
+
+                      {/* Icon box */}
+                      <div style={{
+                        width: 28, height: 28, borderRadius: 7, flexShrink: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 13,
+                        background: isActive ? `${item.hex}20` : `${item.hex}08`,
+                        border: `1px solid ${isActive ? `${item.hex}30` : 'transparent'}`,
+                        boxShadow: isActive ? `0 0 12px ${item.hex}15` : 'none',
+                        transition: 'all 0.15s ease',
+                      }}>
+                        {item.icon}
+                      </div>
+
+                      {/* Label */}
+                      {sidebarOpen && (
+                        <span style={{
+                          fontSize: 12, fontWeight: isActive ? 700 : 500,
+                          color: isActive ? item.hex : '#64748b',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          transition: 'color 0.15s ease',
+                        }}>
+                          {item.label}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </NavLink>
+              )
+            })}
           </div>
         ))}
       </nav>
 
-      {/* User info */}
+      {/* User card */}
       {profile && (
-        <div className="p-3 border-t border-border">
-          <div className="flex items-center gap-2">
-            <Avatar name={profile.full_name} size={8} />
+        <div style={{ padding: '10px 10px 12px', borderTop: '1px solid #162232' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '8px 10px', borderRadius: 10,
+            background: '#0d1a26', border: '1px solid #162232',
+          }}>
+            <Avatar name={profile.full_name} size={7} />
             {sidebarOpen && (
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-slate-200 truncate">{profile.full_name}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontSize: 12, fontWeight: 600, color: '#cbd5e1',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  {profile.full_name}
+                </div>
                 {role && (
-                  <span
-                    className="text-xs px-1.5 py-0.5 rounded font-semibold mt-0.5 inline-block"
-                    style={{ backgroundColor: `${ROLE_HEX[role]}20`, color: ROLE_HEX[role] }}
-                  >
+                  <span style={{
+                    display: 'inline-block', marginTop: 2,
+                    fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 5,
+                    background: `${ROLE_HEX[role]}12`, color: ROLE_HEX[role],
+                    border: `1px solid ${ROLE_HEX[role]}20`,
+                    letterSpacing: '0.04em',
+                  }}>
                     {ROLE_LABELS[role]}
                   </span>
                 )}
@@ -182,10 +257,12 @@ function SidebarContent({
           {sidebarOpen && (
             <button
               onClick={onSignOut}
-              className="mt-3 w-full text-xs text-left"
-              style={{ color: '#64748b' }}
+              style={{
+                display: 'block', marginTop: 8, marginLeft: 10, fontSize: 10, color: '#1e3a4f',
+                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+              }}
               onMouseEnter={e => (e.currentTarget.style.color = '#f87171')}
-              onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
+              onMouseLeave={e => (e.currentTarget.style.color = '#1e3a4f')}
             >
               Sign out
             </button>
@@ -202,9 +279,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const { canAccess, allowedPages } = usePermissions()
   const navigate = useNavigate()
 
-  // Desktop: sidebar collapsed/expanded
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  // Mobile: drawer open/closed (always starts closed)
   const [mobileOpen, setMobileOpen] = useState(false)
 
   const visibleNav = NAV_ITEMS.filter(item => {
@@ -220,87 +295,100 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen bg-navy overflow-hidden">
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#0f1923' }}>
 
-      {/* ── Mobile overlay backdrop ──────────────────────── */}
+      {/* Mobile overlay */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/60 md:hidden"
+          style={{ position: 'fixed', inset: 0, zIndex: 40, background: 'rgba(0,0,0,0.6)' }}
+          className="md:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
 
-      {/* ── Mobile drawer ────────────────────────────────── */}
+      {/* Mobile drawer */}
       <div
-        className="fixed inset-y-0 left-0 z-50 w-64 bg-surface border-r border-border md:hidden transition-transform duration-250"
-        style={{ transform: mobileOpen ? 'translateX(0)' : 'translateX(-100%)' }}
+        className="md:hidden"
+        style={{
+          position: 'fixed', insetBlock: 0, left: 0, zIndex: 50, width: 230,
+          borderRight: '1px solid #162232',
+          transform: mobileOpen ? 'translateX(0)' : 'translateX(-100%)',
+          transition: 'transform 0.25s ease',
+        }}
       >
-        {/* Close button */}
         <button
           onClick={() => setMobileOpen(false)}
-          className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-white"
-          style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}
+          style={{
+            position: 'absolute', top: 12, right: 12, zIndex: 10,
+            width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            borderRadius: 7, background: 'rgba(255,255,255,0.05)', border: 'none',
+            color: '#475569', fontSize: 13, cursor: 'pointer',
+          }}
         >
           ✕
         </button>
         <SidebarContent
-          visibleNav={visibleNav}
-          profile={profile}
-          role={role}
-          sidebarOpen={true}
-          onClose={() => setMobileOpen(false)}
-          onSignOut={handleSignOut}
+          visibleNav={visibleNav} profile={profile} role={role}
+          sidebarOpen={true} onClose={() => setMobileOpen(false)} onSignOut={handleSignOut}
         />
       </div>
 
-      {/* ── Desktop sidebar ──────────────────────────────── */}
+      {/* Desktop sidebar */}
       <aside
-        className={`hidden md:flex flex-col bg-surface border-r border-border transition-all duration-200 flex-shrink-0 ${sidebarOpen ? 'w-56' : 'w-16'}`}
+        className="hidden md:flex"
+        style={{
+          flexDirection: 'column', flexShrink: 0,
+          width: sidebarOpen ? 210 : 56,
+          borderRight: '1px solid #162232',
+          transition: 'width 0.2s ease',
+        }}
       >
         <SidebarContent
-          visibleNav={visibleNav}
-          profile={profile}
-          role={role}
-          sidebarOpen={sidebarOpen}
-          onClose={() => {}}
-          onSignOut={handleSignOut}
+          visibleNav={visibleNav} profile={profile} role={role}
+          sidebarOpen={sidebarOpen} onClose={() => {}} onSignOut={handleSignOut}
         />
-        {/* Desktop collapse toggle */}
         <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="p-3 border-t border-border text-xs"
-          style={{ color: '#64748b' }}
-          onMouseEnter={e => (e.currentTarget.style.color = '#cbd5e1')}
-          onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
+          style={{
+            padding: 8, borderTop: '1px solid #162232', background: '#0b1420',
+            border: 'none', borderTopWidth: 1, borderTopStyle: 'solid', borderTopColor: '#162232',
+            color: '#1e3a4f', fontSize: 11, cursor: 'pointer', textAlign: 'center',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.color = '#64748b')}
+          onMouseLeave={e => (e.currentTarget.style.color = '#1e3a4f')}
         >
           {sidebarOpen ? '◀ Collapse' : '▶'}
         </button>
       </aside>
 
-      {/* ── Main content ─────────────────────────────────── */}
-      <main className="flex-1 overflow-hidden flex flex-col min-w-0">
+      {/* Main content */}
+      <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Top bar */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface flex-shrink-0">
-          <div className="flex items-center gap-3">
-            {/* Hamburger — mobile only */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '10px 20px', borderBottom: '1px solid #162232',
+          background: '#0b1420', flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <button
-              className="md:hidden flex flex-col gap-1.5 p-1"
+              className="md:hidden"
               onClick={() => setMobileOpen(true)}
               aria-label="Open menu"
+              style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 4, background: 'none', border: 'none', cursor: 'pointer' }}
             >
-              <span className="block w-5 h-0.5 rounded" style={{ backgroundColor: '#94a3b8' }} />
-              <span className="block w-5 h-0.5 rounded" style={{ backgroundColor: '#94a3b8' }} />
-              <span className="block w-5 h-0.5 rounded" style={{ backgroundColor: '#94a3b8' }} />
+              <span style={{ display: 'block', width: 18, height: 2, borderRadius: 1, background: '#475569' }} />
+              <span style={{ display: 'block', width: 18, height: 2, borderRadius: 1, background: '#475569' }} />
+              <span style={{ display: 'block', width: 18, height: 2, borderRadius: 1, background: '#475569' }} />
             </button>
-            <div className="text-sm text-slate-500">Zenith Pure Solutions — Indianapolis, IN</div>
+            <span style={{ fontSize: 12, color: '#1e3a4f', fontWeight: 500 }}>Zenith Pure Solutions — Indianapolis, IN</span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: '#4ade80' }} />
-            <span className="text-xs text-slate-500">Live</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80', boxShadow: '0 0 8px rgba(74,222,128,0.5)' }} />
+            <span style={{ fontSize: 10, color: '#334155', fontWeight: 600 }}>Live</span>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto flex flex-col min-h-0 p-4 md:p-6">
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', minHeight: 0, padding: '16px 20px' }}>
           {children}
         </div>
       </main>
