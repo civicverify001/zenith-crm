@@ -1,4 +1,4 @@
-vimport { useAuth } from './useAuth'
+import { useAuth } from './useAuth'
 
 type Resource = string
 type Action = string
