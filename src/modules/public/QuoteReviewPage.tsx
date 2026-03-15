@@ -96,6 +96,7 @@ interface Invoice {
   deposit_percent: number
   tax_amount: number
   signed_at: string | null
+  signed_name?: string | null
   terms_snapshot?: any
   line_items_snapshot?: any
 }
@@ -162,10 +163,7 @@ function generateAgreementHTML(agreement: Agreement, customer: Customer | undefi
     .sig-name { font-size: 22px; font-style: italic; font-family: Georgia, serif; color: #0a2540; border-bottom: 1px solid #334155; padding-bottom: 6px; margin-bottom: 8px; min-height: 36px; }
     .sig-meta { font-size: 11px; color: #64748b; }
     .footer { margin-top: 32px; text-align: center; font-size: 10px; color: #94a3b8; }
-    @media print {
-      body { padding: 20px; }
-      .no-print { display: none !important; }
-    }
+    @media print { body { padding: 20px; } .no-print { display: none !important; } }
   </style>
 </head>
 <body>
@@ -228,6 +226,122 @@ function generateAgreementHTML(agreement: Agreement, customer: Customer | undefi
     <p>Zenith Pure Solutions LLC · 6951 E 30th St, Suite B, Indianapolis, IN 46219</p>
     <p>(317) 690-4172 · info@zenithpuresolutions.com · zenithpuresolutions.com</p>
     <p style="margin-top:6px;">Agreement ${agreement.agreement_number} · Generated ${today()}</p>
+  </div>
+</body>
+</html>`
+}
+
+// ─── Generate printable invoice HTML ─────────────────────────────
+function generateInvoiceHTML(invoice: Invoice, customer: Customer | undefined, terms: TermBlock[]): string {
+  const items: LineItem[] = invoice.line_items_snapshot || []
+
+  const rowsHTML = items.map(item => `
+    <tr style="border-bottom:1px solid #f1f5f9;">
+      <td style="padding:12px 24px;font-size:13px;color:#1e293b;">${item.description}</td>
+      <td style="padding:12px 16px;font-size:13px;color:#64748b;text-align:center;">${item.quantity}</td>
+      <td style="padding:12px 16px;font-size:13px;color:#64748b;text-align:right;">${fmt(item.unit_price)}</td>
+      <td style="padding:12px 24px;font-size:13px;font-weight:600;color:#0f172a;text-align:right;">${fmt(item.total)}</td>
+    </tr>
+  `).join('')
+
+  const termsHTML = terms.map(t => `<p style="font-size:11px;color:#64748b;line-height:1.7;margin-bottom:8px;">${t.content}</p>`).join('')
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>${invoice.invoice_number} — Zenith Pure Solutions</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Georgia, serif; color: #1a1a2e; background: white; padding: 40px; max-width: 800px; margin: 0 auto; }
+    @media print { body { padding: 20px; } .no-print { display: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="no-print" style="margin-bottom:20px;text-align:center;">
+    <button onclick="window.print()" style="background:#0a2540;color:white;border:none;padding:10px 28px;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">
+      🖨️ Print / Save as PDF
+    </button>
+    <p style="margin-top:8px;font-size:11px;color:#64748b;">Use your browser's "Save as PDF" option when printing</p>
+  </div>
+
+  <div style="background:#0a2540;color:white;padding:32px;border-radius:8px 8px 0 0;">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;">
+      <div>
+        <div style="font-size:28px;font-weight:900;letter-spacing:1px;">INVOICE</div>
+        <div style="color:#93c5fd;font-size:13px;margin-top:4px;">${invoice.invoice_number}</div>
+        <div style="color:#93c5fd;font-size:12px;margin-top:2px;">Zenith Pure Solutions LLC</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:36px;font-weight:900;">${fmt(invoice.total)}</div>
+        <div style="color:#93c5fd;font-size:11px;margin-top:2px;">Total Amount Due</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;padding:20px 24px;border:1px solid #e2e8f0;border-top:none;">
+    <div>
+      <div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Bill To</div>
+      <div style="font-weight:bold;font-size:14px;">${customer?.full_name || ''}</div>
+      <div style="font-size:12px;color:#64748b;margin-top:2px;">${customer?.address || ''}</div>
+      <div style="font-size:12px;color:#64748b;">${customer?.city || ''}, ${customer?.state || ''} ${customer?.zip || ''}</div>
+      <div style="font-size:12px;color:#64748b;">${customer?.phone || ''}</div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">From</div>
+      <div style="font-weight:bold;font-size:14px;">Zenith Pure Solutions LLC</div>
+      <div style="font-size:12px;color:#64748b;">6951 E 30th St, Suite B</div>
+      <div style="font-size:12px;color:#64748b;">Indianapolis, IN 46219</div>
+      <div style="font-size:12px;color:#64748b;margin-top:8px;">Invoice Date: ${today()}</div>
+    </div>
+  </div>
+
+  <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-top:none;">
+    <thead>
+      <tr style="background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+        <th style="padding:10px 24px;text-align:left;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Description</th>
+        <th style="padding:10px 16px;text-align:center;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Qty</th>
+        <th style="padding:10px 16px;text-align:right;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Unit Price</th>
+        <th style="padding:10px 24px;text-align:right;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Amount</th>
+      </tr>
+    </thead>
+    <tbody>${rowsHTML}</tbody>
+  </table>
+
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;padding:16px 24px;">
+    <div style="max-width:240px;margin-left:auto;">
+      <div style="display:flex;justify-content:space-between;font-size:13px;color:#64748b;margin-bottom:6px;"><span>Subtotal</span><span>${fmt(invoice.total - (invoice.tax_amount || 0))}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;color:#64748b;margin-bottom:8px;"><span>Tax</span><span>${fmt(invoice.tax_amount || 0)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:bold;color:#0f172a;border-top:1px solid #cbd5e1;padding-top:8px;"><span>Total</span><span>${fmt(invoice.total)}</span></div>
+    </div>
+  </div>
+
+  <div style="border:1px solid #e2e8f0;border-top:none;padding:20px 24px;">
+    <div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Terms &amp; Conditions</div>
+    ${termsHTML}
+  </div>
+
+  <div style="border:2px solid #e2e8f0;border-radius:8px;padding:28px 24px;margin-top:20px;">
+    <div style="font-weight:bold;font-size:13px;margin-bottom:4px;">Customer Authorization</div>
+    <p style="font-size:11px;color:#64748b;margin-bottom:20px;">By signing, I authorize Zenith Pure Solutions to proceed and agree to the payment terms above.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;">
+        <div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">ZENITH PURE SOLUTIONS LLC</div>
+        <div style="font-size:22px;font-style:italic;font-family:Georgia,serif;color:#0a2540;border-bottom:1px solid #334155;padding-bottom:6px;margin-bottom:8px;">Kuldeep Singh</div>
+        <div style="font-size:11px;color:#64748b;">Authorized Representative · ${today()}</div>
+      </div>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;">
+        <div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">CUSTOMER</div>
+        <div style="font-size:22px;font-style:italic;font-family:Georgia,serif;color:#0a2540;border-bottom:1px solid #334155;padding-bottom:6px;margin-bottom:8px;">${invoice.signed_name || customer?.full_name || ''}</div>
+        <div style="font-size:11px;color:#64748b;">${customer?.full_name || ''} · Signed ${invoice.signed_at ? new Date(invoice.signed_at).toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' }) : today()}</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:28px;text-align:center;font-size:10px;color:#94a3b8;">
+    <p>Zenith Pure Solutions LLC · 6951 E 30th St, Suite B, Indianapolis, IN 46219</p>
+    <p>(317) 690-4172 · info@zenithpuresolutions.com · zenithpuresolutions.com</p>
+    <p style="margin-top:4px;">Invoice ${invoice.invoice_number} · Generated ${today()}</p>
   </div>
 </body>
 </html>`
@@ -775,6 +889,79 @@ export function QuoteReviewPage() {
     setDownloading(false)
   }
 
+  async function handleDownloadInvoice() {
+    setDownloading(true)
+    setError('')
+    try {
+      let inv = invoice
+      if (!inv && quote) {
+        const { data } = await supabase.from('invoices').select('*').eq('quote_id', quote.id).maybeSingle()
+        if (data) { inv = data; setInvoice(data) }
+      }
+      if (!inv) {
+        setError('Invoice not found. Please contact (317) 690-4172.')
+        setDownloading(false)
+        return
+      }
+
+      const terms: TermBlock[] = inv.terms_snapshot?.blocks || purchaseTerms
+      const html = generateInvoiceHTML(inv, quote?.customer, terms)
+
+      const iframe = document.createElement('iframe')
+      iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;height:3000px;border:none;visibility:hidden;'
+      document.body.appendChild(iframe)
+
+      await new Promise<void>((resolve) => {
+        iframe.onload = () => resolve()
+        iframe.srcdoc = html
+        setTimeout(resolve, 3000)
+      })
+
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
+      if (!iframeDoc) throw new Error('Could not access iframe document')
+
+      const noPrint = iframeDoc.querySelector('.no-print') as HTMLElement | null
+      if (noPrint) noPrint.style.display = 'none'
+
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf'),
+      ])
+
+      const canvas = await html2canvas(iframeDoc.body, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        windowWidth: 900,
+      })
+
+      document.body.removeChild(iframe)
+
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+      const pageW = pdf.internal.pageSize.getWidth()
+      const pageH = pdf.internal.pageSize.getHeight()
+      const imgW  = pageW
+      const imgH  = (canvas.height * imgW) / canvas.width
+
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, imgW, imgH)
+
+      let heightLeft = imgH - pageH
+      let offset = -pageH
+      while (heightLeft > 0) {
+        pdf.addPage()
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, offset, imgW, imgH)
+        offset    -= pageH
+        heightLeft -= pageH
+      }
+
+      pdf.save(`${inv.invoice_number}.pdf`)
+
+    } catch (e: any) {
+      setError(e.message || 'Could not generate PDF. Please try again.')
+    }
+    setDownloading(false)
+  }
+
   useEffect(() => {
     if (searchParams.get('paid') === '1') {
       if (token) {
@@ -796,6 +983,14 @@ export function QuoteReviewPage() {
                 const { data: allTerms } = await supabase.from('term_blocks')
                   .select('slug, display_title, content, version').like('slug', 'ra-%').eq('is_active', true).order('sort_order')
                 if (allTerms) setRentalTerms(allTerms)
+              } else {
+                const { data: inv } = await supabase.from('invoices').select('*').eq('quote_id', data.id).maybeSingle()
+                if (inv) setInvoice(inv)
+                const { data: allTerms } = await supabase.from('term_blocks')
+                  .select('slug, display_title, content, version')
+                  .in('document_type', ['purchase_invoice'])
+                  .eq('is_active', true).order('sort_order')
+                if (allTerms) setPurchaseTerms(allTerms)
               }
             }
             setStep('complete')
@@ -946,10 +1141,6 @@ export function QuoteReviewPage() {
     setSigning(false)
   }
 
-  // ── FIXED: handleSignAgreement ────────────────────────────────
-  // CHANGED: Now sets contract_number, start_date, end_date when activating
-  // the contract. Previously these were null causing the Billing Plan section
-  // to not display correctly on the customer profile.
   async function handleSignAgreement(signedName: string) {
     if (!agreement) return
     setSigning(true); setError('')
@@ -957,7 +1148,6 @@ export function QuoteReviewPage() {
       const ip = await getIp()
       const now = new Date().toISOString()
 
-      // Generate sequential contract number
       const year = new Date().getFullYear()
       const { data: lastContract } = await supabase
         .from('contracts')
@@ -969,21 +1159,18 @@ export function QuoteReviewPage() {
         ? parseInt(lastContract[0].contract_number.split('-')[2]) : 0
       const contractNumber = `RA-${year}-${String(lastNum + 1).padStart(4, '0')}`
 
-      // Contract dates: start = today, end = 36 months from today
       const startDate = now.split('T')[0]
       const endDateObj = new Date()
       endDateObj.setMonth(endDateObj.getMonth() + 36)
       const endDate = endDateObj.toISOString().split('T')[0]
 
-      // Sign the agreement
       const { error: e } = await supabase.from('agreements').update({
         status: 'signed', signed_at: now, signed_name: signedName, signed_ip: ip,
       }).eq('id', agreement.id)
       if (e) throw e
 
-      // INSERT the contract — created fresh at signing time
       const { error: contractErr } = await supabase.from('contracts').insert({
-        customer_id: quote.customer_id,
+        customer_id: quote!.customer_id,
         quote_id: agreement.quote_id,
         type: 'rental',
         status: 'active',
@@ -1011,6 +1198,7 @@ export function QuoteReviewPage() {
         status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName, signed_ip: ip,
       }).eq('id', invoice.id)
       if (e) throw e
+      setInvoice(prev => prev ? { ...prev, status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName } : prev)
       setStep('payment_choice'); scrollTop()
     } catch (e: any) { setError(e.message) }
     setSigning(false)
@@ -1210,6 +1398,7 @@ export function QuoteReviewPage() {
             ? "Your payment method has been saved. Autopay will begin after your installation is completed. We'll be in touch to schedule."
             : 'Documents signed and payment received. Zenith will be in touch soon.'}
         </p>
+
         {flowType === 'rental' && (
           <div className="mb-5">
             <button
@@ -1226,6 +1415,24 @@ export function QuoteReviewPage() {
             <p className="text-xs text-gray-400 mt-2">Downloads as a PDF file directly to your device</p>
           </div>
         )}
+
+        {flowType === 'purchase' && (
+          <div className="mb-5">
+            <button
+              onClick={handleDownloadInvoice}
+              disabled={downloading}
+              className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #bbf7d0', color: '#15803d' }}
+            >
+              {downloading
+                ? <><div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#15803d', borderTopColor: 'transparent' }} />Generating PDF...</>
+                : <>📄 Download Your Signed Invoice</>
+              }
+            </button>
+            <p className="text-xs text-gray-400 mt-2">Downloads as a PDF file directly to your device</p>
+          </div>
+        )}
+
         {error && <p className="text-red-500 text-xs mb-4">{error}</p>}
         <p className="text-xs text-gray-400">(317) 690-4172</p>
       </div>
@@ -1360,7 +1567,8 @@ export function QuoteReviewPage() {
                 </div>
               </div>
             )}
-{lineItems.some((i: any) => i.item_type === 'service_plan') && (
+
+            {lineItems.some((i: any) => i.item_type === 'service_plan') && (
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="px-6 py-3 bg-amber-50 border-b border-amber-100 text-xs font-bold text-amber-700 uppercase tracking-wide">
                   Included Service Plans
@@ -1386,6 +1594,7 @@ export function QuoteReviewPage() {
                 </table>
               </div>
             )}
+
             {flowType === 'rental' && (
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                 <div className="text-xs font-bold text-blue-700 mb-1">Rental Agreement Notice</div>
