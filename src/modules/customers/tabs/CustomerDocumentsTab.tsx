@@ -11,35 +11,23 @@ function formatDate(d: string | null) {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
-
 function formatDateTime(d: string | null) {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  })
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
-
-function fmt(n: number) {
-  return `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
-}
-
-function today() {
-  return new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-}
+function fmt(n: number) { return `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2 })}` }
+function today() { return new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) }
 
 const REVIEW_STYLES: Record<string, { color: string; label: string }> = {
   pending:  { color: '#fbbf24', label: 'Pending Review' },
   accepted: { color: '#4ade80', label: 'Accepted' },
   rejected: { color: '#f87171', label: 'Rejected' },
 }
-
 const QUOTE_TYPE_LABELS: Record<string, string> = {
-  rental:    'Rental Agreement',
-  purchase:  'Purchase Agreement',
-  financing: 'Financing Agreement',
+  rental: 'Rental Agreement', purchase: 'Purchase Agreement', financing: 'Financing Agreement',
 }
 
-// ─── Shared PDF styles ────────────────────────────────────────────
+// ─── Shared PDF styles ───────────────────────────────────────────
 const PDF_BASE_STYLES = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: Georgia, serif; color: #1a1a2e; background: white; padding: 40px; max-width: 800px; margin: 0 auto; }
@@ -59,10 +47,6 @@ const PDF_BASE_STYLES = `
   .info-item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 16px; }
   .info-label { font-size: 10px; font-weight: bold; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
   .info-value { font-size: 14px; font-weight: 600; color: #1e293b; }
-  .tds-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 20px; text-align: center; margin: 16px 0; }
-  .tds-label { font-size: 11px; font-weight: bold; color: #3b82f6; text-transform: uppercase; letter-spacing: 1px; }
-  .tds-value { font-size: 36px; font-weight: bold; color: #1e3a8a; margin-top: 4px; }
-  .tds-unit { font-size: 14px; color: #64748b; margin-top: 2px; }
   .sig-section { border: 2px solid #e2e8f0; border-radius: 8px; padding: 24px; margin-top: 24px; }
   .sig-label { font-size: 10px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
   .sig-img { max-height: 80px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; }
@@ -71,7 +55,6 @@ const PDF_BASE_STYLES = `
   .no-print { margin-bottom: 20px; text-align: center; }
   @media print { .no-print { display: none !important; } body { padding: 20px; } }
 `
-
 const PDF_PRINT_BTN = `
   <div class="no-print">
     <button onclick="window.print()" style="background:#0a2540;color:white;border:none;padding:10px 28px;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">
@@ -80,7 +63,6 @@ const PDF_PRINT_BTN = `
     <p style="margin-top:8px;font-size:11px;color:#64748b;">Use your browser's "Save as PDF" option when printing</p>
   </div>
 `
-
 const PDF_HEADER = `
   <div class="header">
     <h1>ZENITH PURE SOLUTIONS LLC</h1>
@@ -88,7 +70,6 @@ const PDF_HEADER = `
     <p>(317) 690-4172 · zenithpuresolutions.com</p>
   </div>
 `
-
 const PDF_FOOTER = `
   <div class="footer">
     <p>Zenith Pure Solutions LLC · 6951 E 30th St, Suite B, Indianapolis, IN 46219</p>
@@ -96,151 +77,173 @@ const PDF_FOOTER = `
   </div>
 `
 
-// ─── RO Drilling Consent PDF ──────────────────────────────────────
-function generateDrillingConsentHTML(form: any, signatureUrl: string | null): string {
-  const rd = form.response_data || {}
-  const customerName = rd.customer_name || rd.signed_name || '—'
-  const consentDate  = rd.consent_date ? new Date(rd.consent_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : today()
-  const jobRef       = rd.job_reference || rd.job_id || '—'
+// ─── Quote PDF generator ──────────────────────────────────────────
+function generateQuoteHTML(quote: any, customer: any, lineItems: any[]): string {
+  const isRental = quote.commercial_type === 'rental'
+  const productItems = lineItems.filter((li: any) => li.item_type !== 'service_plan')
+  const planItems    = lineItems.filter((li: any) => li.item_type === 'service_plan')
 
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <title>RO Drilling Consent — ${customerName}</title>
-  <style>${PDF_BASE_STYLES}</style>
-</head>
-<body>
-  ${PDF_PRINT_BTN}
-  ${PDF_HEADER}
-  <div class="subheader">
-    <div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">Customer Acknowledgement</div>
-    <h2>Reverse Osmosis Drilling Consent Form</h2>
-    <div class="sub">Completed ${consentDate}</div>
-  </div>
-  <div class="body-section">
-    <div class="info-grid">
-      <div class="info-item">
-        <div class="info-label">Customer Name</div>
-        <div class="info-value">${customerName}</div>
-      </div>
-      <div class="info-item">
-        <div class="info-label">Date Signed</div>
-        <div class="info-value">${consentDate}</div>
-      </div>
-      ${jobRef !== '—' ? `<div class="info-item">
-        <div class="info-label">Job Reference</div>
-        <div class="info-value">${jobRef}</div>
-      </div>` : ''}
-    </div>
+  const rowsHTML = productItems.map((li: any) => `
+    <tr>
+      <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155;">
+        <strong>${li.description}</strong>
+      </td>
+      <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;text-align:center;font-size:13px;color:#64748b;">${li.quantity}</td>
+      <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;color:#64748b;">${fmt(parseFloat(li.unit_price) || 0)}${isRental ? '/mo' : ''}</td>
+      <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;font-weight:600;color:#0f172a;">${fmt(parseFloat(li.total) || 0)}${isRental ? '/mo' : ''}</td>
+    </tr>`).join('')
 
-    <p>I authorize <strong>Zenith Pure Solutions</strong> to drill a hole for installation of the RO faucet when an existing opening is not available.</p>
-    <p>I understand and acknowledge that:</p>
-    <ul>
-      <li>Final pricing may vary if unforeseen material conditions or installation complexities are identified on site.</li>
-      <li>Natural and manufactured sink or countertop materials may contain hidden variations or stress points.</li>
-      <li>Minor cosmetic variations may occur despite proper installation methods.</li>
-      <li>Zenith Pure Solutions is not responsible for pre-existing conditions and does not include repair or replacement of sinks, countertops, or cabinetry.</li>
-    </ul>
-    <div class="confirm-box">✓ I confirm that I am the property owner or have authorization to approve this work.</div>
-    <div class="confirm-box">✓ I have read and understand the above terms. I acknowledge and agree to the conditions stated in this Reverse Osmosis Drilling Consent Form.</div>
-  </div>
+  const plansHTML = planItems.length > 0 ? `
+    <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:16px;margin-top:16px;">
+      <div style="font-size:11px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Included Service Plans</div>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${planItems.map((p: any) => `
+          <tr>
+            <td style="font-size:13px;color:#78350f;padding:4px 0;">${p.description}</td>
+            <td style="font-size:13px;color:#92400e;font-weight:600;text-align:right;padding:4px 0;">${fmt(parseFloat(p.unit_price) || 0)}</td>
+          </tr>`).join('')}
+      </table>
+    </div>` : ''
 
-  <div class="sig-section">
-    <div class="sig-label">Customer Signature</div>
-    ${signatureUrl ? `<img src="${signatureUrl}" class="sig-img" alt="Customer signature" />` : '<div style="height:60px;border-bottom:1px solid #334155;"></div>'}
-    <div class="sig-meta">${customerName} · Signed ${consentDate}</div>
-  </div>
+  const totalsHTML = isRental ? `
+    <table width="240" cellpadding="0" cellspacing="0" style="margin-left:auto;">
+      <tr><td style="font-size:13px;color:#64748b;padding:4px 0;">Installation Fee (one-time)</td><td style="text-align:right;font-size:13px;font-weight:600;color:#0f172a;padding:4px 0;">${fmt(parseFloat(quote.install_fee) || 0)}</td></tr>
+      <tr style="border-top:2px solid #e2e8f0;"><td style="font-size:15px;font-weight:700;color:#0f172a;padding-top:8px;">Monthly Total</td><td style="text-align:right;font-size:16px;font-weight:800;color:#1e3a8a;padding-top:8px;">${fmt(parseFloat(quote.monthly_amount) || 0)}/mo</td></tr>
+    </table>` : `
+    <table width="240" cellpadding="0" cellspacing="0" style="margin-left:auto;">
+      <tr><td style="font-size:13px;color:#64748b;padding:4px 0;">Subtotal</td><td style="text-align:right;font-size:13px;font-weight:600;color:#0f172a;padding:4px 0;">${fmt(parseFloat(quote.subtotal) || 0)}</td></tr>
+      <tr><td style="font-size:13px;color:#64748b;padding:4px 0 10px;">Tax (7% Indiana)</td><td style="text-align:right;font-size:13px;font-weight:600;color:#0f172a;padding:4px 0 10px;">${fmt(parseFloat(quote.tax_amount) || 0)}</td></tr>
+      <tr style="border-top:2px solid #e2e8f0;"><td style="font-size:15px;font-weight:700;color:#0f172a;padding-top:8px;">Total</td><td style="text-align:right;font-size:17px;font-weight:800;color:#0f172a;padding-top:8px;">${fmt(parseFloat(quote.total) || 0)}</td></tr>
+    </table>`
 
-  ${PDF_FOOTER}
-</body>
-</html>`
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+<title>${quote.quote_number} — Zenith Pure Solutions</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Georgia, serif; color: #1a1a2e; background: white; padding: 40px; max-width: 800px; margin: 0 auto; }
+  @media print { .no-print { display: none !important; } body { padding: 20px; } }
+</style>
+</head><body>
+${PDF_PRINT_BTN}
+
+<!-- Header -->
+<div style="background:#0a2540;color:white;padding:28px 32px;border-radius:8px 8px 0 0;">
+  <table width="100%" cellpadding="0" cellspacing="0">
+    <tr>
+      <td><div style="font-size:11px;color:#93c5fd;font-weight:700;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">Zenith Pure Solutions LLC</div>
+          <div style="font-size:22px;font-weight:900;letter-spacing:1px;">QUOTATION # ${quote.quote_number}</div></td>
+      <td style="text-align:right;vertical-align:top;">
+        <div style="font-size:11px;color:#93c5fd;">6951 E 30th, Suite B</div>
+        <div style="font-size:11px;color:#93c5fd;">Indianapolis IN 46219</div>
+        <div style="font-size:11px;color:#93c5fd;">United States</div>
+      </td>
+    </tr>
+  </table>
+</div>
+
+<!-- Bill To / Install -->
+<div style="border:1px solid #e2e8f0;border-top:none;padding:20px 28px;">
+  <table width="100%" cellpadding="0" cellspacing="0">
+    <tr>
+      <td width="50%" style="vertical-align:top;">
+        <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Bill To:</div>
+        <div style="font-size:13px;font-weight:600;color:#1e293b;">${customer?.full_name || ''}</div>
+        <div style="font-size:12px;color:#64748b;">${customer?.address || ''}</div>
+        <div style="font-size:12px;color:#64748b;">${[customer?.city, customer?.state, customer?.zip].filter(Boolean).join(', ')}</div>
+        <div style="font-size:12px;color:#64748b;">United States</div>
+      </td>
+      <td width="50%" style="vertical-align:top;">
+        <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Installation Address</div>
+        <div style="font-size:13px;font-weight:600;color:#1e293b;">${customer?.full_name || ''}</div>
+        <div style="font-size:12px;color:#64748b;">${customer?.address || ''}</div>
+        <div style="font-size:12px;color:#64748b;">${[customer?.city, customer?.state, customer?.zip].filter(Boolean).join(', ')}</div>
+        <div style="font-size:12px;color:#64748b;">${customer?.phone || ''}</div>
+      </td>
+    </tr>
+  </table>
+</div>
+
+<!-- Meta row -->
+<div style="border:1px solid #e2e8f0;border-top:none;padding:14px 28px;background:#f8fafc;">
+  <table width="100%" cellpadding="0" cellspacing="0">
+    <tr>
+      <td><div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">Quotation Date</div><div style="font-size:13px;color:#1e293b;margin-top:2px;">${quote.created_at ? new Date(quote.created_at).toLocaleDateString() : today()}</div></td>
+      <td><div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">Expiration</div><div style="font-size:13px;color:#dc2626;font-weight:600;margin-top:2px;">${quote.valid_until ? new Date(quote.valid_until).toLocaleDateString() : '—'}</div></td>
+      <td><div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">Sales Consultant</div><div style="font-size:13px;color:#1e293b;margin-top:2px;">Kuldeep</div></td>
+      <td><div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">Type</div><div style="font-size:13px;color:#1e293b;margin-top:2px;">${isRental ? 'Rental' : 'Purchase'}</div></td>
+    </tr>
+  </table>
+</div>
+
+<!-- Line items -->
+<div style="border:1px solid #e2e8f0;border-top:none;padding:16px 28px;">
+  <div style="font-size:12px;font-weight:700;color:#475569;margin-bottom:12px;">ESTIMATION DETAILS</div>
+  <p style="font-size:12px;color:#64748b;margin-bottom:16px;line-height:1.6;">This system has been recommended based on your home size, water usage, and water quality needs.</p>
+  <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:16px;">
+    <thead>
+      <tr style="background:#f8fafc;">
+        <th style="padding:10px 16px;text-align:left;font-size:11px;color:#94a3b8;font-weight:700;border-bottom:2px solid #e2e8f0;text-transform:uppercase;">Name and Description</th>
+        <th style="padding:10px 16px;text-align:center;font-size:11px;color:#94a3b8;font-weight:700;border-bottom:2px solid #e2e8f0;text-transform:uppercase;">Qty</th>
+        <th style="padding:10px 16px;text-align:right;font-size:11px;color:#94a3b8;font-weight:700;border-bottom:2px solid #e2e8f0;text-transform:uppercase;">Unit Price</th>
+        <th style="padding:10px 16px;text-align:right;font-size:11px;color:#94a3b8;font-weight:700;border-bottom:2px solid #e2e8f0;text-transform:uppercase;">Total</th>
+      </tr>
+    </thead>
+    <tbody>${rowsHTML}</tbody>
+  </table>
+  <div style="background:#f8fafc;border-radius:8px;padding:16px 20px;margin-top:8px;">${totalsHTML}</div>
+  ${plansHTML}
+</div>
+
+<!-- Customer Authorization -->
+<div style="border:1px solid #e2e8f0;border-top:none;padding:20px 28px;">
+  <div style="font-size:12px;font-weight:700;color:#475569;margin-bottom:10px;">CUSTOMER AUTHORIZATION</div>
+  <p style="font-size:11px;color:#64748b;line-height:1.7;margin-bottom:8px;">This is an estimate, not a final invoice or contract for services.</p>
+  <p style="font-size:11px;color:#64748b;line-height:1.7;margin-bottom:8px;">The summary above is a good-faith estimate based on our evaluation of the work to be performed at the installation address.</p>
+  <p style="font-size:11px;color:#64748b;line-height:1.7;margin-bottom:8px;">By approving this estimate, I authorize Zenith Pure Solutions to proceed as outlined and agree to pay the full amount for all services rendered.</p>
+  ${quote.commercial_type === 'purchase' ? `
+  <div style="margin-top:20px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+    <div style="background:#f8fafc;padding:10px 16px;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid #e2e8f0;">Direct Transfer / ACH Details</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;">
+      <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:9px 16px;font-weight:600;color:#374151;width:180px;">Bank Name</td><td style="padding:9px 16px;color:#64748b;">Old National Bank</td></tr>
+      <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:9px 16px;font-weight:600;color:#374151;">ACH ABA Number</td><td style="padding:9px 16px;color:#64748b;">086300012</td></tr>
+      <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:9px 16px;font-weight:600;color:#374151;">Account Number</td><td style="padding:9px 16px;color:#64748b;">0127726846</td></tr>
+      <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:9px 16px;font-weight:600;color:#374151;">Account Name</td><td style="padding:9px 16px;color:#64748b;">ZENITH PURE SOLUTIONS LLC</td></tr>
+      <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:9px 16px;font-weight:600;color:#374151;">Email</td><td style="padding:9px 16px;color:#64748b;">accounts@zenithpuresolutions.com</td></tr>
+      <tr><td style="padding:9px 16px;font-weight:600;color:#374151;">Phone Number</td><td style="padding:9px 16px;color:#64748b;">+1 (317) 690-4172</td></tr>
+    </table>
+  </div>` : ''}
+</div>
+
+<!-- Signature block -->
+<div style="border:2px solid #e2e8f0;border-radius:8px;padding:28px;margin-top:20px;">
+  <table width="100%" cellpadding="0" cellspacing="0">
+    <tr>
+      <td width="48%" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;">
+        <div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Zenith Pure Solutions LLC</div>
+        <div style="font-size:20px;font-style:italic;font-family:Georgia,serif;color:#0a2540;border-bottom:1px solid #334155;padding-bottom:6px;margin-bottom:8px;">Kuldeep Singh</div>
+        <div style="font-size:11px;color:#64748b;">Authorized Representative · ${today()}</div>
+      </td>
+      <td width="4%"></td>
+      <td width="48%" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;">
+        <div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Customer</div>
+        <div style="font-size:20px;font-style:italic;font-family:Georgia,serif;color:#0a2540;border-bottom:1px solid #334155;padding-bottom:6px;margin-bottom:8px;">${quote.signed_name || customer?.full_name || ''}</div>
+        <div style="font-size:11px;color:#64748b;">${customer?.full_name || ''} · Signed ${quote.signed_at ? new Date(quote.signed_at).toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' }) : today()}</div>
+      </td>
+    </tr>
+  </table>
+  <div style="text-align:right;font-size:10px;color:#94a3b8;margin-top:16px;">Quote Version: ${new Date().toLocaleString()}</div>
+</div>
+
+<!-- Footer -->
+<div style="margin-top:24px;text-align:center;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:16px;">
+  <p>Zenith Pure Solutions LLC · 6951 E 30th St, Suite B, Indianapolis, IN 46219</p>
+  <p style="margin-top:3px;">(317) 690-4172 · info@zenithpuresolutions.com · zenithpuresolutions.com</p>
+  <p style="margin-top:3px;font-style:italic;">Engineered for purity. Installed with care. Backed by Zenith Pure Solutions.</p>
+</div>
+</body></html>`
 }
 
-// ─── RO Handover PDF ──────────────────────────────────────────────
-function generateHandoverHTML(form: any, signatureUrl: string | null, customer: any): string {
-  const rd          = form.response_data || {}
-  const tdsReading  = rd.tds_reading || '—'
-  const submittedAt = rd.submitted_at
-    ? new Date(rd.submitted_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-    : today()
-  const customerName = rd.customer_name || rd.signed_name || customer?.full_name || '—'
-  const jobRef       = rd.job_reference || rd.job_id || '—'
-
-  const tdsColor = Number(tdsReading) < 50 ? '#166534' : Number(tdsReading) < 150 ? '#1e3a8a' : '#7c2d12'
-  const tdsNote  = Number(tdsReading) < 50
-    ? 'Excellent — pure water output'
-    : Number(tdsReading) < 150
-    ? 'Good — within healthy range'
-    : 'Elevated — system may need service'
-
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <title>RO System Handover — ${customerName}</title>
-  <style>${PDF_BASE_STYLES}</style>
-</head>
-<body>
-  ${PDF_PRINT_BTN}
-  ${PDF_HEADER}
-  <div class="subheader">
-    <div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">Installation Record</div>
-    <h2>Reverse Osmosis System Handover</h2>
-    <div class="sub">Completed ${submittedAt}</div>
-  </div>
-  <div class="body-section">
-    <div class="info-grid">
-      <div class="info-item">
-        <div class="info-label">Customer</div>
-        <div class="info-value">${customerName}</div>
-      </div>
-      <div class="info-item">
-        <div class="info-label">Handover Date</div>
-        <div class="info-value">${submittedAt}</div>
-      </div>
-      ${customer?.address ? `<div class="info-item">
-        <div class="info-label">Service Address</div>
-        <div class="info-value">${customer.address}${customer.city ? ', ' + customer.city : ''}</div>
-      </div>` : ''}
-      ${jobRef !== '—' ? `<div class="info-item">
-        <div class="info-label">Job Reference</div>
-        <div class="info-value">${jobRef}</div>
-      </div>` : ''}
-    </div>
-
-    <div class="tds-box">
-      <div class="tds-label">Post-Install TDS Reading</div>
-      <div class="tds-value" style="color:${tdsColor};">${tdsReading}</div>
-      <div class="tds-unit">ppm (parts per million)</div>
-      <div style="font-size:12px;color:#64748b;margin-top:6px;">${tdsNote}</div>
-    </div>
-
-    <p style="margin-top:16px;"><strong>System Handover Checklist — Completed at Installation:</strong></p>
-    <ul>
-      <li>RO system installed and tested — all connections checked for leaks</li>
-      <li>TDS meter reading taken and recorded (${tdsReading} ppm post-filter)</li>
-      <li>Customer shown faucet operation, tank fill time, and daily output expectations</li>
-      <li>Filter replacement schedule explained (annual — Zenith will contact you)</li>
-      <li>Emergency shutoff valve location demonstrated</li>
-      <li>Customer questions answered before technician departure</li>
-    </ul>
-
-    <div class="confirm-box" style="margin-top:20px;">✓ Customer confirms the system was demonstrated and is operating correctly at time of handover.</div>
-  </div>
-
-  <div class="sig-section">
-    <div class="sig-label">Customer Signature</div>
-    ${signatureUrl ? `<img src="${signatureUrl}" class="sig-img" alt="Customer signature" />` : '<div style="height:60px;border-bottom:1px solid #334155;"></div>'}
-    <div class="sig-meta">${customerName} · Signed ${submittedAt}</div>
-  </div>
-
-  ${PDF_FOOTER}
-</body>
-</html>`
-}
-
-// ─── Agreement HTML generator ─────────────────────────────────────
+// ─── Agreement PDF generator ──────────────────────────────────────
 function generateAgreementHTML(agreement: any, customer: any, terms: any[]): string {
   const termBlocksHTML = terms.map((block: any) => `
     <div class="section">
@@ -253,70 +256,50 @@ function generateAgreementHTML(agreement: any, customer: any, terms: any[]): str
     </div>
   `).join('')
 
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <title>${agreement.agreement_number} — Zenith Pure Solutions</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Georgia, serif; color: #1a1a2e; background: white; padding: 40px; max-width: 800px; margin: 0 auto; }
-    .header { background: #0a2540; color: white; padding: 32px; text-align: center; border-radius: 8px 8px 0 0; }
-    .header h1 { font-size: 20px; font-weight: bold; letter-spacing: 1px; }
-    .header p { font-size: 12px; color: #93c5fd; margin-top: 4px; }
-    .subheader { background: #f8fafc; border: 1px solid #e2e8f0; border-top: none; padding: 20px; text-align: center; }
-    .subheader h2 { font-size: 22px; font-weight: bold; }
-    .subheader .agnum { color: #0a2540; font-size: 14px; font-weight: 600; margin-top: 6px; }
-    .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; padding: 20px; border: 1px solid #e2e8f0; border-top: none; }
-    .party-label { font-size: 10px; font-weight: bold; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-    .party-name { font-weight: bold; font-size: 14px; }
-    .party-address { font-size: 12px; color: #64748b; margin-top: 2px; }
-    .financials { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; background: #eff6ff; border: 1px solid #bfdbfe; border-top: none; padding: 20px; text-align: center; }
-    .fin-label { font-size: 10px; color: #3b82f6; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-    .fin-value { font-size: 18px; font-weight: bold; color: #1e3a8a; margin-top: 4px; }
-    .notice { background: #fffbeb; border: 1px solid #fcd34d; border-top: none; padding: 12px 20px; text-align: center; font-size: 11px; font-weight: bold; color: #92400e; text-transform: uppercase; letter-spacing: 0.5px; }
-    .intro { padding: 20px; border: 1px solid #e2e8f0; border-top: none; font-size: 13px; line-height: 1.6; }
-    .section { border: 1px solid #e2e8f0; margin-top: 16px; border-radius: 8px; overflow: hidden; }
-    .section h3 { background: #f8fafc; padding: 10px 20px; font-size: 13px; font-weight: bold; border-bottom: 1px solid #e2e8f0; }
-    .section p { padding: 16px 20px; font-size: 12px; line-height: 1.8; color: #374151; }
-    .signatures { border: 2px solid #e2e8f0; border-radius: 8px; padding: 32px; margin-top: 24px; }
-    .sig-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-    .sig-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; }
-    .sig-party-label { font-size: 10px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-    .sig-name { font-size: 22px; font-style: italic; font-family: Georgia, serif; color: #0a2540; border-bottom: 1px solid #334155; padding-bottom: 6px; margin-bottom: 8px; min-height: 36px; }
-    .sig-meta { font-size: 11px; color: #64748b; }
-    .footer { margin-top: 32px; text-align: center; font-size: 10px; color: #94a3b8; }
-    @media print { body { padding: 20px; } .no-print { display: none !important; } }
-  </style>
-</head>
-<body>
-  <div class="no-print" style="margin-bottom:20px; text-align:center;">
-    <button onclick="window.print()" style="background:#0a2540;color:white;border:none;padding:10px 28px;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">
-      🖨️ Print / Save as PDF
-    </button>
-    <p style="margin-top:8px;font-size:11px;color:#64748b;">Use your browser's "Save as PDF" option when printing</p>
-  </div>
-  <div class="header">
-    <h1>ZENITH PURE SOLUTIONS LLC</h1>
-    <p>6951 E 30th St, Suite B · Indianapolis, IN 46219</p>
-    <p>(317) 690-4172 · zenithpuresolutions.com</p>
-  </div>
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+<title>${agreement.agreement_number} — Zenith Pure Solutions</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Georgia, serif; color: #1a1a2e; background: white; padding: 40px; max-width: 800px; margin: 0 auto; }
+  .header { background: #0a2540; color: white; padding: 32px; text-align: center; border-radius: 8px 8px 0 0; }
+  .header h1 { font-size: 20px; font-weight: bold; letter-spacing: 1px; }
+  .header p { font-size: 12px; color: #93c5fd; margin-top: 4px; }
+  .subheader { background: #f8fafc; border: 1px solid #e2e8f0; border-top: none; padding: 20px; text-align: center; }
+  .subheader h2 { font-size: 22px; font-weight: bold; }
+  .subheader .agnum { color: #0a2540; font-size: 14px; font-weight: 600; margin-top: 6px; }
+  .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; padding: 20px; border: 1px solid #e2e8f0; border-top: none; }
+  .party-label { font-size: 10px; font-weight: bold; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .party-name { font-weight: bold; font-size: 14px; }
+  .party-address { font-size: 12px; color: #64748b; margin-top: 2px; }
+  .financials { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; background: #eff6ff; border: 1px solid #bfdbfe; border-top: none; padding: 20px; text-align: center; }
+  .fin-label { font-size: 10px; color: #3b82f6; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .fin-value { font-size: 18px; font-weight: bold; color: #1e3a8a; margin-top: 4px; }
+  .notice { background: #fffbeb; border: 1px solid #fcd34d; border-top: none; padding: 12px 20px; text-align: center; font-size: 11px; font-weight: bold; color: #92400e; text-transform: uppercase; letter-spacing: 0.5px; }
+  .intro { padding: 20px; border: 1px solid #e2e8f0; border-top: none; font-size: 13px; line-height: 1.6; }
+  .section { border: 1px solid #e2e8f0; margin-top: 16px; border-radius: 8px; overflow: hidden; }
+  .section h3 { background: #f8fafc; padding: 10px 20px; font-size: 13px; font-weight: bold; border-bottom: 1px solid #e2e8f0; }
+  .section p { padding: 16px 20px; font-size: 12px; line-height: 1.8; color: #374151; }
+  .signatures { border: 2px solid #e2e8f0; border-radius: 8px; padding: 32px; margin-top: 24px; }
+  .sig-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .sig-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; }
+  .sig-party-label { font-size: 10px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .sig-name { font-size: 22px; font-style: italic; font-family: Georgia, serif; color: #0a2540; border-bottom: 1px solid #334155; padding-bottom: 6px; margin-bottom: 8px; min-height: 36px; }
+  .sig-meta { font-size: 11px; color: #64748b; }
+  .footer { margin-top: 32px; text-align: center; font-size: 10px; color: #94a3b8; }
+  .no-print { margin-bottom: 20px; text-align: center; }
+  @media print { body { padding: 20px; } .no-print { display: none !important; } }
+</style>
+</head><body>
+  ${PDF_PRINT_BTN}
+  <div class="header"><h1>ZENITH PURE SOLUTIONS LLC</h1><p>6951 E 30th St, Suite B · Indianapolis, IN 46219</p><p>(317) 690-4172 · zenithpuresolutions.com</p></div>
   <div class="subheader">
     <div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">Legal Agreement</div>
     <h2>Residential Equipment Rental Agreement</h2>
     <div class="agnum">${agreement.agreement_number}</div>
   </div>
   <div class="parties">
-    <div>
-      <div class="party-label">Company</div>
-      <div class="party-name">Zenith Pure Solutions LLC</div>
-      <div class="party-address">6951 E 30th St, Suite B<br/>Indianapolis, IN 46219</div>
-    </div>
-    <div>
-      <div class="party-label">Customer</div>
-      <div class="party-name">${customer?.full_name || ''}</div>
-      <div class="party-address">${customer?.address || ''}<br/>${customer?.city || ''}, ${customer?.state || ''} ${customer?.zip || ''}</div>
-    </div>
+    <div><div class="party-label">Company</div><div class="party-name">Zenith Pure Solutions LLC</div><div class="party-address">6951 E 30th St, Suite B<br/>Indianapolis, IN 46219</div></div>
+    <div><div class="party-label">Customer</div><div class="party-name">${customer?.full_name || ''}</div><div class="party-address">${customer?.address || ''}<br/>${customer?.city || ''}, ${customer?.state || ''} ${customer?.zip || ''}</div></div>
   </div>
   <div class="financials">
     <div><div class="fin-label">Monthly Payment</div><div class="fin-value">${fmt(agreement.monthly_amount || 0)}/mo</div></div>
@@ -324,34 +307,176 @@ function generateAgreementHTML(agreement: any, customer: any, terms: any[]): str
     <div><div class="fin-label">Initial Term</div><div class="fin-value">36 months</div></div>
   </div>
   <div class="notice">By signing, you agree to all terms including the binding arbitration clause in Article IX.</div>
-  <div class="intro">
-    This Agreement is entered into as of <strong>${today()}</strong> between
-    <strong>Zenith Pure Solutions LLC</strong> ("Company") and <strong>${customer?.full_name || ''}</strong> ("Customer").
-  </div>
+  <div class="intro">This Agreement is entered into as of <strong>${today()}</strong> between <strong>Zenith Pure Solutions LLC</strong> ("Company") and <strong>${customer?.full_name || ''}</strong> ("Customer").</div>
   ${termBlocksHTML}
   <div class="signatures">
     <div style="font-weight:bold;font-size:13px;margin-bottom:4px;">IN WITNESS WHEREOF</div>
     <p style="font-size:11px;color:#64748b;margin-bottom:24px;">Executed as of ${today()}.</p>
     <div class="sig-grid">
-      <div class="sig-box">
-        <div class="sig-party-label">ZENITH PURE SOLUTIONS LLC</div>
-        <div class="sig-name">Kuldeep Singh</div>
-        <div class="sig-meta">Authorized Representative · ${today()}</div>
-      </div>
-      <div class="sig-box">
-        <div class="sig-party-label">CUSTOMER</div>
-        <div class="sig-name">${agreement.signed_name || customer?.full_name || ''}</div>
-        <div class="sig-meta">${customer?.full_name || ''} · Signed ${agreement.signed_at ? new Date(agreement.signed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : today()}</div>
-      </div>
+      <div class="sig-box"><div class="sig-party-label">ZENITH PURE SOLUTIONS LLC</div><div class="sig-name">Kuldeep Singh</div><div class="sig-meta">Authorized Representative · ${today()}</div></div>
+      <div class="sig-box"><div class="sig-party-label">CUSTOMER</div><div class="sig-name">${agreement.signed_name || customer?.full_name || ''}</div><div class="sig-meta">${customer?.full_name || ''} · Signed ${agreement.signed_at ? new Date(agreement.signed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : today()}</div></div>
     </div>
   </div>
-  <div class="footer">
+  <div class="footer"><p>Zenith Pure Solutions LLC · 6951 E 30th St, Suite B, Indianapolis, IN 46219</p><p>(317) 690-4172 · info@zenithpuresolutions.com · zenithpuresolutions.com</p><p style="margin-top:6px;">Agreement ${agreement.agreement_number} · Generated ${today()}</p></div>
+</body></html>`
+}
+
+// ─── Invoice PDF generator ────────────────────────────────────────
+function generateInvoiceHTML(invoice: any, customer: any, lineItems: any[]): string {
+  const items = lineItems.length > 0 ? lineItems : (invoice.line_items_snapshot || [])
+  const rowsHTML = items.map((item: any) => `
+    <tr style="border-bottom:1px solid #f1f5f9;">
+      <td style="padding:12px 24px;font-size:13px;color:#1e293b;">${item.description}</td>
+      <td style="padding:12px 16px;font-size:13px;color:#64748b;text-align:center;">${item.quantity || 1}</td>
+      <td style="padding:12px 16px;font-size:13px;color:#64748b;text-align:right;">${fmt(parseFloat(item.unit_price) || 0)}</td>
+      <td style="padding:12px 24px;font-size:13px;font-weight:600;color:#0f172a;text-align:right;">${fmt(parseFloat(item.total) || 0)}</td>
+    </tr>`).join('')
+
+  const subtotal  = parseFloat(invoice.subtotal) || (parseFloat(invoice.total) - parseFloat(invoice.tax_amount || 0)) || 0
+  const taxAmount = parseFloat(invoice.tax_amount) || 0
+  const total     = parseFloat(invoice.total) || 0
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+<title>${invoice.invoice_number} — Zenith Pure Solutions</title>
+<style>* { box-sizing: border-box; margin: 0; padding: 0; } body { font-family: Georgia, serif; color: #1a1a2e; background: white; padding: 40px; max-width: 800px; margin: 0 auto; } @media print { body { padding: 20px; } .no-print { display: none !important; } }</style>
+</head><body>
+  ${PDF_PRINT_BTN}
+  <div style="background:#0a2540;color:white;padding:32px;border-radius:8px 8px 0 0;">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td><div style="font-size:28px;font-weight:900;letter-spacing:1px;">INVOICE</div><div style="color:#93c5fd;font-size:13px;margin-top:4px;">${invoice.invoice_number}</div><div style="color:#93c5fd;font-size:12px;margin-top:2px;">Zenith Pure Solutions LLC</div></td>
+      <td style="text-align:right;"><div style="font-size:36px;font-weight:900;">${fmt(total)}</div><div style="color:#93c5fd;font-size:11px;margin-top:2px;">Total Amount Due</div></td>
+    </tr></table>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;padding:20px 24px;border:1px solid #e2e8f0;border-top:none;">
+    <div><div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Bill To</div>
+      <div style="font-weight:bold;font-size:14px;">${customer?.full_name || ''}</div>
+      <div style="font-size:12px;color:#64748b;margin-top:2px;">${customer?.address || ''}</div>
+      <div style="font-size:12px;color:#64748b;">${customer?.city || ''}, ${customer?.state || ''} ${customer?.zip || ''}</div>
+      <div style="font-size:12px;color:#64748b;">${customer?.phone || ''}</div>
+    </div>
+    <div style="text-align:right;"><div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">From</div>
+      <div style="font-weight:bold;font-size:14px;">Zenith Pure Solutions LLC</div>
+      <div style="font-size:12px;color:#64748b;">6951 E 30th St, Suite B</div>
+      <div style="font-size:12px;color:#64748b;">Indianapolis, IN 46219</div>
+      <div style="font-size:12px;color:#64748b;margin-top:8px;">Invoice Date: ${today()}</div>
+      <div style="font-size:12px;color:${invoice.paid_at ? '#16a34a' : '#dc2626'};font-weight:600;margin-top:4px;">${invoice.paid_at ? '✓ Paid ' + new Date(invoice.paid_at).toLocaleDateString() : 'Unpaid'}</div>
+    </div>
+  </div>
+  <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-top:none;">
+    <thead><tr style="background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+      <th style="padding:10px 24px;text-align:left;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Description</th>
+      <th style="padding:10px 16px;text-align:center;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Qty</th>
+      <th style="padding:10px 16px;text-align:right;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Unit Price</th>
+      <th style="padding:10px 24px;text-align:right;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Amount</th>
+    </tr></thead>
+    <tbody>${rowsHTML}</tbody>
+  </table>
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;padding:16px 24px;">
+    <table width="240" cellpadding="0" cellspacing="0" style="margin-left:auto;">
+      <tr><td style="font-size:13px;color:#64748b;padding:4px 0;">Subtotal</td><td style="text-align:right;font-weight:600;color:#0f172a;font-size:13px;padding:4px 0;">${fmt(subtotal)}</td></tr>
+      <tr><td style="font-size:13px;color:#64748b;padding:4px 0 8px;">Tax (7% Indiana)</td><td style="text-align:right;font-weight:600;color:#0f172a;font-size:13px;padding:4px 0 8px;">${fmt(taxAmount)}</td></tr>
+      <tr style="border-top:2px solid #cbd5e1;"><td style="font-size:16px;font-weight:bold;color:#0f172a;padding-top:8px;">Total</td><td style="text-align:right;font-size:17px;font-weight:bold;color:#0f172a;padding-top:8px;">${fmt(total)}</td></tr>
+      ${invoice.amount_paid ? `<tr><td style="font-size:13px;color:#16a34a;font-weight:600;padding-top:6px;">Amount Paid</td><td style="text-align:right;font-size:13px;font-weight:600;color:#16a34a;padding-top:6px;">${fmt(parseFloat(invoice.amount_paid))}</td></tr>` : ''}
+    </table>
+  </div>
+  <div style="border:2px solid #e2e8f0;border-radius:8px;padding:28px 24px;margin-top:20px;">
+    <div style="font-weight:bold;font-size:13px;margin-bottom:4px;">Customer Authorization</div>
+    <p style="font-size:11px;color:#64748b;margin-bottom:20px;">By signing, I authorize Zenith Pure Solutions to proceed and agree to the payment terms above.</p>
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td width="48%" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;">
+        <div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">ZENITH PURE SOLUTIONS LLC</div>
+        <div style="font-size:20px;font-style:italic;font-family:Georgia,serif;color:#0a2540;border-bottom:1px solid #334155;padding-bottom:6px;margin-bottom:8px;">Kuldeep Singh</div>
+        <div style="font-size:11px;color:#64748b;">Authorized Representative · ${today()}</div>
+      </td>
+      <td width="4%"></td>
+      <td width="48%" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;">
+        <div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">CUSTOMER</div>
+        <div style="font-size:20px;font-style:italic;font-family:Georgia,serif;color:#0a2540;border-bottom:1px solid #334155;padding-bottom:6px;margin-bottom:8px;">${invoice.signed_name || customer?.full_name || ''}</div>
+        <div style="font-size:11px;color:#64748b;">${customer?.full_name || ''} · Signed ${invoice.signed_at ? new Date(invoice.signed_at).toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' }) : today()}</div>
+      </td>
+    </tr></table>
+  </div>
+  <div style="margin-top:28px;text-align:center;font-size:10px;color:#94a3b8;">
     <p>Zenith Pure Solutions LLC · 6951 E 30th St, Suite B, Indianapolis, IN 46219</p>
     <p>(317) 690-4172 · info@zenithpuresolutions.com · zenithpuresolutions.com</p>
-    <p style="margin-top:6px;">Agreement ${agreement.agreement_number} · Generated ${today()}</p>
+    <p style="margin-top:4px;">Invoice ${invoice.invoice_number} · Generated ${today()}</p>
   </div>
-</body>
-</html>`
+</body></html>`
+}
+
+// ─── Drilling Consent PDF ─────────────────────────────────────────
+function generateDrillingConsentHTML(form: any, signatureUrl: string | null): string {
+  const rd = form.response_data || {}
+  const customerName = rd.customer_name || rd.signed_name || '—'
+  const consentDate  = rd.consent_date ? new Date(rd.consent_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : today()
+  const jobRef       = rd.job_reference || rd.job_id || '—'
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>RO Drilling Consent — ${customerName}</title><style>${PDF_BASE_STYLES}</style></head><body>
+  ${PDF_PRINT_BTN}${PDF_HEADER}
+  <div class="subheader"><div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">Customer Acknowledgement</div><h2>Reverse Osmosis Drilling Consent Form</h2><div class="sub">Completed ${consentDate}</div></div>
+  <div class="body-section">
+    <div class="info-grid">
+      <div class="info-item"><div class="info-label">Customer Name</div><div class="info-value">${customerName}</div></div>
+      <div class="info-item"><div class="info-label">Date Signed</div><div class="info-value">${consentDate}</div></div>
+      ${jobRef !== '—' ? `<div class="info-item"><div class="info-label">Job Reference</div><div class="info-value">${jobRef}</div></div>` : ''}
+    </div>
+    <p>I authorize <strong>Zenith Pure Solutions</strong> to drill a hole for installation of the RO faucet when an existing opening is not available.</p>
+    <p>I understand and acknowledge that:</p>
+    <ul>
+      <li>Final pricing may vary if unforeseen material conditions or installation complexities are identified on site.</li>
+      <li>Natural and manufactured sink or countertop materials may contain hidden variations or stress points.</li>
+      <li>Minor cosmetic variations may occur despite proper installation methods.</li>
+      <li>Zenith Pure Solutions is not responsible for pre-existing conditions and does not include repair or replacement of sinks, countertops, or cabinetry.</li>
+    </ul>
+    <div class="confirm-box">✓ I confirm that I am the property owner or have authorization to approve this work.</div>
+    <div class="confirm-box">✓ I have read and understand the above terms and agree to the conditions stated in this Reverse Osmosis Drilling Consent Form.</div>
+  </div>
+  <div class="sig-section">
+    <div class="sig-label">Customer Signature</div>
+    ${signatureUrl ? `<img src="${signatureUrl}" class="sig-img" alt="Customer signature" />` : '<div style="height:60px;border-bottom:1px solid #334155;"></div>'}
+    <div class="sig-meta">${customerName} · Signed ${consentDate}</div>
+  </div>
+  ${PDF_FOOTER}
+</body></html>`
+}
+
+// ─── Handover PDF ─────────────────────────────────────────────────
+function generateHandoverHTML(form: any, signatureUrl: string | null, customer: any): string {
+  const rd = form.response_data || {}
+  const tdsReading  = rd.tds_reading || '—'
+  const submittedAt = rd.submitted_at ? new Date(rd.submitted_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : today()
+  const customerName = rd.customer_name || rd.signed_name || customer?.full_name || '—'
+  const jobRef       = rd.job_reference || rd.job_id || '—'
+  const tdsColor = Number(tdsReading) < 50 ? '#166534' : Number(tdsReading) < 150 ? '#1e3a8a' : '#7c2d12'
+  const tdsNote  = Number(tdsReading) < 50 ? 'Excellent — pure water output' : Number(tdsReading) < 150 ? 'Good — within healthy range' : 'Elevated — system may need service'
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>RO Handover — ${customerName}</title><style>${PDF_BASE_STYLES}.tds-box{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:20px;text-align:center;margin:16px 0;}.tds-label{font-size:11px;font-weight:bold;color:#3b82f6;text-transform:uppercase;letter-spacing:1px;}.tds-value{font-size:36px;font-weight:bold;margin-top:4px;}.tds-unit{font-size:14px;color:#64748b;margin-top:2px;}</style></head><body>
+  ${PDF_PRINT_BTN}${PDF_HEADER}
+  <div class="subheader"><div style="font-size:10px;font-weight:bold;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">Installation Record</div><h2>Reverse Osmosis System Handover</h2><div class="sub">Completed ${submittedAt}</div></div>
+  <div class="body-section">
+    <div class="info-grid">
+      <div class="info-item"><div class="info-label">Customer</div><div class="info-value">${customerName}</div></div>
+      <div class="info-item"><div class="info-label">Handover Date</div><div class="info-value">${submittedAt}</div></div>
+      ${customer?.address ? `<div class="info-item"><div class="info-label">Service Address</div><div class="info-value">${customer.address}${customer.city ? ', ' + customer.city : ''}</div></div>` : ''}
+      ${jobRef !== '—' ? `<div class="info-item"><div class="info-label">Job Reference</div><div class="info-value">${jobRef}</div></div>` : ''}
+    </div>
+    <div class="tds-box"><div class="tds-label">Post-Install TDS Reading</div><div class="tds-value" style="color:${tdsColor};">${tdsReading}</div><div class="tds-unit">ppm (parts per million)</div><div style="font-size:12px;color:#64748b;margin-top:6px;">${tdsNote}</div></div>
+    <p style="margin-top:16px;"><strong>System Handover Checklist — Completed at Installation:</strong></p>
+    <ul>
+      <li>RO system installed and tested — all connections checked for leaks</li>
+      <li>TDS meter reading taken and recorded (${tdsReading} ppm post-filter)</li>
+      <li>Customer shown faucet operation, tank fill time, and daily output expectations</li>
+      <li>Filter replacement schedule explained (annual — Zenith will contact you)</li>
+      <li>Emergency shutoff valve location demonstrated</li>
+      <li>Customer questions answered before technician departure</li>
+    </ul>
+    <div class="confirm-box" style="margin-top:20px;">✓ Customer confirms the system was demonstrated and is operating correctly at time of handover.</div>
+  </div>
+  <div class="sig-section">
+    <div class="sig-label">Customer Signature</div>
+    ${signatureUrl ? `<img src="${signatureUrl}" class="sig-img" alt="Customer signature" />` : '<div style="height:60px;border-bottom:1px solid #334155;"></div>'}
+    <div class="sig-meta">${customerName} · Signed ${submittedAt}</div>
+  </div>
+  ${PDF_FOOTER}
+</body></html>`
 }
 
 // ─── Open print window helper ─────────────────────────────────────
@@ -376,12 +501,10 @@ function useCustomerJobAndLead(customerId: string) {
   return useQuery({
     queryKey: ['customer_refs', customerId],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('customers')
-        .select('job_id, lead_id, full_name, address, city, state, zip')
-        .eq('id', customerId)
-        .single()
-      return data || { job_id: null, lead_id: null, full_name: null, address: null, city: null, state: null, zip: null }
+      const { data } = await supabase.from('customers')
+        .select('job_id, lead_id, full_name, address, city, state, zip, phone, email')
+        .eq('id', customerId).single()
+      return data || { job_id: null, lead_id: null, full_name: null, address: null, city: null, state: null, zip: null, phone: null, email: null }
     },
     enabled: !!customerId,
   })
@@ -417,8 +540,8 @@ function useAcceptedQuotes(customerId: string, leadId: string | null) {
   return useQuery({
     queryKey: ['customer_accepted_quotes', customerId, leadId],
     queryFn: () => mergeByIdDesc([
-      supabase.from('quotes').select('id, quote_number, lead_id, created_at, status, commercial_type, monthly_amount, total, install_fee').eq('customer_id', customerId).in('status', ['accepted', 'signed']).order('created_at', { ascending: false }) as any,
-      ...(leadId ? [supabase.from('quotes').select('id, quote_number, lead_id, created_at, status, commercial_type, monthly_amount, total, install_fee').eq('lead_id', leadId).in('status', ['accepted', 'signed']).order('created_at', { ascending: false }) as any] : []),
+      supabase.from('quotes').select('id, quote_number, lead_id, created_at, status, commercial_type, monthly_amount, total, install_fee, subtotal, tax_amount, signed_at, signed_name, valid_until').eq('customer_id', customerId).in('status', ['accepted', 'signed']).order('created_at', { ascending: false }) as any,
+      ...(leadId ? [supabase.from('quotes').select('id, quote_number, lead_id, created_at, status, commercial_type, monthly_amount, total, install_fee, subtotal, tax_amount, signed_at, signed_name, valid_until').eq('lead_id', leadId).in('status', ['accepted', 'signed']).order('created_at', { ascending: false }) as any] : []),
     ]),
     enabled: !!customerId,
   })
@@ -428,8 +551,8 @@ function usePaidInvoices(customerId: string, leadId: string | null) {
   return useQuery({
     queryKey: ['customer_paid_invoices', customerId, leadId],
     queryFn: () => mergeByIdDesc([
-      supabase.from('invoices').select('id, invoice_number, lead_id, created_at, paid_at, status, total, amount_paid').eq('customer_id', customerId).in('status', ['paid', 'partial']).order('paid_at', { ascending: false }) as any,
-      ...(leadId ? [supabase.from('invoices').select('id, invoice_number, lead_id, created_at, paid_at, status, total, amount_paid').eq('lead_id', leadId).in('status', ['paid', 'partial']).order('paid_at', { ascending: false }) as any] : []),
+      supabase.from('invoices').select('id, invoice_number, lead_id, created_at, paid_at, status, total, amount_paid, subtotal, tax_amount, signed_at, signed_name, line_items_snapshot').eq('customer_id', customerId).in('status', ['paid', 'partial']).order('paid_at', { ascending: false }) as any,
+      ...(leadId ? [supabase.from('invoices').select('id, invoice_number, lead_id, created_at, paid_at, status, total, amount_paid, subtotal, tax_amount, signed_at, signed_name, line_items_snapshot').eq('lead_id', leadId).in('status', ['paid', 'partial']).order('paid_at', { ascending: false }) as any] : []),
     ]),
     enabled: !!customerId,
   })
@@ -497,7 +620,9 @@ export function CustomerDocumentsTab({ customerId }: Props) {
     try {
       let terms: any[] = agr.terms_snapshot?.blocks || []
       if (!terms.length) {
-        const { data: fetchedTerms } = await supabase.from('term_blocks').select('slug, display_title, content, version').like('slug', 'ra-%').eq('is_active', true).order('sort_order')
+        const { data: fetchedTerms } = await supabase.from('term_blocks')
+          .select('slug, display_title, content, version')
+          .like('slug', 'ra-%').eq('is_active', true).order('sort_order')
         terms = fetchedTerms || []
       }
       openPrintWindow(generateAgreementHTML(agr, refs, terms), `${agr.agreement_number}.html`)
@@ -505,7 +630,50 @@ export function CustomerDocumentsTab({ customerId }: Props) {
     finally { setDownloadingId(null) }
   }
 
-  // ─── Form PDF download ────────────────────────────────────────
+  // ─── Quote download ───────────────────────────────────────────
+  async function handleDownloadQuote(q: any) {
+    setDownloadingId(q.id)
+    try {
+      // Fetch full line items from document_line_items, fallback to quote_line_items
+      let { data: lineItems } = await supabase.from('document_line_items')
+        .select('*').eq('document_id', q.id).order('sort_order')
+      if (!lineItems || lineItems.length === 0) {
+        const { data: legacy } = await supabase.from('quote_line_items')
+          .select('*').eq('quote_id', q.id).order('sort_order')
+        lineItems = legacy || []
+      }
+      openPrintWindow(generateQuoteHTML(q, refs, lineItems || []), `${q.quote_number}.html`)
+    } catch (e: any) { console.error('Download failed:', e.message) }
+    finally { setDownloadingId(null) }
+  }
+
+  // ─── Invoice download ─────────────────────────────────────────
+  async function handleDownloadInvoice(inv: any) {
+    setDownloadingId(inv.id)
+    try {
+      // Fetch line items fresh from document_line_items via quote_id
+      let lineItems: any[] = []
+      if (inv.line_items_snapshot?.length) {
+        lineItems = inv.line_items_snapshot
+      } else {
+        // Try to find the quote linked to this invoice
+        const { data: quoteData } = await supabase.from('quotes')
+          .select('id').eq('customer_id', customerId)
+          .in('status', ['accepted', 'signed']).order('created_at', { ascending: false }).limit(5)
+        if (quoteData?.length) {
+          for (const qt of quoteData) {
+            const { data: items } = await supabase.from('document_line_items')
+              .select('*').eq('document_id', qt.id).order('sort_order')
+            if (items?.length) { lineItems = items; break }
+          }
+        }
+      }
+      openPrintWindow(generateInvoiceHTML(inv, refs, lineItems), `${inv.invoice_number}.html`)
+    } catch (e: any) { console.error('Download failed:', e.message) }
+    finally { setDownloadingId(null) }
+  }
+
+  // ─── Form download ────────────────────────────────────────────
   function handleDownloadForm(form: any) {
     setDownloadingId(form.id)
     try {
@@ -525,23 +693,31 @@ export function CustomerDocumentsTab({ customerId }: Props) {
   const pendingProofs  = allProofs.filter(p => p.review_status === 'pending')
   const reviewedProofs = allProofs.filter(p => p.review_status !== 'pending')
 
-  const hasAgreements  = agreements.length > 0
-  const hasQuotes      = acceptedQuotes.length > 0
-  const hasInvoices    = paidInvoices.length > 0
-  const hasForms       = formResponses.length > 0
-  const hasSignatures  = signatures.length > 0
-  const hasPhotos      = approvedPhotos.length > 0
-  const hasAnything    = allProofs.length > 0 || hasAgreements || hasQuotes || hasInvoices || hasForms || hasSignatures || hasPhotos
+  const hasAgreements = agreements.length > 0
+  const hasQuotes     = acceptedQuotes.length > 0
+  const hasInvoices   = paidInvoices.length > 0
+  const hasForms      = formResponses.length > 0
+  const hasSignatures = signatures.length > 0
+  const hasPhotos     = approvedPhotos.length > 0
+  const hasAnything   = allProofs.length > 0 || hasAgreements || hasQuotes || hasInvoices || hasForms || hasSignatures || hasPhotos
 
   const FORM_LABELS: Record<string, string> = {
-    ro_handover:          'RO System Handover',
-    ro_drilling_consent:  'RO Drilling Consent',
+    ro_handover: 'RO System Handover',
+    ro_drilling_consent: 'RO Drilling Consent',
   }
+
+  const DownloadBtn = ({ id, label, onClick }: { id: string; label: string; onClick: () => void }) => (
+    <button onClick={onClick} disabled={downloadingId === id}
+      className="text-xs px-2 py-0.5 rounded-lg font-semibold disabled:opacity-50"
+      style={{ backgroundColor: 'rgba(56,189,248,0.12)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.25)' }}>
+      {downloadingId === id ? '…' : label}
+    </button>
+  )
 
   return (
     <div className="space-y-5">
 
-      {/* ─── Agreements ────────────────────────────────── */}
+      {/* ─── Agreements ──────────────────────────────── */}
       {hasAgreements && (
         <DocSection title="Agreements" icon="📝" count={agreements.length}>
           {agreements.map((agr: any) => (
@@ -558,21 +734,16 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                     {agr.signed_at ? 'Signed' : 'Pending'}
                   </span>
                   {agr.signed_at && (
-                    <button onClick={() => handleDownloadAgreement(agr)} disabled={downloadingId === agr.id}
-                      className="text-xs px-2 py-0.5 rounded-lg font-semibold disabled:opacity-50"
-                      style={{ backgroundColor: 'rgba(56,189,248,0.12)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.25)' }}>
-                      {downloadingId === agr.id ? '…' : '⬇ PDF'}
-                    </button>
+                    <DownloadBtn id={agr.id} label="⬇ Full PDF" onClick={() => handleDownloadAgreement(agr)} />
                   )}
                 </div>
               </div>
               <div className="text-xs text-muted space-y-0.5">
-                {agr.agreement_number    && <div className="text-slate-400 font-medium">{agr.agreement_number}</div>}
-                {agr.signed_at          && <div>Signed: {formatDateTime(agr.signed_at)}</div>}
-                {agr.monthly_amount     && <div>Monthly: ${agr.monthly_amount}</div>}
-                {agr.total_amount       && <div>Total: ${agr.total_amount}</div>}
+                {agr.agreement_number && <div className="text-slate-400 font-medium">{agr.agreement_number}</div>}
+                {agr.signed_at && <div>Signed: {formatDateTime(agr.signed_at)}</div>}
+                {agr.monthly_amount && <div>Monthly: ${agr.monthly_amount}/mo</div>}
                 {agr.rental_term_months && <div>Term: {agr.rental_term_months} months</div>}
-                {agr.install_address    && <div>Install: {agr.install_address}</div>}
+                {agr.install_address && <div>Install: {agr.install_address}</div>}
               </div>
               {agr.customer_signature && (
                 <div className="mt-2">
@@ -585,7 +756,7 @@ export function CustomerDocumentsTab({ customerId }: Props) {
         </DocSection>
       )}
 
-      {/* ─── Accepted Quotes ───────────────────────────── */}
+      {/* ─── Accepted Quotes ──────────────────────────── */}
       {hasQuotes && (
         <DocSection title="Accepted Quotes" icon="📋" count={acceptedQuotes.length}>
           {(acceptedQuotes as any[]).map((q: any) => (
@@ -597,24 +768,28 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                     {q.commercial_type === 'rental' ? 'Rental Quote' : q.commercial_type === 'financed' ? 'Financed Quote' : 'Purchase Quote'}
                   </span>
                 </div>
-                <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
-                  style={{ backgroundColor: 'rgba(56,189,248,0.15)', color: '#38bdf8' }}>
-                  {q.status === 'signed' ? 'Signed' : 'Accepted'}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                    style={{ backgroundColor: 'rgba(56,189,248,0.15)', color: '#38bdf8' }}>
+                    {q.status === 'signed' ? 'Signed' : 'Accepted'}
+                  </span>
+                  <DownloadBtn id={q.id} label="⬇ Full PDF" onClick={() => handleDownloadQuote(q)} />
+                </div>
               </div>
               <div className="text-xs text-muted space-y-0.5">
                 {q.quote_number && <div className="text-slate-400 font-medium">{q.quote_number}</div>}
-                {q.created_at   && <div>Date: {formatDateTime(q.created_at)}</div>}
+                {q.created_at && <div>Date: {formatDateTime(q.created_at)}</div>}
+                {q.signed_at && <div>Signed: {formatDateTime(q.signed_at)}</div>}
                 {q.monthly_amount && <div>Monthly: ${q.monthly_amount}/mo</div>}
-                {q.total        && <div>Total: ${q.total}</div>}
-                {q.install_fee  && <div>Install fee: ${q.install_fee}</div>}
+                {q.total && <div>Total: ${q.total}</div>}
+                {q.install_fee && <div>Install fee: ${q.install_fee}</div>}
               </div>
             </DocCard>
           ))}
         </DocSection>
       )}
 
-      {/* ─── Paid Invoices ─────────────────────────────── */}
+      {/* ─── Paid Invoices ────────────────────────────── */}
       {hasInvoices && (
         <DocSection title="Paid Invoices" icon="🧾" count={paidInvoices.length}>
           {(paidInvoices as any[]).map((inv: any) => (
@@ -624,16 +799,20 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                   <span className="text-sm">🧾</span>
                   <span className="text-sm font-medium text-white">Invoice</span>
                 </div>
-                <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
-                  style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80' }}>
-                  {inv.status === 'partial' ? 'Partial' : 'Paid'}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                    style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80' }}>
+                    {inv.status === 'partial' ? 'Partial' : 'Paid'}
+                  </span>
+                  <DownloadBtn id={inv.id} label="⬇ Full PDF" onClick={() => handleDownloadInvoice(inv)} />
+                </div>
               </div>
               <div className="text-xs text-muted space-y-0.5">
                 {inv.invoice_number && <div className="text-slate-400 font-medium">{inv.invoice_number}</div>}
-                {inv.paid_at        && <div>Paid: {formatDateTime(inv.paid_at)}</div>}
-                {inv.total          && <div>Total: ${inv.total}</div>}
-                {inv.amount_paid    && <div>Amount paid: ${inv.amount_paid}</div>}
+                {inv.paid_at && <div>Paid: {formatDateTime(inv.paid_at)}</div>}
+                {inv.signed_at && <div>Signed: {formatDateTime(inv.signed_at)}</div>}
+                {inv.total && <div>Total: ${inv.total}</div>}
+                {inv.amount_paid && <div>Amount paid: ${inv.amount_paid}</div>}
               </div>
             </DocCard>
           ))}
@@ -658,24 +837,19 @@ export function CustomerDocumentsTab({ customerId }: Props) {
                   <div className="flex items-center gap-2">
                     <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-green-500/20 text-green-400">Completed</span>
                     {canDownload && (
-                      <button onClick={() => handleDownloadForm(form)} disabled={downloadingId === form.id}
-                        className="text-xs px-2 py-0.5 rounded-lg font-semibold disabled:opacity-50"
-                        style={{ backgroundColor: 'rgba(56,189,248,0.12)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.25)' }}>
-                        {downloadingId === form.id ? '…' : '⬇ PDF'}
-                      </button>
+                      <DownloadBtn id={form.id} label="⬇ Full PDF" onClick={() => handleDownloadForm(form)} />
                     )}
                   </div>
                 </div>
                 <div className="text-xs text-muted space-y-0.5">
                   <div>Submitted: {formatDateTime(form.submitted_at)}</div>
                   {rd.customer_name && <div>Signed by: {rd.customer_name}</div>}
-                  {rd.tds_reading   && (
+                  {rd.tds_reading && (
                     <div className="flex items-center gap-1 mt-1">
                       <span className="text-blue-400 font-semibold">TDS: {rd.tds_reading} ppm</span>
                       <span className="text-gray-500">post-filter reading</span>
                     </div>
                   )}
-                  {rd.consent_date  && <div>Consent date: {formatDateTime(rd.consent_date)}</div>}
                 </div>
                 {form.customer_signature_url && (
                   <div className="mt-2">
