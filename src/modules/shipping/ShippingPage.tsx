@@ -46,16 +46,6 @@ export default function ShippingPage() {
   const [showCreateDrawer, setShowCreateDrawer] = useState(false)
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null)
 
-  // Access check
-  if (!can('shipping', 'view')) {
-    return (
-      <div style={{ padding: 40, color: '#e2e8f0', textAlign: 'center' }}>
-        <h2>Access Denied</h2>
-        <p style={{ color: '#64748b' }}>You do not have permission to view this page.</p>
-      </div>
-    )
-  }
-
   const { data: shipments = [], isLoading } = useQuery({
     queryKey: ['shipments', activeTab],
     queryFn: () => fetchShipments({ status: activeTab === 'all' ? undefined : activeTab }),
@@ -65,6 +55,16 @@ export default function ShippingPage() {
     queryKey: ['shipment_counts'],
     queryFn: getShipmentCounts,
   })
+
+  // Access check — after all hooks
+  if (!can('shipping', 'view')) {
+    return (
+      <div style={{ padding: 40, color: '#e2e8f0', textAlign: 'center' }}>
+        <h2>Access Denied</h2>
+        <p style={{ color: '#64748b' }}>You do not have permission to view this page.</p>
+      </div>
+    )
+  }
 
   // Filter by search
   const filtered = shipments.filter(s => {
