@@ -271,7 +271,7 @@ export function AccountingPage() {
         </div>
       </div>
 
-      <div style={{ padding: '24px 28px', maxWidth: 1100 }}>
+      <div style={{ padding: '24px 28px', width: '100%' }}>
 
         {/* Controls */}
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24, alignItems: 'center' }}>
