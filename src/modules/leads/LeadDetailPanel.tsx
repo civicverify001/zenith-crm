@@ -20,6 +20,9 @@ import { QuoteBuilder } from '../quotes/QuoteBuilder'
 import QualifyingChecklist from './QualifyingChecklist'
 import SiteVisitScheduler from './SiteVisitScheduler'
 import SiteVisitChecklist from './SiteVisitChecklist'
+import { WaterTestForm } from '../shared/WaterTestForm'
+import { WaterTestHistory, RecommendationSummary } from '../shared/WaterTestResults'
+import { fetchByLead, type WaterTest } from '../../services/waterTestService'
 
 interface Props {
   lead: Lead
@@ -64,6 +67,12 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   const [showVisitScheduler, setShowVisitScheduler] = useState(false)
   const [visitInfo, setVisitInfo] = useState<{ rep_name: string; date: string; hour: number } | null>(null)
   const [siteVisitComplete, setSiteVisitComplete] = useState(false)
+
+  // Water test state
+  const [waterTests, setWaterTests] = useState<WaterTest[]>([])
+  const [showWaterTestForm, setShowWaterTestForm] = useState(false)
+  const [editingWaterTest, setEditingWaterTest] = useState<WaterTest | null>(null)
+  const [waterTestsLoaded, setWaterTestsLoaded] = useState(false)
 
   const { mutateAsync: assignRep } = useAssignRep()
   const { mutateAsync: logCall, isPending: callPending } = useLogCallAttempt()
@@ -113,6 +122,16 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
       })
   }, [lead.id, lead.stage])
 
+  // ── Load water tests for this lead ─────────────────────────────
+  const WATER_TEST_STAGES = ['site_visit_scheduled', 'proposal_in_progress', 'quote_sent', 'agreement_signed', 'won']
+  useEffect(() => {
+    if (!WATER_TEST_STAGES.includes(lead.stage)) return
+    fetchByLead(lead.id).then(tests => {
+      setWaterTests(tests)
+      setWaterTestsLoaded(true)
+    })
+  }, [lead.id, lead.stage])
+
   // ── Handle visit scheduled ─────────────────────────────────────
   async function handleVisitScheduled(visit: { rep_name: string; date: string; hour: number }) {
     setVisitInfo(visit)
@@ -136,6 +155,26 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
     queryClient.invalidateQueries({ queryKey: LEAD_KEYS.activity(updated.id) })
     queryClient.invalidateQueries({ queryKey: ['lead_activity_log', updated.id] })
   }, [onLeadUpdated, queryClient])
+
+  // ── Water test handlers ─────────────────────────────────────────
+  function handleWaterTestSaved(test: WaterTest) {
+    setShowWaterTestForm(false)
+    setEditingWaterTest(null)
+    // Refresh the list
+    fetchByLead(lead.id).then(tests => setWaterTests(tests))
+  }
+
+  function handleEditWaterTest(test: WaterTest) {
+    setEditingWaterTest(test)
+    setShowWaterTestForm(true)
+  }
+
+  async function handleDeleteWaterTest(test: WaterTest) {
+    if (!confirm('Delete this water test? This cannot be undone.')) return
+    const { deleteWaterTest } = await import('../../services/waterTestService')
+    await deleteWaterTest(test.id)
+    fetchByLead(lead.id).then(tests => setWaterTests(tests))
+  }
 
   // ── Delete lead (admin only) ─────────────────────────────────
   async function handleDeleteLead() {
@@ -241,6 +280,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   const stageEnteredAt = lead.stage_entered_at || lead.stage_changed_at
   const daysInStage = daysSince(stageEnteredAt)
   const fullAddress = [lead.address, lead.city, lead.state, lead.zip_code].filter(Boolean).join(', ')
+  const showWaterTests = WATER_TEST_STAGES.includes(lead.stage)
 
   return (
     <>
@@ -361,6 +401,83 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                 {/* Site Visit Checklist */}
                 {lead.stage === 'site_visit_scheduled' && (
                   <SiteVisitChecklist lead={lead} onLeadUpdated={handleLeadUpdated} onCompletionChange={setSiteVisitComplete} />
+                )}
+
+                {/* ── Water Test Section ──────────────────────────────── */}
+                {showWaterTests && waterTestsLoaded && (
+                  <div>
+                    {/* Header with add button */}
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      marginBottom: 10,
+                    }}>
+                      <div style={{
+                        fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
+                        color: '#22d3ee',
+                      }}>
+                        💧 Water Test
+                        {waterTests.length > 0 && (
+                          <span style={{ color: '#64748b', fontWeight: 400, marginLeft: 6 }}>
+                            ({waterTests.length} recorded)
+                          </span>
+                        )}
+                      </div>
+                      {!showWaterTestForm && (
+                        <button
+                          onClick={() => { setEditingWaterTest(null); setShowWaterTestForm(true) }}
+                          style={{
+                            padding: '4px 12px', borderRadius: 8, fontSize: 11, fontWeight: 700,
+                            background: 'rgba(34,211,238,0.1)', color: '#22d3ee',
+                            border: '1px solid rgba(34,211,238,0.25)', cursor: 'pointer',
+                          }}
+                        >
+                          + {waterTests.length > 0 ? 'New Test' : 'Record Test'}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Water test form */}
+                    {showWaterTestForm && (
+                      <div style={{ marginBottom: 12 }}>
+                        <WaterTestForm
+                          leadId={lead.id}
+                          testType="initial"
+                          existingTest={editingWaterTest}
+                          onSaved={handleWaterTestSaved}
+                          onCancel={() => { setShowWaterTestForm(false); setEditingWaterTest(null) }}
+                        />
+                      </div>
+                    )}
+
+                    {/* Recommendation summary (from latest initial test) */}
+                    {!showWaterTestForm && waterTests.length > 0 && (
+                      <div style={{ marginBottom: 12 }}>
+                        <RecommendationSummary tests={waterTests} />
+                      </div>
+                    )}
+
+                    {/* Test history */}
+                    {!showWaterTestForm && waterTests.length > 0 && (
+                      <WaterTestHistory
+                        tests={waterTests}
+                        onEdit={handleEditWaterTest}
+                        onDelete={handleDeleteWaterTest}
+                      />
+                    )}
+
+                    {/* Empty state */}
+                    {!showWaterTestForm && waterTests.length === 0 && (
+                      <div style={{
+                        background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14,
+                        padding: '20px', textAlign: 'center',
+                      }}>
+                        <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.4 }}>💧</div>
+                        <p style={{ color: '#64748b', fontSize: 12 }}>
+                          No water test recorded yet. Record a test during the site visit to get product recommendations.
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* Quote link */}
