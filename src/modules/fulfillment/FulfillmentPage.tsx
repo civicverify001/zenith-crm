@@ -191,7 +191,7 @@ function DetailDrawer({
           background: '#0f1923', borderRadius: 10, border: '1px solid #1e3a4f', padding: 16, marginBottom: 16,
         }}>
           <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Service Plan</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>{plan?.plan_name || 'Unknown plan'}</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>{plan?.service_plans?.name || 'Unknown plan'}</div>
           {plan?.service_plans?.name && (
             <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>Template: {plan.service_plans.name}</div>
           )}
@@ -387,7 +387,7 @@ export function FulfillmentPage() {
         const q = search.toLowerCase()
         return (
           fr.customers?.full_name?.toLowerCase().includes(q) ||
-          fr.customer_service_plans?.plan_name?.toLowerCase().includes(q)
+          fr.customer_service_plans?.service_plans?.name?.toLowerCase().includes(q)
         )
       })
     : items
@@ -519,7 +519,7 @@ export function FulfillmentPage() {
                     )}
                   </div>
                   <div style={{ fontSize: 12, color: '#94a3b8' }}>
-                    {fr.customer_service_plans?.plan_name || 'Unknown plan'}
+                    {fr.customer_service_plans?.service_plans?.name || 'Unknown plan'}
                     <span style={{ margin: '0 6px', color: '#334155' }}>·</span>
                     {TYPE_LABELS[fr.type] || fr.type}
                   </div>
