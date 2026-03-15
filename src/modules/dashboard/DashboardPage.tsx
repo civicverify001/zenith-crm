@@ -393,11 +393,9 @@ function useAwaitingSchedule() {
         .select(`
           id, customer_id, due_date, created_at, type,
           customers(full_name, phone),
-          customer_service_plans(plan_name)
+          customer_service_plans(plan_id, service_plans(name))
         `)
         .eq('status', 'paid_awaiting_schedule')
-        .order('due_date', { ascending: true })
-        .limit(10)
       if (error) throw error
       return data || []
     },
@@ -420,7 +418,7 @@ function useScheduledThisWeek() {
         .select(`
           id, customer_id, scheduled_date, type,
           customers(full_name),
-          customer_service_plans(plan_name)
+          customer_service_plans(plan_id, service_plans(name))
         `)
         .eq('status', 'scheduled')
         .gte('scheduled_date', startOfWeek.toISOString().split('T')[0])
@@ -445,7 +443,7 @@ function useOverdueFulfillment() {
         .select(`
           id, customer_id, due_date, created_at, type,
           customers(full_name, phone),
-          customer_service_plans(plan_name)
+          customer_service_plans(plan_id, service_plans(name))
         `)
         .eq('status', 'paid_awaiting_schedule')
         .lte('due_date', sevenDaysAgo.toISOString().split('T')[0])
@@ -790,7 +788,7 @@ export function DashboardPage() {
               const daysPending = Math.floor((Date.now() - new Date(fr.due_date).getTime()) / 86400000)
               return (
                 <Row key={fr.id} onClick={() => navigate('/fulfillment')}>
-                  <RowLeft primary={(fr.customers as any)?.full_name || 'Unknown'} secondary={`${(fr.customer_service_plans as any)?.plan_name || 'Plan'} · Paid ${daysPending}d ago`} />
+                  <RowLeft primary={(fr.customers as any)?.full_name || 'Unknown'} secondary={`${(fr.customer_service_plans as any)?.service_plans?.name || 'Plan'} · Paid ${daysPending}d ago`} />
                   <RowRight><span style={{ fontSize: 11, fontWeight: 700, color: '#f87171' }}>{daysPending}d overdue</span></RowRight>
                 </Row>
               )
@@ -804,7 +802,7 @@ export function DashboardPage() {
           <ActionCard title="Paid — Awaiting Schedule" icon="🔔" count={awaitingSchedule.length} accent="#fbbf24" urgent onClick={() => navigate('/fulfillment')}>
             {awaitingSchedule.slice(0, 5).map((fr: any) => (
               <Row key={fr.id} onClick={() => navigate('/fulfillment')}>
-                <RowLeft primary={(fr.customers as any)?.full_name || 'Unknown'} secondary={(fr.customer_service_plans as any)?.plan_name || 'Service plan'} />
+                <RowLeft primary={(fr.customers as any)?.full_name || 'Unknown'} secondary={(fr.customer_service_plans as any)?.service_plans?.name || 'Service plan'} />
                 <RowRight>
                   {(fr.customers as any)?.phone ? (
                     <a href={`tel:${(fr.customers as any).phone}`} onClick={(e) => e.stopPropagation()}
@@ -824,7 +822,7 @@ export function DashboardPage() {
           <ActionCard title="Scheduled Visits This Week" icon="📅" count={scheduledThisWeek.length} accent="#60a5fa" onClick={() => navigate('/fulfillment')}>
             {scheduledThisWeek.slice(0, 5).map((fr: any) => (
               <Row key={fr.id} onClick={() => navigate('/fulfillment')}>
-                <RowLeft primary={(fr.customers as any)?.full_name || 'Unknown'} secondary={(fr.customer_service_plans as any)?.plan_name || 'Service plan'} />
+                <RowLeft primary={(fr.customers as any)?.full_name || 'Unknown'} secondary={(fr.customer_service_plans as any)?.service_plans?.name || 'Service plan'} />
                 <RowRight>
                   <span style={{ fontSize: 11, color: '#60a5fa', fontWeight: 600 }}>
                     {fr.scheduled_date ? new Date(fr.scheduled_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—'}
