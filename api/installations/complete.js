@@ -1,10 +1,12 @@
 // api/installations/complete.js
 // Mark installation complete + create installed system + link documents + charge install fee
+// + activate service plans (quote-origin + auto-enroll)
 //
 // IDEMPOTENT: safe to re-run on an already-completed job.
 //   - installed_systems: UPDATE if row exists for job_id (corrects ownership), INSERT if not
 //   - Stripe charge: skipped if payment_transactions already has a succeeded row for type=install_fee
 //   - job status update and activity logs: skipped if job already complete
+//   - service plans: skipped if plan already exists for customer+template+system (unique index)
 
 const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
@@ -190,10 +192,8 @@ module.exports = async function handler(req, res) {
     }
 
     // ── 5c. Set billing_day on active contract = today's install date ─
-    // First charge always falls on the day the system was installed.
-    // billing_day is what autopay uses to know which day of month to charge.
     if (customerId) {
-      const billingDay = new Date().getDate(); // 1–31
+      const billingDay = new Date().getDate();
       try {
         await supabase
           .from('contracts')
@@ -204,12 +204,6 @@ module.exports = async function handler(req, res) {
     }
 
     // ── 5d. Move lead to 'won' now that install is physically complete ─
-    // ADDED: This is the correct place for the 'won' stage transition.
-    // Previously this was done in AgreementSignedPanel.tsx when the install
-    // was merely SCHEDULED — too early, caused the lead to disappear from
-    // the pipeline before the work was done.
-    // Now: won = installed and done. Not just signed. Not just scheduled.
-    // Only runs on first completion (alreadyComplete guard prevents re-run duplication).
     if (!alreadyComplete && job.lead_id) {
       try {
         await supabase
@@ -221,16 +215,11 @@ module.exports = async function handler(req, res) {
           })
           .eq('id', job.lead_id);
       } catch(e) {
-        // Non-critical — log but never block install completion
         console.warn('[BEST-EFFORT] lead won stage move:', e.message);
       }
     }
 
     // ── 6. Installed systems — idempotent upsert ──────────────────────
-    //   Check for existing row by job_id.
-    //   EXISTS → UPDATE ownership_type, install_fee_snapshot, monthly_amount_snapshot.
-    //   NOT EXISTS → INSERT fresh row.
-    //   This prevents duplicates AND self-corrects bad ownership on re-runs.
     let installedSystemId = null;
 
     if (customerId) {
@@ -249,7 +238,6 @@ module.exports = async function handler(req, res) {
         pure_start_softener: 'Pure Start Softener',
       };
 
-      // Check for existing row (duplicate-prevention guard)
       const { data: existingRow } = await supabase
         .from('installed_systems')
         .select('id, ownership_type')
@@ -257,7 +245,6 @@ module.exports = async function handler(req, res) {
         .maybeSingle();
 
       if (existingRow) {
-        // Re-run correction: UPDATE snapshots to correct values
         installedSystemId = existingRow.id;
         await supabase
           .from('installed_systems')
@@ -275,7 +262,6 @@ module.exports = async function handler(req, res) {
         );
 
       } else {
-        // First-run: INSERT new row
         const { data: sysRecord, error: sysError } = await supabase
           .from('installed_systems')
           .insert({
@@ -353,11 +339,185 @@ module.exports = async function handler(req, res) {
       }
     }
 
+    // ── 7b. SERVICE PLAN ACTIVATION ───────────────────────────────────
+    // Two sources:
+    //   A) Quote-origin: document_line_items with item_type = 'service_plan' from the accepted quote
+    //   B) Auto-enroll: service_plans templates where auto_activate_on_install = true and category matches
+    //
+    // Idempotent: partial unique index on customer_service_plans prevents duplicates.
+    // Plans that already exist are silently skipped (23505 = unique_violation).
+
+    const activatedPlans = [];
+
+    if (customerId && installedSystemId && !alreadyComplete) {
+      const todayDate = new Date().toISOString().split('T')[0];
+      const nowISO = new Date().toISOString();
+
+      // Check if customer has a payment method on file
+      const { data: pmCheck } = await supabase
+        .from('payment_methods')
+        .select('id')
+        .eq('customer_id', customerId)
+        .eq('is_default', true)
+        .eq('status', 'active')
+        .limit(1)
+        .maybeSingle();
+      const hasCard = !!pmCheck;
+
+      // ── A) Quote-origin service plans ──────────────────────────────
+      if (acceptedQuote?.id) {
+        try {
+          const { data: planItems } = await supabase
+            .from('document_line_items')
+            .select('*')
+            .eq('document_id', acceptedQuote.id)
+            .eq('item_type', 'service_plan');
+
+          if (planItems && planItems.length > 0) {
+            for (const item of planItems) {
+              const meta = item.metadata || {};
+              const templateId = meta.plan_template_id;
+              if (!templateId) continue;
+
+              const planPrice = item.unit_price || item.total || 0;
+              const billingCycle = meta.billing_cycle || 'yearly';
+              const initialStatus = hasCard ? 'active' : 'pending_payment_method';
+
+              try {
+                const { data: newPlan } = await supabase
+                  .from('customer_service_plans')
+                  .insert({
+                    customer_id:          customerId,
+                    plan_id:              templateId,
+                    installed_system_id:  installedSystemId,
+                    source:               'quote',
+                    source_quote_id:      acceptedQuote.id,
+                    status:               initialStatus,
+                    billing_cycle:        billingCycle,
+                    price:                planPrice,
+                    start_date:           todayDate,
+                    billing_start_date:   hasCard ? todayDate : null,
+                    next_billing_date:    hasCard ? todayDate : null,
+                    activated_at:         hasCard ? nowISO : null,
+                  })
+                  .select('id')
+                  .single();
+
+                if (newPlan) {
+                  activatedPlans.push({ id: newPlan.id, source: 'quote', template_id: templateId, status: initialStatus });
+                }
+              } catch (insertErr) {
+                // 23505 = unique constraint violation — plan already exists, skip
+                if (insertErr.code === '23505') {
+                  console.log(`[complete.js] Service plan already exists for template ${templateId}, skipping`);
+                } else {
+                  console.error('[BEST-EFFORT] quote service plan insert:', insertErr.message);
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[BEST-EFFORT] quote service plan lookup:', e.message);
+        }
+      }
+
+      // ── B) Auto-enroll service plans ───────────────────────────────
+      // Find templates where auto_activate_on_install = true
+      // and the installed system's category matches applies_to_categories (or [] = all)
+      try {
+        const { data: autoTemplates } = await supabase
+          .from('service_plans')
+          .select('id, name, billing_cycle, price, fulfillment_type, fulfillment_interval_months, applies_to_categories')
+          .eq('is_active', true)
+          .eq('auto_activate_on_install', true);
+
+        if (autoTemplates && autoTemplates.length > 0) {
+          const systemCategory = job.system_type || product?.category || 'unknown';
+
+          for (const tmpl of autoTemplates) {
+            // Check category match: empty array = all categories
+            const cats = Array.isArray(tmpl.applies_to_categories) ? tmpl.applies_to_categories : [];
+            if (cats.length > 0 && !cats.includes(systemCategory)) {
+              continue; // category doesn't match
+            }
+
+            // Skip if already activated from quote path above
+            if (activatedPlans.some(ap => ap.template_id === tmpl.id)) {
+              continue;
+            }
+
+            const initialStatus = hasCard ? 'active' : 'pending_payment_method';
+            const planPrice = parseFloat(tmpl.price) || 0;
+
+            // Calculate next fulfillment date
+            let nextFulfillment = null;
+            if (tmpl.fulfillment_type === 'tech_visit' || tmpl.fulfillment_type === 'shipment') {
+              if (tmpl.fulfillment_interval_months) {
+                const fd = new Date();
+                fd.setMonth(fd.getMonth() + tmpl.fulfillment_interval_months);
+                nextFulfillment = fd.toISOString().split('T')[0];
+              }
+            }
+
+            try {
+              const { data: newPlan } = await supabase
+                .from('customer_service_plans')
+                .insert({
+                  customer_id:          customerId,
+                  plan_id:              tmpl.id,
+                  installed_system_id:  installedSystemId,
+                  source:               'auto_install',
+                  source_quote_id:      null,
+                  status:               initialStatus,
+                  billing_cycle:        tmpl.billing_cycle,
+                  price:                planPrice,
+                  start_date:           todayDate,
+                  billing_start_date:   hasCard ? todayDate : null,
+                  next_billing_date:    hasCard ? todayDate : null,
+                  next_fulfillment_date: nextFulfillment,
+                  next_service:         nextFulfillment,
+                  activated_at:         hasCard ? nowISO : null,
+                })
+                .select('id')
+                .single();
+
+              if (newPlan) {
+                activatedPlans.push({ id: newPlan.id, source: 'auto_install', template_id: tmpl.id, status: initialStatus, name: tmpl.name });
+              }
+            } catch (insertErr) {
+              if (insertErr.code === '23505') {
+                console.log(`[complete.js] Auto-enroll plan already exists for template ${tmpl.id}, skipping`);
+              } else {
+                console.error('[BEST-EFFORT] auto-enroll plan insert:', insertErr.message);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[BEST-EFFORT] auto-enroll template lookup:', e.message);
+      }
+
+      // ── Activity logs for activated plans ──────────────────────────
+      for (const ap of activatedPlans) {
+        try {
+          await supabase.from('customer_activity_log').insert({
+            customer_id: customerId,
+            event_type:  ap.status === 'active' ? 'service_plan_activated' : 'service_plan_added',
+            title:       `Service plan ${ap.status === 'active' ? 'activated' : 'added (card required)'}: ${ap.name || 'from quote'}`,
+            actor_id:    null,
+            actor_name:  'System',
+            metadata: {
+              plan_id:     ap.id,
+              template_id: ap.template_id,
+              source:      ap.source,
+              status:      ap.status,
+            },
+          });
+        } catch (e) { /* best effort */ }
+      }
+    }
+
     // ── 8. Job activity log ───────────────────────────────────────────
-    // actor_id FIX: never write job_id into actor_id.
-    // completed_by (user UUID) when available; sentinel string 'system' otherwise.
-    // 'system' is a safe non-null value that satisfies the non-nullable column constraint.
-    // Only logged on first-run; re-runs do not re-append activity.
     if (!alreadyComplete) {
       try {
         await supabase.from('job_activity_log').insert({
@@ -371,6 +531,7 @@ module.exports = async function handler(req, res) {
             customer_id:         customerId,
             ownership_type:      ownershipType,
             ownership_source:    ownershipSource,
+            service_plans_activated: activatedPlans.length,
           },
           actor_id:   completed_by || 'system',
           actor_name: null,
@@ -378,7 +539,6 @@ module.exports = async function handler(req, res) {
       } catch(e) { console.error('[BEST-EFFORT] job_activity_log:', e.message); }
 
       // ── 8b. Customer activity log ───────────────────────────────────
-      // actor_id is null — column is nullable on customer_activity_log (confirmed prior fix).
       if (customerId) {
         try {
           await supabase.from('customer_activity_log').insert({
@@ -394,6 +554,7 @@ module.exports = async function handler(req, res) {
               ownership_type:      ownershipType,
               ownership_source:    ownershipSource,
               system_type:         job.system_type || null,
+              service_plans_activated: activatedPlans.length,
             },
           });
         } catch(e) { console.error('[BEST-EFFORT] customer_activity_log:', e.message); }
@@ -410,11 +571,11 @@ module.exports = async function handler(req, res) {
         ownership_source:     ownershipSource,
         charge_status:        installFee <= 0 ? 'no_fee' : 'no_customer',
         install_fee:          installFee,
+        service_plans:        activatedPlans,
       });
     }
 
     // ── 10. Double-charge guard ───────────────────────────────────────
-    // Skip Stripe charge if a succeeded install_fee transaction already exists for this customer.
     const { data: existingCharge } = await supabase
       .from('payment_transactions')
       .select('id')
@@ -432,6 +593,7 @@ module.exports = async function handler(req, res) {
         ownership_source:    ownershipSource,
         charge_status:       'already_charged',
         charge_details:      { reason: 'Install fee already charged for this customer' },
+        service_plans:       activatedPlans,
       });
     }
 
@@ -451,6 +613,7 @@ module.exports = async function handler(req, res) {
         charge_status:       'skipped',
         charge_details:      { reason: 'No Stripe customer ID' },
         install_fee:         installFee,
+        service_plans:       activatedPlans,
       });
     }
 
@@ -473,6 +636,7 @@ module.exports = async function handler(req, res) {
         charge_status:       'skipped',
         charge_details:      { reason: 'No payment method on file' },
         install_fee:         installFee,
+        service_plans:       activatedPlans,
       });
     }
 
@@ -531,6 +695,7 @@ module.exports = async function handler(req, res) {
       ownership_source:    ownershipSource,
       charge_status:       chargeResult.status,
       charge_details:      chargeResult,
+      service_plans:       activatedPlans,
     });
 
   } catch (err) {
