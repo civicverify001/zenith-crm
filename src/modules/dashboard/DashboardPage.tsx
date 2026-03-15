@@ -1,3 +1,6 @@
+// src/modules/dashboard/DashboardPage.tsx
+// Dashboard — Phase 3.5 update: 3 new fulfillment queue widgets added
+
 import { useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { useNavigate } from 'react-router-dom'
@@ -366,8 +369,8 @@ function useWeekCalendarEvents(userId: string | undefined, role: string | null) 
       }
       if (role === 'admin' || role === 'technician') {
         const { data: jobs } = await supabase.from('jobs')
-  .select('id, customer_name_snapshot, status, scheduled_date, system_type')
-  .gte('scheduled_date', days[0]).lte('scheduled_date', days[6] + 'T23:59:59')
+          .select('id, customer_name_snapshot, status, scheduled_date, system_type')
+          .gte('scheduled_date', days[0]).lte('scheduled_date', days[6] + 'T23:59:59')
         for (const j of (jobs || [])) {
           const dk = j.scheduled_date.split('T')[0]
           if (results[dk]) results[dk].jobs.push(j)
@@ -376,6 +379,81 @@ function useWeekCalendarEvents(userId: string | undefined, role: string | null) 
       return { days, events: results }
     },
     enabled: !!userId, refetchInterval: 60_000,
+  })
+}
+
+// ── PHASE 3.5: Fulfillment Queue Hooks ──────────────────────────
+
+function useAwaitingSchedule() {
+  return useQuery({
+    queryKey: ['dashboard', 'awaiting_schedule'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('fulfillment_requests')
+        .select(`
+          id, customer_id, due_date, created_at, type,
+          customers(full_name, phone),
+          customer_service_plans(plan_name)
+        `)
+        .eq('status', 'paid_awaiting_schedule')
+        .order('due_date', { ascending: true })
+        .limit(10)
+      if (error) throw error
+      return data || []
+    },
+    refetchInterval: 30_000,
+  })
+}
+
+function useScheduledThisWeek() {
+  return useQuery({
+    queryKey: ['dashboard', 'scheduled_this_week'],
+    queryFn: async () => {
+      const now = new Date()
+      const startOfWeek = new Date(now)
+      startOfWeek.setDate(now.getDate() - now.getDay())
+      const endOfWeek = new Date(startOfWeek)
+      endOfWeek.setDate(startOfWeek.getDate() + 6)
+
+      const { data, error } = await supabase
+        .from('fulfillment_requests')
+        .select(`
+          id, customer_id, scheduled_date, type,
+          customers(full_name),
+          customer_service_plans(plan_name)
+        `)
+        .eq('status', 'scheduled')
+        .gte('scheduled_date', startOfWeek.toISOString().split('T')[0])
+        .lte('scheduled_date', endOfWeek.toISOString().split('T')[0])
+        .order('scheduled_date', { ascending: true })
+      if (error) throw error
+      return data || []
+    },
+    refetchInterval: 30_000,
+  })
+}
+
+function useOverdueFulfillment() {
+  return useQuery({
+    queryKey: ['dashboard', 'overdue_fulfillment'],
+    queryFn: async () => {
+      const sevenDaysAgo = new Date()
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+
+      const { data, error } = await supabase
+        .from('fulfillment_requests')
+        .select(`
+          id, customer_id, due_date, created_at, type,
+          customers(full_name, phone),
+          customer_service_plans(plan_name)
+        `)
+        .eq('status', 'paid_awaiting_schedule')
+        .lte('due_date', sevenDaysAgo.toISOString().split('T')[0])
+        .order('due_date', { ascending: true })
+      if (error) throw error
+      return data || []
+    },
+    refetchInterval: 30_000,
   })
 }
 
@@ -627,8 +705,10 @@ export function DashboardPage() {
   const navigate = useNavigate()
 
   const isAdmin        = role === 'admin'
+  const isFrontdesk    = role === 'frontdesk'
   const isSalesOrAdmin = role === 'admin' || role === 'salesrep' || role === 'frontdesk'
   const isTechOrAdmin  = role === 'admin' || role === 'technician'
+  const isAdminOrFD    = isAdmin || isFrontdesk
 
   const { data: newLeadsToday = [] }      = useNewLeadsToday()
   const { data: overdueFollowUps = [] }   = useOverdueLeadFollowUps()
@@ -649,6 +729,11 @@ export function DashboardPage() {
   const { data: lowInventory = [] }       = useLowInventoryAlerts()
   const { data: shipmentsDue = [] }       = useShipmentsDue()
 
+  // Phase 3.5: Fulfillment queue hooks
+  const { data: awaitingSchedule = [] }   = useAwaitingSchedule()
+  const { data: scheduledThisWeek = [] }  = useScheduledThisWeek()
+  const { data: overdueFulfillment = [] } = useOverdueFulfillment()
+
   const hour = new Date().getHours()
   const greeting = profile
     ? `Good ${hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'}, ${profile.full_name.split(' ')[0]}.`
@@ -657,7 +742,7 @@ export function DashboardPage() {
   const completedThisWeek = jobsThisWeek.filter((j: any) => j.status === 'complete').length
   const scheduledToday    = todaysJobs.filter((j: any) => j.status === 'scheduled').length
   const inProgressToday   = todaysJobs.filter((j: any) => j.status === 'in_progress').length
-  const urgentCount = overdueFollowUps.length + overdueServices.length + failedPayments.length + pendingProof.length + unsignedAgreements.length + unassignedJobs.length + shipmentsDue.length
+  const urgentCount = overdueFollowUps.length + overdueServices.length + failedPayments.length + pendingProof.length + unsignedAgreements.length + unassignedJobs.length + shipmentsDue.length + overdueFulfillment.length
 
   return (
     <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -697,6 +782,61 @@ export function DashboardPage() {
 
       {/* ── Action Cards Grid ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
+
+        {/* ══ PHASE 3.5: Overdue Fulfillment — highest urgency ══ */}
+        {isAdminOrFD && overdueFulfillment.length > 0 && (
+          <ActionCard title="Overdue Fulfillment" icon="🚨" count={overdueFulfillment.length} accent="#ef4444" urgent onClick={() => navigate('/fulfillment')}>
+            {overdueFulfillment.slice(0, 5).map((fr: any) => {
+              const daysPending = Math.floor((Date.now() - new Date(fr.due_date).getTime()) / 86400000)
+              return (
+                <Row key={fr.id} onClick={() => navigate('/fulfillment')}>
+                  <RowLeft primary={(fr.customers as any)?.full_name || 'Unknown'} secondary={`${(fr.customer_service_plans as any)?.plan_name || 'Plan'} · Paid ${daysPending}d ago`} />
+                  <RowRight><span style={{ fontSize: 11, fontWeight: 700, color: '#f87171' }}>{daysPending}d overdue</span></RowRight>
+                </Row>
+              )
+            })}
+            <MoreLink count={overdueFulfillment.length} limit={5} onClick={() => navigate('/fulfillment')} />
+          </ActionCard>
+        )}
+
+        {/* ══ PHASE 3.5: Paid — Awaiting Schedule ══ */}
+        {isAdminOrFD && awaitingSchedule.length > 0 && (
+          <ActionCard title="Paid — Awaiting Schedule" icon="🔔" count={awaitingSchedule.length} accent="#fbbf24" urgent onClick={() => navigate('/fulfillment')}>
+            {awaitingSchedule.slice(0, 5).map((fr: any) => (
+              <Row key={fr.id} onClick={() => navigate('/fulfillment')}>
+                <RowLeft primary={(fr.customers as any)?.full_name || 'Unknown'} secondary={(fr.customer_service_plans as any)?.plan_name || 'Service plan'} />
+                <RowRight>
+                  {(fr.customers as any)?.phone ? (
+                    <a href={`tel:${(fr.customers as any).phone}`} onClick={(e) => e.stopPropagation()}
+                      style={{ fontSize: 11, color: '#0d7ea3', textDecoration: 'none' }}>
+                      📞 Call
+                    </a>
+                  ) : null}
+                </RowRight>
+              </Row>
+            ))}
+            <MoreLink count={awaitingSchedule.length} limit={5} onClick={() => navigate('/fulfillment')} />
+          </ActionCard>
+        )}
+
+        {/* ══ PHASE 3.5: Scheduled Visits This Week ══ */}
+        {(isAdminOrFD || role === 'technician') && scheduledThisWeek.length > 0 && (
+          <ActionCard title="Scheduled Visits This Week" icon="📅" count={scheduledThisWeek.length} accent="#60a5fa" onClick={() => navigate('/fulfillment')}>
+            {scheduledThisWeek.slice(0, 5).map((fr: any) => (
+              <Row key={fr.id} onClick={() => navigate('/fulfillment')}>
+                <RowLeft primary={(fr.customers as any)?.full_name || 'Unknown'} secondary={(fr.customer_service_plans as any)?.plan_name || 'Service plan'} />
+                <RowRight>
+                  <span style={{ fontSize: 11, color: '#60a5fa', fontWeight: 600 }}>
+                    {fr.scheduled_date ? new Date(fr.scheduled_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—'}
+                  </span>
+                </RowRight>
+              </Row>
+            ))}
+            <MoreLink count={scheduledThisWeek.length} limit={5} onClick={() => navigate('/fulfillment')} />
+          </ActionCard>
+        )}
+
+        {/* ── Existing widgets below ── */}
 
         {isAdmin && failedPayments.length > 0 && (
           <ActionCard title="Failed Payments" icon="💳" count={failedPayments.length} accent="#ef4444" urgent onClick={() => navigate('/customers')}>
@@ -928,6 +1068,7 @@ export function DashboardPage() {
             { label: 'View Pipeline', path: '/leads' },
             { label: 'Dispatch Board', path: '/dispatch' },
             { label: 'All Customers', path: '/customers' },
+            ...(isAdminOrFD ? [{ label: 'Fulfillment Queue', path: '/fulfillment' }] : []),
             ...(isAdmin ? [{ label: 'Product Catalog', path: '/products' }] : []),
           ].map(a => (
             <button key={a.label} onClick={() => navigate(a.path)}
