@@ -48,7 +48,6 @@ export async function calculateBuyout(contractId: string, calculatedBy: string):
     .select('id, product_id')
     .eq('customer_id', contract.customer_id)
     .eq('ownership_type', 'rented')
-    .eq('is_active', true)
 
   const activeSystems = systems || []
   if (!activeSystems.length) throw new Error('No active rented systems on this account')
@@ -155,7 +154,6 @@ export async function executeBuyout(calculationId: string, actor: ActorInfo): Pr
     .select('id, product_id')
     .eq('customer_id', customerId)
     .eq('ownership_type', 'rented')
-    .eq('is_active', true)
 
   const systemIds = (systems || []).map((s: any) => s.id)
 
