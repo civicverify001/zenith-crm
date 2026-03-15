@@ -62,13 +62,14 @@ const FIELD_TYPE_LABELS: Record<string, string> = {
   prefill_source:        'Auto-fill: Lead Source',
 }
 
-type AdminTab = 'qualifying' | 'site_visit' | 'terms' | 'service_plans'
+type AdminTab = 'qualifying' | 'site_visit' | 'terms' | 'service_plans' | 'email_templates'
 
 const TABS: { key: AdminTab; label: string; icon: string; color: string }[] = [
-  { key: 'qualifying',    label: 'Qualifying Checklist', icon: '✅', color: '#4ade80' },
-  { key: 'site_visit',    label: 'Site Visit Checklist', icon: '📋', color: '#22d3ee' },
-  { key: 'terms',         label: 'Term Blocks',          icon: '📄', color: '#a78bfa' },
-  { key: 'service_plans', label: 'Service Plans',        icon: '🔄', color: '#f59e0b' },
+  { key: 'qualifying',       label: 'Qualifying Checklist', icon: '✅', color: '#4ade80' },
+  { key: 'site_visit',       label: 'Site Visit Checklist', icon: '📋', color: '#22d3ee' },
+  { key: 'terms',            label: 'Term Blocks',          icon: '📄', color: '#a78bfa' },
+  { key: 'service_plans',    label: 'Service Plans',        icon: '🔄', color: '#f59e0b' },
+  { key: 'email_templates',  label: 'Email Templates',      icon: '✉️', color: '#f472b6' },
 ]
 
 export default function AdminSettingsPage() {
