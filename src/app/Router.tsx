@@ -13,6 +13,7 @@ import InventoryPage from '../modules/inventory/InventoryPage'
 import UserManagementPage from '../modules/admin/UserManagementPage'
 import { MySchedulePage } from '../modules/schedule/MySchedulePage'
 import { ConnectCalendarPage } from '../modules/schedule/ConnectCalendarPage'
+import ShippingPage from '../modules/shipping/ShippingPage'
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
@@ -193,6 +194,9 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
         {/* Contracts */}
         <Route path="/services" element={guard('/services', <ContractsPage />)} />
         <Route path="/contracts/:id" element={guard('/services', <ContractDetailPage />)} />
+
+        {/* Shipping */}
+        <Route path="/shipping" element={guard('/shipping', <ShippingPage />)} />
 
         {/* Accounting */}
         <Route path="/accounting" element={guard('/accounting', <AccountingPage />)} />
