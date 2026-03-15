@@ -64,11 +64,12 @@ const PDF_PRINT_BTN = `
   </div>
 `
 const PDF_HEADER = `
-  <div class="header">
-    <h1>ZENITH PURE SOLUTIONS LLC</h1>
-    <p>6951 E 30th St, Suite B · Indianapolis, IN 46219</p>
-    <p>(317) 690-4172 · zenithpuresolutions.com</p>
+  <div class="header" style="background:#0a2540;padding:24px 32px;text-align:center;border-radius:8px 8px 0 0;">
+    <img src="${ZENITH_LOGO_FULL}" style="height:64px;max-width:320px;object-fit:contain;" alt="Zenith Pure Solutions" />
+    <p style="color:#93c5fd;font-size:12px;margin-top:10px;">6951 E 30th St, Suite B · Indianapolis, IN 46219</p>
+    <p style="color:#93c5fd;font-size:12px;">(317) 690-4172 · zenithpuresolutions.com</p>
   </div>
+`
 `
 const PDF_FOOTER = `
   <div class="footer">
