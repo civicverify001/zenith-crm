@@ -568,12 +568,56 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
     setSaving(true)
     try {
       if (shipment.status === 'pending' && tracking) {
-        // If adding tracking to pending, move to label_created
         await markLabelCreated(shipment.id, { tracking_number: tracking, label_url: labelUrl || undefined })
       } else {
         await updateShipment(shipment.id, { tracking_number: tracking, label_url: labelUrl })
       }
       onUpdated()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleGenerateFedExLabel = async () => {
+    if (!confirm('Generate a FedEx shipping label for this shipment?')) return
+    setSaving(true)
+    try {
+      const res = await fetch('/api/shipping/create-label', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shipment_id: shipment.id }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        alert(data.error || 'Failed to create FedEx label')
+      } else {
+        if (data.label_url) window.open(data.label_url, '_blank')
+        onUpdated()
+      }
+    } catch (err) {
+      alert('Error generating FedEx label')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleTrackPackage = async () => {
+    if (!shipment.tracking_number) return
+    setSaving(true)
+    try {
+      const res = await fetch('/api/shipping/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tracking_number: shipment.tracking_number }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        alert(`Status: ${data.fedex_status || data.status}\n${data.description || ''}\n${data.location ? 'Location: ' + data.location : ''}${data.estimated_delivery ? '\nETA: ' + new Date(data.estimated_delivery).toLocaleDateString() : ''}`)
+      } else {
+        alert(data.error || 'Tracking lookup failed')
+      }
+    } catch {
+      alert('Error fetching tracking info')
     } finally {
       setSaving(false)
     }
@@ -585,7 +629,13 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
       switch (action) {
         case 'ship': {
           const result = await markShipped(shipment.id)
-          if (!result.success) alert(result.error || 'Failed')
+          if (!result.success) { alert(result.error || 'Failed'); break }
+          // Fire-and-forget: send shipment notification email
+          fetch('/api/email/send-shipment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shipment_id: shipment.id }),
+          }).catch(() => {})
           break
         }
         case 'in_transit': await markInTransit(shipment.id); break
@@ -710,6 +760,9 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
 
         {/* Action buttons */}
         <div style={{ display: 'flex', gap: 8, marginTop: 16, paddingTop: 16, borderTop: '1px solid #1e3a4f', flexWrap: 'wrap' }}>
+          {shipment.status === 'pending' && can('shipping', 'create') && (
+            <ActionBtn label="📦 FedEx Label" color="#8b5cf6" onClick={handleGenerateFedExLabel} disabled={saving} />
+          )}
           {['pending', 'label_created'].includes(shipment.status) && can('shipping', 'mark_shipped') && (
             <ActionBtn label="Mark Shipped" color="#3b82f6" onClick={() => handleAction('ship')} disabled={saving} />
           )}
@@ -721,6 +774,9 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
           )}
           {shipment.status === 'in_transit' && can('shipping', 'mark_delivered') && (
             <ActionBtn label="Delivered" color="#10b981" onClick={() => handleAction('deliver')} disabled={saving} />
+          )}
+          {shipment.tracking_number && ['shipped', 'in_transit'].includes(shipment.status) && (
+            <ActionBtn label="📍 Track" color="#06b6d4" onClick={handleTrackPackage} disabled={saving} />
           )}
           {['pending', 'label_created'].includes(shipment.status) && can('shipping', 'cancel') && (
             <ActionBtn label="Cancel" color="#ef4444" onClick={() => handleAction('cancel')} disabled={saving} />
