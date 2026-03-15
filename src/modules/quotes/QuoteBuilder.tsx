@@ -1,5 +1,6 @@
 // src/modules/quotes/QuoteBuilder.tsx
 // Full quote creation form + live PDF preview in one flow
+// SERVICE PLANS: Added service plan picker below line items (item_type = 'service_plan')
 
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
@@ -8,54 +9,51 @@ import {
   createQuote, updateQuote, sendQuote, fetchProducts,
   type QuoteLineItem, type CommercialType, type Product, type Quote,
 } from '../../services/quotesService'
+import {
+  fetchPlanTemplates,
+  BILLING_CYCLE_LABELS,
+  FULFILLMENT_TYPE_LABELS,
+  type ServicePlanTemplate,
+} from '../../services/servicePlanService'
 
-// html2pdf loaded via CDN script tag injected at runtime
 declare const html2pdf: any
 
-// ─── Zenith brand colors ──────────────────────────────────────
 const Z = {
-  navy:    '#0c1e35',
-  teal:    '#0d7ea3',
-  tealDim: '#0a5f7a',
-  gold:    '#d4a843',
-  white:   '#ffffff',
-  light:   '#f0f4f8',
-  border:  '#e2e8f0',
-  text:    '#1a2a3a',
-  muted:   '#64748b',
+  navy: '#0c1e35', teal: '#0d7ea3', tealDim: '#0a5f7a', gold: '#d4a843',
+  white: '#ffffff', light: '#f0f4f8', border: '#e2e8f0', text: '#1a2a3a', muted: '#64748b',
 }
 
-// ─── ACH details ─────────────────────────────────────────────
 const ACH = {
-  bankName:    'Old National Bank',
-  abaNumber:   '086300012',
-  accountNum:  '0127726846',
-  accountName: 'ZENITH PURE SOLUTIONS LLC',
-  email:       'accounts@zenithpuresolutions.com',
-  phone:       '+1 (317) 690-4172',
+  bankName: 'Old National Bank', abaNumber: '086300012', accountNum: '0127726846',
+  accountName: 'ZENITH PURE SOLUTIONS LLC', email: 'accounts@zenithpuresolutions.com', phone: '+1 (317) 690-4172',
 }
 
 const COMPANY = {
-  name:    'Zenith Pure Solutions LLC',
-  address: '6951 E 30th, Suite B',
-  city:    'Indianapolis IN 46219',
-  country: 'United States',
-  phone:   '+1 (317) 690-4172',
-  email:   'accounts@zenithpuresolutions.com',
-  web:     'zenithpuresolutions.com',
+  name: 'Zenith Pure Solutions LLC', address: '6951 E 30th, Suite B',
+  city: 'Indianapolis IN 46219', country: 'United States',
+  phone: '+1 (317) 690-4172', email: 'accounts@zenithpuresolutions.com', web: 'zenithpuresolutions.com',
 }
 
 const ESTIMATION_DEFAULT = `Why This System Is Recommended for Your Home\nThis system has been recommended based on your home size, water usage, and water quality needs. It is designed to improve overall water quality, enhance efficiency, and protect your plumbing, appliances, and fixtures. The configuration selected provides reliable performance, long-term durability, and a better water experience throughout your home.`
 
 const AUTH_TEXT = `This is an estimate, not a final invoice or contract for services.\nThe summary above is a good-faith estimate based on our evaluation of the work to be performed at the installation address. It does not include potential material price changes or any additional labor or materials that may be required if unforeseen conditions arise during installation.\nI understand that the final cost of the work may differ from this estimate if extra materials, modifications, or labor are required. This estimate does not guarantee the final price of the work to be performed.\nBy approving this estimate, I authorize Zenith Pure Solutions to proceed as outlined and agree to pay the full amount for all services rendered.\nFor complete details, please refer to the Terms & Conditions link.`
 
-// ─── Types ───────────────────────────────────────────────────
-
 interface DraftLineItem extends Omit<QuoteLineItem, 'id' | 'quote_id'> {
   _key: string
   discount_pct: number
   original_unit_price: number
   sku?: string
+}
+
+interface SelectedServicePlan {
+  _key: string
+  template_id: string
+  name: string
+  billing_cycle: string
+  price: number
+  original_price: number
+  fulfillment_type: string
+  description: string
 }
 
 interface Props {
@@ -71,37 +69,16 @@ interface Props {
   onCancel?: () => void
 }
 
-// ─── Helpers ─────────────────────────────────────────────────
-
-function fmt(n: number) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
-}
-
-function todayStr() {
-  return new Date().toISOString().split('T')[0]
-}
-
-function expiryStr(days = 14) {
-  const d = new Date()
-  d.setDate(d.getDate() + days)
-  return d.toISOString().split('T')[0]
-}
-
-function fmtDate(s: string) {
-  return new Date(s).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
-}
-
-function uid() {
-  return Math.random().toString(36).slice(2, 10)
-}
-
-// ─── Main Component ───────────────────────────────────────────
+function fmt(n: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n) }
+function todayStr() { return new Date().toISOString().split('T')[0] }
+function expiryStr(days = 14) { const d = new Date(); d.setDate(d.getDate() + days); return d.toISOString().split('T')[0] }
+function fmtDate(s: string) { return new Date(s).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) }
+function uid() { return Math.random().toString(36).slice(2, 10) }
 
 export function QuoteBuilder({
   customerId, customerName, customerAddress = '', customerPhone = '',
   opportunityId = null, leadId = null, existingQuote = null,
-  initialView = 'form',
-  onSaved, onCancel,
+  initialView = 'form', onSaved, onCancel,
 }: Props) {
   const { profile } = useAuth()
   const [view, setView] = useState<'form' | 'preview'>(initialView)
@@ -113,133 +90,107 @@ export function QuoteBuilder({
   const previewRef = useRef<HTMLDivElement>(null)
   const [products, setProducts] = useState<Product[]>([])
   const [loadingProducts, setLoadingProducts] = useState(true)
+  const [planTemplates, setPlanTemplates] = useState<ServicePlanTemplate[]>([])
 
-  // ─── Form state ────────────────────────────────────────────
-  const [commercialType, setCommercialType] = useState<CommercialType>(
-    existingQuote?.commercial_type || 'rental'
-  )
-  const [estimation, setEstimation] = useState(
-    existingQuote?.notes || ESTIMATION_DEFAULT
-  )
-  const [validUntil, setValidUntil] = useState(
-    existingQuote?.valid_until || expiryStr(14)
-  )
+  const [commercialType, setCommercialType] = useState<CommercialType>(existingQuote?.commercial_type || 'rental')
+  const [estimation, setEstimation] = useState(existingQuote?.notes || ESTIMATION_DEFAULT)
+  const [validUntil, setValidUntil] = useState(existingQuote?.valid_until || expiryStr(14))
   const [lineItems, setLineItems] = useState<DraftLineItem[]>(
-    existingQuote?.line_items?.map((li) => ({
-      ...li,
-      _key: uid(),
-      discount_pct: 0,
-      original_unit_price: li.unit_price,
-    })) || []
+    existingQuote?.line_items?.map((li) => ({ ...li, _key: uid(), discount_pct: 0, original_unit_price: li.unit_price })) || []
   )
   const [quoteNumber] = useState(existingQuote?.quote_number || '(auto-assigned)')
   const [savedQuoteId, setSavedQuoteId] = useState<string | null>(existingQuote?.id || null)
   const [serviceAddress, setServiceAddress] = useState(customerAddress || existingQuote?.customer_address || '')
 
-  // Fetch line items if existingQuote was passed without them
+  // Service plans selected for this quote
+  const [selectedPlans, setSelectedPlans] = useState<SelectedServicePlan[]>([])
+
+  // Load existing line items if existingQuote was passed without them
   useEffect(() => {
     if (!existingQuote?.id) return
     if (existingQuote.line_items && existingQuote.line_items.length > 0) return
     import('../../services/quotesService').then(({ fetchQuote }) => {
       fetchQuote(existingQuote.id).then(q => {
         if (q?.line_items && q.line_items.length > 0) {
-          setLineItems(q.line_items.map((li: any) => ({
-            ...li,
-            _key: uid(),
-            discount_pct: 0,
-            original_unit_price: li.unit_price,
-          })))
+          const regularItems: DraftLineItem[] = []
+          const planItems: SelectedServicePlan[] = []
+          for (const li of q.line_items) {
+            if (li.item_type === 'service_plan' && li.metadata?.plan_template_id) {
+              planItems.push({
+                _key: uid(),
+                template_id: li.metadata.plan_template_id,
+                name: li.description.split(' — ')[0] || li.description,
+                billing_cycle: li.metadata.billing_cycle || 'yearly',
+                price: li.unit_price,
+                original_price: li.unit_price,
+                fulfillment_type: li.metadata.fulfillment_type || 'none',
+                description: li.description,
+              })
+            } else {
+              regularItems.push({ ...li, _key: uid(), discount_pct: 0, original_unit_price: li.unit_price })
+            }
+          }
+          setLineItems(regularItems)
+          if (planItems.length > 0) setSelectedPlans(planItems)
         }
       }).catch(console.error)
     })
   }, [existingQuote?.id])
 
-  // Auto-fetch address from leads via customer.lead_id
+  // Auto-fetch address from leads
   useEffect(() => {
     if (serviceAddress || !customerId) return
     import('../../lib/supabase').then(({ supabase }) => {
-      supabase
-        .from('customers')
-        .select('lead_id')
-        .eq('id', customerId)
-        .single()
-        .then(({ data: cust }) => {
-          if (!cust?.lead_id) return
-          supabase
-            .from('leads')
-            .select('address, city, state, zip')
-            .eq('id', cust.lead_id)
-            .single()
-            .then(({ data: lead }) => {
-              if (!lead) return
-              const parts = [
-                lead.address,
-                lead.city,
-                lead.state && lead.zip ? `${lead.state} ${lead.zip}` : lead.state || lead.zip,
-              ].filter(Boolean)
-              if (parts.length) setServiceAddress(parts.join(', '))
-            })
+      supabase.from('customers').select('lead_id').eq('id', customerId).single().then(({ data: cust }) => {
+        if (!cust?.lead_id) return
+        supabase.from('leads').select('address, city, state, zip').eq('id', cust.lead_id).single().then(({ data: lead }) => {
+          if (!lead) return
+          const parts = [lead.address, lead.city, lead.state && lead.zip ? `${lead.state} ${lead.zip}` : lead.state || lead.zip].filter(Boolean)
+          if (parts.length) setServiceAddress(parts.join(', '))
         })
+      })
     })
   }, [customerId])
 
   // Load products
   useEffect(() => {
-    fetchProducts()
-      .then(setProducts)
-      .catch(console.error)
-      .finally(() => setLoadingProducts(false))
+    fetchProducts().then(setProducts).catch(console.error).finally(() => setLoadingProducts(false))
+  }, [])
+
+  // Load plan templates
+  useEffect(() => {
+    fetchPlanTemplates(true).then(setPlanTemplates).catch(console.error)
   }, [])
 
   // ─── Line item helpers ─────────────────────────────────────
 
   function addProduct(product: Product) {
-    // ── PRICING FIX: explicit per commercial type, no cross-type fallback ──
     let unitPrice: number
-
     if (commercialType === 'rental') {
-      // Rental must use rental_price_monthly — no fallback to retail allowed
       if (product.rental_price_monthly == null) {
         alert(`"${product.name}" does not have a rental monthly price configured. Contact admin to update the product catalog before adding this item to a rental quote.`)
         return
       }
       unitPrice = product.rental_price_monthly
     } else if (commercialType === 'purchase') {
-      // Purchase uses retail_price only
       unitPrice = product.retail_price ?? 0
     } else {
-      // financed — same pricing as purchase (retail_price), not rental
-      // financed is a payment/funding path, not a separate price tier
       unitPrice = product.retail_price ?? 0
     }
 
     const productItem: DraftLineItem = {
-      _key: uid(),
-      product_id: product.id,
-      sku: product.sku || '',
-      description: buildProductDescription(product),
-      quantity: 1,
-      unit_price: unitPrice,
-      original_unit_price: unitPrice,
-      total: unitPrice,
-      item_type: 'product',
-      sort_order: 0,
-      discount_pct: 0,
+      _key: uid(), product_id: product.id, sku: product.sku || '',
+      description: buildProductDescription(product), quantity: 1,
+      unit_price: unitPrice, original_unit_price: unitPrice, total: unitPrice,
+      item_type: 'product', sort_order: 0, discount_pct: 0,
     }
 
     if (product.install_fee && product.install_fee > 0) {
       const installItem: DraftLineItem = {
-        _key: uid(),
-        product_id: product.id,
-        sku: '',
-        description: `Installation Fee — ${product.name}`,
-        quantity: 1,
-        unit_price: product.install_fee,
-        original_unit_price: product.install_fee,
-        total: product.install_fee,
-        item_type: 'install_fee',
-        sort_order: 1,
-        discount_pct: 0,
+        _key: uid(), product_id: product.id, sku: '',
+        description: `Installation Fee — ${product.name}`, quantity: 1,
+        unit_price: product.install_fee, original_unit_price: product.install_fee,
+        total: product.install_fee, item_type: 'install_fee', sort_order: 1, discount_pct: 0,
       }
       setLineItems(prev => [...prev, productItem, installItem])
     } else {
@@ -259,17 +210,9 @@ export function QuoteBuilder({
 
   function addCustomLine() {
     setLineItems(prev => [...prev, {
-      _key: uid(),
-      product_id: null,
-      sku: '',
-      description: '',
-      quantity: 1,
-      unit_price: 0,
-      original_unit_price: 0,
-      total: 0,
-      item_type: 'custom',
-      sort_order: prev.length,
-      discount_pct: 0,
+      _key: uid(), product_id: null, sku: '', description: '', quantity: 1,
+      unit_price: 0, original_unit_price: 0, total: 0, item_type: 'custom',
+      sort_order: prev.length, discount_pct: 0,
     }])
   }
 
@@ -279,8 +222,8 @@ export function QuoteBuilder({
       const updated = { ...li, [field]: value }
       if (field === 'quantity' || field === 'unit_price' || field === 'discount_pct') {
         const disc = field === 'discount_pct' ? value : updated.discount_pct
-        const qty  = field === 'quantity'    ? value : updated.quantity
-        const up   = field === 'unit_price'  ? value : updated.unit_price
+        const qty = field === 'quantity' ? value : updated.quantity
+        const up = field === 'unit_price' ? value : updated.unit_price
         const discounted = up * (1 - disc / 100)
         updated.total = parseFloat((qty * discounted).toFixed(2))
       }
@@ -288,9 +231,7 @@ export function QuoteBuilder({
     }))
   }
 
-  function removeLine(key: string) {
-    setLineItems(prev => prev.filter(li => li._key !== key))
-  }
+  function removeLine(key: string) { setLineItems(prev => prev.filter(li => li._key !== key)) }
 
   function moveLine(key: string, dir: 'up' | 'down') {
     setLineItems(prev => {
@@ -304,31 +245,75 @@ export function QuoteBuilder({
     })
   }
 
+  // ─── Service plan helpers ──────────────────────────────────
+
+  function addServicePlan(template: ServicePlanTemplate) {
+    if (selectedPlans.some(p => p.template_id === template.id)) {
+      alert(`"${template.name}" is already added to this quote.`)
+      return
+    }
+    setSelectedPlans(prev => [...prev, {
+      _key: uid(),
+      template_id: template.id,
+      name: template.name,
+      billing_cycle: template.billing_cycle,
+      price: Number(template.price),
+      original_price: Number(template.price),
+      fulfillment_type: template.fulfillment_type,
+      description: template.description || '',
+    }])
+  }
+
+  function removeServicePlan(key: string) {
+    setSelectedPlans(prev => prev.filter(p => p._key !== key))
+  }
+
+  function updatePlanPrice(key: string, price: number) {
+    setSelectedPlans(prev => prev.map(p => p._key === key ? { ...p, price } : p))
+  }
+
   // ─── Totals ────────────────────────────────────────────────
-  const recurringItems  = lineItems.filter(li => li.item_type !== 'install_fee')
+  const recurringItems = lineItems.filter(li => li.item_type !== 'install_fee')
   const installFeeItems = lineItems.filter(li => li.item_type === 'install_fee')
   const monthlySubtotal = recurringItems.reduce((s, li) => s + li.total, 0)
   const installFeeTotal = installFeeItems.reduce((s, li) => s + li.total, 0)
-
-  const subtotal  = lineItems.reduce((s, li) => s + li.total, 0)
+  const subtotal = lineItems.reduce((s, li) => s + li.total, 0)
   const taxAmount = parseFloat((subtotal * 0.07).toFixed(2))
-  const total     = parseFloat((subtotal + taxAmount).toFixed(2))
+  const total = parseFloat((subtotal + taxAmount).toFixed(2))
 
   // ─── Save ──────────────────────────────────────────────────
   async function handleSave(): Promise<string | null> {
     if (!customerId) return null
     setSaving(true)
     try {
-      const items = lineItems.map((li, i) => ({
-        product_id:   li.product_id || null,
-        description:  li.description,
-        quantity:     li.quantity,
-        unit_price:   li.unit_price,
-        total:        li.total,
-        item_type:    li.item_type,
-        sort_order:   i,
-        sku:          li.sku,
-      }))
+      // Combine regular line items + service plan line items
+      const items = [
+        ...lineItems.map((li, i) => ({
+          product_id: li.product_id || null,
+          description: li.description,
+          quantity: li.quantity,
+          unit_price: li.unit_price,
+          total: li.total,
+          item_type: li.item_type,
+          sort_order: i,
+          sku: li.sku,
+        })),
+        ...selectedPlans.map((sp, i) => ({
+          product_id: null,
+          description: `${sp.name} — ${fmt(sp.price)}${BILLING_CYCLE_LABELS[sp.billing_cycle] || ''}`,
+          quantity: 1,
+          unit_price: sp.price,
+          total: sp.price,
+          item_type: 'service_plan',
+          sort_order: lineItems.length + i,
+          sku: '',
+          metadata: {
+            plan_template_id: sp.template_id,
+            billing_cycle: sp.billing_cycle,
+            fulfillment_type: sp.fulfillment_type,
+          },
+        })),
+      ]
 
       if (savedQuoteId) {
         await updateQuote(savedQuoteId, {
@@ -342,14 +327,14 @@ export function QuoteBuilder({
         return savedQuoteId
       } else {
         const q = await createQuote({
-          customer_id:     customerId,
+          customer_id: customerId,
           commercial_type: commercialType,
-          opportunity_id:  opportunityId,
-          lead_id:         leadId,
-          created_by:      profile?.id || null,
-          notes:           estimation,
-          valid_until:     validUntil,
-          line_items:      items,
+          opportunity_id: opportunityId,
+          lead_id: leadId,
+          created_by: profile?.id || null,
+          notes: estimation,
+          valid_until: validUntil,
+          line_items: items,
         })
         setSavedQuoteId(q.id)
         if (onSaved) onSaved(q)
@@ -363,23 +348,16 @@ export function QuoteBuilder({
     }
   }
 
-  // ─── Send ──────────────────────────────────────────────────
   async function handleSend() {
     let qId = savedQuoteId
     if (!qId) qId = await handleSave()
     if (!qId) return
-
     setSending(true)
     let emailTo = ''
     try {
       const res = await fetch('/api/email/send-quote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          quoteId: qId,
-          senderEmail: profile?.email,
-          senderName:  profile?.full_name,
-        }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quoteId: qId, senderEmail: profile?.email, senderName: profile?.full_name }),
       })
       const data = await res.json()
       if (res.ok) emailTo = data.to
@@ -388,42 +366,24 @@ export function QuoteBuilder({
     try {
       await sendQuote(qId)
       const { data: updatedQuote } = await supabase.from('quotes').select('*').eq('id', qId).single()
-      if (updatedQuote) {
-        setQuoteStatus(updatedQuote.status || 'sent')
-        if (onSaved) onSaved(updatedQuote)
-      } else {
-        setQuoteStatus('sent')
-      }
-      alert(emailTo
-        ? `✓ Quote emailed to ${emailTo}`
-        : '✓ Quote marked as sent (verify domain at resend.com to enable email delivery)'
-      )
+      if (updatedQuote) { setQuoteStatus(updatedQuote.status || 'sent'); if (onSaved) onSaved(updatedQuote) }
+      else setQuoteStatus('sent')
+      alert(emailTo ? `✓ Quote emailed to ${emailTo}` : '✓ Quote marked as sent (verify domain at resend.com to enable email delivery)')
     } catch (e: any) {
       alert(e.message || 'Send failed')
-    } finally {
-      setSending(false)
-    }
+    } finally { setSending(false) }
   }
 
   async function handleAccept() {
     if (!savedQuoteId) { alert('Save the quote first.'); return }
     setAccepting(true)
     try {
-      await supabase.from('quotes').update({
-        status: 'accepted',
-        accepted_at: new Date().toISOString(),
-      }).eq('id', savedQuoteId)
+      await supabase.from('quotes').update({ status: 'accepted', accepted_at: new Date().toISOString() }).eq('id', savedQuoteId)
       setQuoteStatus('accepted')
-      if (commercialType === 'rental') {
-        setShowAgreement(true)
-      } else {
-        alert('Quote accepted. Generate invoice from the quotes list.')
-      }
-    } catch (e: any) {
-      alert(e.message || 'Accept failed')
-    } finally {
-      setAccepting(false)
-    }
+      if (commercialType === 'rental') setShowAgreement(true)
+      else alert('Quote accepted. Generate invoice from the quotes list.')
+    } catch (e: any) { alert(e.message || 'Accept failed') }
+    finally { setAccepting(false) }
   }
 
   function handleDownloadPDF() {
@@ -432,139 +392,75 @@ export function QuoteBuilder({
       script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'
       script.onload = () => doDownload()
       document.head.appendChild(script)
-    } else {
-      doDownload()
-    }
+    } else { doDownload() }
   }
 
   function doDownload() {
     const el = document.getElementById('zenith-quote-preview')
     if (!el) { alert('Switch to Preview tab first.'); return }
-    const name = `${quoteNumber || 'Quote'}_${customerName.replace(/\s+/g,'-')}.pdf`
-    html2pdf().set({
-      margin: 0,
-      filename: name,
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    }).from(el).save()
+    const name = `${quoteNumber || 'Quote'}_${customerName.replace(/\s+/g, '-')}.pdf`
+    html2pdf().set({ margin: 0, filename: name, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } }).from(el).save()
   }
 
-  // ─── Render ────────────────────────────────────────────────
   return (
     <div style={{ background: '#0f1923', minHeight: '100vh', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       {/* Header */}
-      <div style={{
-        background: '#162232', borderBottom: '1px solid #1e3a4f',
-        padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 12,
-      }}>
-        <button onClick={onCancel} style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>
-          ← Back
-        </button>
+      <div style={{ background: '#162232', borderBottom: '1px solid #1e3a4f', padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button onClick={onCancel} style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>← Back</button>
         <div style={{ flex: 1 }}>
-          <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 16 }}>
-            {savedQuoteId ? quoteNumber : 'New Quote'}
-          </div>
+          <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 16 }}>{savedQuoteId ? quoteNumber : 'New Quote'}</div>
           <div style={{ color: '#64748b', fontSize: 12 }}>{customerName}</div>
         </div>
         <div style={{ display: 'flex', background: '#0f1923', borderRadius: 8, padding: 2, gap: 2 }}>
           {(['form', 'preview'] as const).map(v => (
-            <button key={v} onClick={() => setView(v)} style={{
-              padding: '6px 16px', borderRadius: 6, border: 'none', cursor: 'pointer',
-              fontSize: 13, fontWeight: 600, transition: 'all 0.15s',
-              background: view === v ? '#1e3a5f' : 'transparent',
-              color: view === v ? '#60a5fa' : '#64748b',
-            }}>
+            <button key={v} onClick={() => setView(v)} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, transition: 'all 0.15s', background: view === v ? '#1e3a5f' : 'transparent', color: view === v ? '#60a5fa' : '#64748b' }}>
               {v === 'form' ? '⚙ Build' : '👁 Preview'}
             </button>
           ))}
         </div>
-        <button onClick={handleDownloadPDF} style={{
-          padding: '8px 14px', borderRadius: 8, border: '1px solid #1e3a4f', cursor: 'pointer',
-          background: 'transparent', color: '#64748b', fontWeight: 600, fontSize: 13,
-        }}>⬇ PDF</button>
-        <button onClick={handleSave} disabled={saving || quoteStatus !== 'draft'} style={{
-          padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
-          background: '#1e3a5f', color: '#60a5fa', fontWeight: 600, fontSize: 13,
-          opacity: quoteStatus !== 'draft' ? 0.4 : 1,
-        }}>
+        <button onClick={handleDownloadPDF} style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #1e3a4f', cursor: 'pointer', background: 'transparent', color: '#64748b', fontWeight: 600, fontSize: 13 }}>⬇ PDF</button>
+        <button onClick={handleSave} disabled={saving || quoteStatus !== 'draft'} style={{ padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#1e3a5f', color: '#60a5fa', fontWeight: 600, fontSize: 13, opacity: quoteStatus !== 'draft' ? 0.4 : 1 }}>
           {saving ? 'Saving…' : 'Save Draft'}
         </button>
-        <button onClick={handleSend} disabled={sending || lineItems.length === 0 || quoteStatus !== 'draft'} style={{
-          padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
-          background: lineItems.length === 0 || quoteStatus !== 'draft' ? '#1a2a3a' : '#0d7ea3',
-          color: lineItems.length === 0 || quoteStatus !== 'draft' ? '#334155' : '#fff',
-          fontWeight: 700, fontSize: 13,
-        }}>
+        <button onClick={handleSend} disabled={sending || lineItems.length === 0 || quoteStatus !== 'draft'} style={{ padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer', background: lineItems.length === 0 || quoteStatus !== 'draft' ? '#1a2a3a' : '#0d7ea3', color: lineItems.length === 0 || quoteStatus !== 'draft' ? '#334155' : '#fff', fontWeight: 700, fontSize: 13 }}>
           {sending ? 'Sending…' : 'Send Quote'}
         </button>
         {quoteStatus === 'sent' && (
-          <button onClick={handleAccept} disabled={accepting} style={{
-            padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
-            background: '#16a34a', color: '#fff', fontWeight: 700, fontSize: 13,
-          }}>
+          <button onClick={handleAccept} disabled={accepting} style={{ padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#16a34a', color: '#fff', fontWeight: 700, fontSize: 13 }}>
             {accepting ? 'Accepting…' : '✓ Accept Quote'}
           </button>
         )}
         {quoteStatus === 'accepted' && (
-          <div style={{ padding: '8px 14px', borderRadius: 8, background: '#14532d', color: '#86efac', fontWeight: 700, fontSize: 13 }}>
-            ✓ Accepted
-          </div>
+          <div style={{ padding: '8px 14px', borderRadius: 8, background: '#14532d', color: '#86efac', fontWeight: 700, fontSize: 13 }}>✓ Accepted</div>
         )}
       </div>
 
       {showAgreement && (
-        <RentalAgreementModal
-          quoteNumber={quoteNumber}
-          customerName={customerName}
-          customerAddress={serviceAddress}
-          lineItems={lineItems}
-          monthlySubtotal={monthlySubtotal}
-          installFeeTotal={installFeeTotal}
-          onClose={() => setShowAgreement(false)}
-        />
+        <RentalAgreementModal quoteNumber={quoteNumber} customerName={customerName} customerAddress={serviceAddress} lineItems={lineItems} monthlySubtotal={monthlySubtotal} installFeeTotal={installFeeTotal} onClose={() => setShowAgreement(false)} />
       )}
 
       {view === 'form'
         ? <FormView
-            commercialType={commercialType}
-            setCommercialType={setCommercialType}
-            serviceAddress={serviceAddress}
-            setServiceAddress={setServiceAddress}
-            estimation={estimation}
-            setEstimation={setEstimation}
-            validUntil={validUntil}
-            setValidUntil={setValidUntil}
-            lineItems={lineItems}
-            products={products}
-            loadingProducts={loadingProducts}
-            onAddProduct={addProduct}
-            onAddCustom={addCustomLine}
-            onUpdateLine={updateLine}
-            onRemoveLine={removeLine}
-            onMoveLine={moveLine}
-            subtotal={subtotal}
-            taxAmount={taxAmount}
-            total={total}
-            monthlySubtotal={monthlySubtotal}
-            installFeeTotal={installFeeTotal}
+            commercialType={commercialType} setCommercialType={setCommercialType}
+            serviceAddress={serviceAddress} setServiceAddress={setServiceAddress}
+            estimation={estimation} setEstimation={setEstimation}
+            validUntil={validUntil} setValidUntil={setValidUntil}
+            lineItems={lineItems} products={products} loadingProducts={loadingProducts}
+            onAddProduct={addProduct} onAddCustom={addCustomLine}
+            onUpdateLine={updateLine} onRemoveLine={removeLine} onMoveLine={moveLine}
+            subtotal={subtotal} taxAmount={taxAmount} total={total}
+            monthlySubtotal={monthlySubtotal} installFeeTotal={installFeeTotal}
+            planTemplates={planTemplates} selectedPlans={selectedPlans}
+            onAddServicePlan={addServicePlan} onRemoveServicePlan={removeServicePlan}
+            onUpdatePlanPrice={updatePlanPrice}
           />
         : <PreviewView
-            quoteNumber={savedQuoteId ? quoteNumber : 'Q-DRAFT'}
-            quoteDate={todayStr()}
-            validUntil={validUntil}
-            customerName={customerName}
-            customerAddress={serviceAddress}
-            customerPhone={customerPhone}
-            salesConsultant={profile?.full_name || 'Zenith Pure Solutions'}
-            estimation={estimation}
-            lineItems={lineItems}
-            subtotal={subtotal}
-            taxAmount={taxAmount}
-            total={total}
-            monthlySubtotal={monthlySubtotal}
-            installFeeTotal={installFeeTotal}
-            commercialType={commercialType}
+            quoteNumber={savedQuoteId ? quoteNumber : 'Q-DRAFT'} quoteDate={todayStr()} validUntil={validUntil}
+            customerName={customerName} customerAddress={serviceAddress} customerPhone={customerPhone}
+            salesConsultant={profile?.full_name || 'Zenith Pure Solutions'} estimation={estimation}
+            lineItems={lineItems} subtotal={subtotal} taxAmount={taxAmount} total={total}
+            monthlySubtotal={monthlySubtotal} installFeeTotal={installFeeTotal} commercialType={commercialType}
+            selectedPlans={selectedPlans}
           />
       }
     </div>
@@ -581,10 +477,13 @@ function FormView({
   lineItems, products, loadingProducts,
   onAddProduct, onAddCustom, onUpdateLine, onRemoveLine, onMoveLine,
   subtotal, taxAmount, total, monthlySubtotal, installFeeTotal,
+  planTemplates, selectedPlans, onAddServicePlan, onRemoveServicePlan, onUpdatePlanPrice,
 }: any) {
   const [productSearch, setProductSearch] = useState('')
   const [showProductPicker, setShowProductPicker] = useState(false)
+  const [showPlanPicker, setShowPlanPicker] = useState(false)
   const isRental = commercialType === 'rental'
+  const isAdmin = true // price override shown for all in builder, admin check happens at activation
 
   const filtered = products.filter((p: Product) =>
     !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase())
@@ -637,6 +536,7 @@ function FormView({
         </div>
       </div>
 
+      {/* ═══ LINE ITEMS SECTION ═══ */}
       <div style={S.section}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <div style={S.label}>Line Items</div>
@@ -675,32 +575,19 @@ function FormView({
                         <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{p.name}</div>
                         {p.sku && <div style={{ color: '#64748b', fontSize: 11 }}>{p.sku}</div>}
                       </div>
-
-                      {/* ── PRICING DISPLAY FIX: show only the price relevant to current quote type ── */}
                       <div style={{ textAlign: 'right', flexShrink: 0 }}>
                         {commercialType === 'rental' && (
                           p.rental_price_monthly != null
-                            ? <div style={{ color: '#22d3ee', fontSize: 12, fontWeight: 700 }}>
-                                {fmt(p.rental_price_monthly)}/mo
-                              </div>
-                            : <div style={{ color: '#ef4444', fontSize: 11, fontWeight: 600 }}>
-                                No rental price
-                              </div>
+                            ? <div style={{ color: '#22d3ee', fontSize: 12, fontWeight: 700 }}>{fmt(p.rental_price_monthly)}/mo</div>
+                            : <div style={{ color: '#ef4444', fontSize: 11, fontWeight: 600 }}>No rental price</div>
                         )}
                         {(commercialType === 'purchase' || commercialType === 'financed') && (
                           p.retail_price != null
-                            ? <div style={{ color: '#4ade80', fontSize: 12, fontWeight: 700 }}>
-                                {fmt(p.retail_price)}
-                              </div>
-                            : <div style={{ color: '#ef4444', fontSize: 11, fontWeight: 600 }}>
-                                No purchase price
-                              </div>
+                            ? <div style={{ color: '#4ade80', fontSize: 12, fontWeight: 700 }}>{fmt(p.retail_price)}</div>
+                            : <div style={{ color: '#ef4444', fontSize: 11, fontWeight: 600 }}>No purchase price</div>
                         )}
-                        {/* Install fee shown for all quote types when applicable */}
                         {p.install_fee != null && p.install_fee > 0 && (
-                          <div style={{ color: '#f59e0b', fontSize: 11 }}>
-                            +{fmt(p.install_fee)} install
-                          </div>
+                          <div style={{ color: '#f59e0b', fontSize: 11 }}>+{fmt(p.install_fee)} install</div>
                         )}
                       </div>
                     </button>
@@ -741,42 +628,34 @@ function FormView({
                     <td style={S.td}>
                       {li.sku && <div style={{ color: '#0d7ea3', fontSize: 11, fontWeight: 700, marginBottom: 3 }}>{li.sku}</div>}
                       {li.item_type === 'install_fee' && (
-                        <div style={{ color: '#f59e0b', fontSize: 10, fontWeight: 700, marginBottom: 3, textTransform: 'uppercase' }}>
-                          One-time — charged after installation
-                        </div>
+                        <div style={{ color: '#f59e0b', fontSize: 10, fontWeight: 700, marginBottom: 3, textTransform: 'uppercase' }}>One-time — charged after installation</div>
                       )}
                       <textarea value={li.description} onChange={e => onUpdateLine(li._key, 'description', e.target.value)}
                         rows={3} style={{ ...S.input, width: '100%', resize: 'vertical', fontSize: 12, padding: '6px 8px' }} />
                       <div style={{ marginTop: 4 }}>
                         <select value={li.item_type} onChange={e => onUpdateLine(li._key, 'item_type', e.target.value)}
                           style={{ ...S.input, fontSize: 11, padding: '4px 8px', width: 'auto' }}>
-                          {['product','install_fee','maintenance','discount','custom'].map(t => (
+                          {['product', 'install_fee', 'maintenance', 'discount', 'custom'].map(t => (
                             <option key={t} value={t}>{t}</option>
                           ))}
                         </select>
                       </div>
                     </td>
                     <td style={{ ...S.td, textAlign: 'center' as const }}>
-                      <input type="number" min={1} value={li.quantity}
-                        onChange={e => onUpdateLine(li._key, 'quantity', Number(e.target.value))}
+                      <input type="number" min={1} value={li.quantity} onChange={e => onUpdateLine(li._key, 'quantity', Number(e.target.value))}
                         style={{ ...S.input, textAlign: 'center', width: 56 }} />
                     </td>
                     <td style={{ ...S.td, textAlign: 'right' as const }}>
-                      <input type="number" step="0.01" min={0} value={li.unit_price}
-                        onChange={e => onUpdateLine(li._key, 'unit_price', parseFloat(e.target.value) || 0)}
+                      <input type="number" step="0.01" min={0} value={li.unit_price} onChange={e => onUpdateLine(li._key, 'unit_price', parseFloat(e.target.value) || 0)}
                         style={{ ...S.input, textAlign: 'right', width: 96 }} />
                     </td>
                     <td style={{ ...S.td, textAlign: 'center' as const }}>
-                      <input type="number" min={0} max={100} step={0.5} value={li.discount_pct}
-                        onChange={e => onUpdateLine(li._key, 'discount_pct', parseFloat(e.target.value) || 0)}
+                      <input type="number" min={0} max={100} step={0.5} value={li.discount_pct} onChange={e => onUpdateLine(li._key, 'discount_pct', parseFloat(e.target.value) || 0)}
                         style={{ ...S.input, textAlign: 'center', width: 60 }} />
                     </td>
-                    <td style={{ ...S.td, textAlign: 'right' as const, color: '#e2e8f0', fontWeight: 700, fontSize: 13 }}>
-                      {fmt(li.total)}
-                    </td>
+                    <td style={{ ...S.td, textAlign: 'right' as const, color: '#e2e8f0', fontWeight: 700, fontSize: 13 }}>{fmt(li.total)}</td>
                     <td style={S.td}>
-                      <button onClick={() => onRemoveLine(li._key)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', fontSize: 16, padding: 2 }}>×</button>
+                      <button onClick={() => onRemoveLine(li._key)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', fontSize: 16, padding: 2 }}>×</button>
                     </td>
                   </tr>
                 ))}
@@ -790,18 +669,14 @@ function FormView({
             <div style={{ minWidth: 280 }}>
               {isRental ? (
                 <>
-                  <div style={{ color: '#22d3ee', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
-                    Monthly Recurring
-                  </div>
+                  <div style={{ color: '#22d3ee', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Monthly Recurring</div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', marginBottom: 10 }}>
                     <span style={{ color: '#64748b', fontSize: 13 }}>Monthly subtotal</span>
                     <span style={{ color: '#22d3ee', fontSize: 13, fontWeight: 700 }}>{fmt(monthlySubtotal)}/mo</span>
                   </div>
                   {installFeeTotal > 0 && (
                     <>
-                      <div style={{ color: '#f59e0b', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6, paddingTop: 10, borderTop: '1px solid #1e3a4f' }}>
-                        One-time (after installation)
-                      </div>
+                      <div style={{ color: '#f59e0b', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6, paddingTop: 10, borderTop: '1px solid #1e3a4f' }}>One-time (after installation)</div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0' }}>
                         <span style={{ color: '#64748b', fontSize: 13 }}>Installation fee</span>
                         <span style={{ color: '#fbbf24', fontSize: 13, fontWeight: 700 }}>{fmt(installFeeTotal)}</span>
@@ -812,8 +687,8 @@ function FormView({
               ) : (
                 [
                   { label: 'Subtotal', val: subtotal, color: '#94a3b8' },
-                  { label: 'Tax (7%)',  val: taxAmount, color: '#64748b' },
-                  { label: 'Total',    val: total,     color: '#e2e8f0', bold: true },
+                  { label: 'Tax (7%)', val: taxAmount, color: '#64748b' },
+                  { label: 'Total', val: total, color: '#e2e8f0', bold: true },
                 ].map(row => (
                   <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: row.label === 'Total' ? '1px solid #1e3a4f' : 'none' }}>
                     <span style={{ color: '#64748b', fontSize: 13 }}>{row.label}</span>
@@ -825,18 +700,113 @@ function FormView({
           </div>
         )}
       </div>
+
+      {/* ═══ SERVICE PLANS SECTION ═══ */}
+      <div style={S.section}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div>
+            <div style={S.label}>Service Plans</div>
+            <div style={{ color: '#64748b', fontSize: 11, marginTop: -2 }}>
+              Optional — plans activate after installation is complete
+            </div>
+          </div>
+          <button onClick={() => setShowPlanPicker(v => !v)} style={{
+            padding: '7px 14px', borderRadius: 8, border: '1px solid #f59e0b',
+            background: showPlanPicker ? 'rgba(245,158,11,0.1)' : 'transparent',
+            color: '#f59e0b', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+          }}>
+            {showPlanPicker ? 'Close' : '+ Add Service Plan'}
+          </button>
+        </div>
+
+        {/* Plan picker */}
+        {showPlanPicker && (
+          <div style={{ background: '#0f1923', borderRadius: 10, border: '1px solid #1e3a4f', marginBottom: 12, overflow: 'hidden' }}>
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid #1e3a4f', fontSize: 11, color: '#64748b' }}>
+              Select a plan to include on this quote
+            </div>
+            <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+              {planTemplates.length === 0
+                ? <div style={{ padding: 16, color: '#64748b', fontSize: 13 }}>No active plan templates. Create them in Admin Settings.</div>
+                : planTemplates.map((t: ServicePlanTemplate) => {
+                    const alreadyAdded = selectedPlans.some((p: SelectedServicePlan) => p.template_id === t.id)
+                    return (
+                      <button key={t.id} disabled={alreadyAdded}
+                        onClick={() => { onAddServicePlan(t); setShowPlanPicker(false) }}
+                        style={{
+                          display: 'flex', width: '100%', padding: '10px 14px', gap: 12,
+                          background: 'none', border: 'none', cursor: alreadyAdded ? 'not-allowed' : 'pointer',
+                          textAlign: 'left', borderBottom: '1px solid #1a2e42',
+                          opacity: alreadyAdded ? 0.4 : 1,
+                        }}
+                        onMouseEnter={e => { if (!alreadyAdded) e.currentTarget.style.background = '#162232' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
+                      >
+                        <div style={{ flex: 1 }}>
+                          <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>
+                            {t.name}
+                            {alreadyAdded && <span style={{ color: '#64748b', fontWeight: 400 }}> (added)</span>}
+                          </div>
+                          {t.description && <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>{t.description.slice(0, 80)}{t.description.length > 80 ? '...' : ''}</div>}
+                        </div>
+                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                          <div style={{ color: '#f59e0b', fontSize: 12, fontWeight: 700 }}>
+                            {fmt(Number(t.price))}{BILLING_CYCLE_LABELS[t.billing_cycle] || ''}
+                          </div>
+                          <div style={{ color: '#64748b', fontSize: 10 }}>{FULFILLMENT_TYPE_LABELS[t.fulfillment_type] || t.fulfillment_type}</div>
+                        </div>
+                      </button>
+                    )
+                  })
+              }
+            </div>
+          </div>
+        )}
+
+        {/* Selected plans */}
+        {selectedPlans.length === 0
+          ? <div style={{ textAlign: 'center', padding: '20px 0', color: '#334155', fontSize: 13 }}>
+              No service plans added. These are optional recurring services.
+            </div>
+          : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {selectedPlans.map((sp: SelectedServicePlan) => (
+                <div key={sp._key} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  background: '#0f1923', borderRadius: 10, border: '1px solid #1e3a4f', padding: '10px 14px',
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>{sp.name}</div>
+                    <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>
+                      {FULFILLMENT_TYPE_LABELS[sp.fulfillment_type] || sp.fulfillment_type} · Billed {sp.billing_cycle}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input type="number" step="0.01" min={0} value={sp.price}
+                      onChange={e => onUpdatePlanPrice(sp._key, parseFloat(e.target.value) || 0)}
+                      style={{ ...S.input, width: 90, textAlign: 'right', padding: '6px 8px' }} />
+                    <span style={{ color: '#f59e0b', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                      {BILLING_CYCLE_LABELS[sp.billing_cycle] || ''}
+                    </span>
+                    <button onClick={() => onRemoveServicePlan(sp._key)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', fontSize: 16, padding: '0 4px' }}>×</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        }
+      </div>
     </div>
   )
 }
 
 // ─── Preview View ─────────────────────────────────────────────
-// No changes — PreviewView reads saved line item unit_price directly.
-// Pricing correctness is enforced at addProduct() time, not at render time.
 
 function PreviewView({
   quoteNumber, quoteDate, validUntil, customerName, customerAddress = '', customerPhone,
   salesConsultant, estimation, lineItems, subtotal, taxAmount, total,
-  monthlySubtotal, installFeeTotal, commercialType,
+  monthlySubtotal, installFeeTotal, commercialType, selectedPlans = [],
 }: any) {
   const isRental = commercialType === 'rental'
 
@@ -892,8 +862,8 @@ function PreviewView({
             <h1 style={{ fontSize: 28, fontWeight: 900, color: Z.navy, margin: '0 0 14px' }}>QUOTATION # {quoteNumber}</h1>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
               {[
-                { label: 'QUOTATION DATE',   val: fmtDate(quoteDate) },
-                { label: 'EXPIRATION',       val: fmtDate(validUntil) },
+                { label: 'QUOTATION DATE', val: fmtDate(quoteDate) },
+                { label: 'EXPIRATION', val: fmtDate(validUntil) },
                 { label: 'SALES CONSULTANT', val: salesConsultant },
               ].map(col => (
                 <div key={col.label}>
@@ -930,15 +900,11 @@ function PreviewView({
                     <td style={{ padding: '10px 8px', fontSize: 11, color: Z.muted, verticalAlign: 'top', whiteSpace: 'nowrap' }}>{li.sku || ''}</td>
                     <td style={{ padding: '10px 8px', verticalAlign: 'top', maxWidth: 340 }}>
                       {isInstallFee && (
-                        <div style={{ fontSize: 10, fontWeight: 700, color: '#b45309', marginBottom: 2, textTransform: 'uppercase' }}>
-                          One-time · Charged after installation
-                        </div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: '#b45309', marginBottom: 2, textTransform: 'uppercase' }}>One-time · Charged after installation</div>
                       )}
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{lines[0]}</div>
                       {lines.slice(1).join('\n') && (
-                        <div style={{ fontSize: 11, color: Z.muted, marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-                          {lines.slice(1).join('\n')}
-                        </div>
+                        <div style={{ fontSize: 11, color: Z.muted, marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{lines.slice(1).join('\n')}</div>
                       )}
                     </td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top' }}>{li.quantity}.0</td>
@@ -949,9 +915,7 @@ function PreviewView({
                     <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top', color: Z.muted }}>
                       {discAmt > 0 ? `$ ${discAmt.toFixed(2)}` : '—'}
                     </td>
-                    <td style={{ padding: '10px 8px', textAlign: 'right', fontWeight: 700, verticalAlign: 'top' }}>
-                      $ {li.total.toFixed(2)}
-                    </td>
+                    <td style={{ padding: '10px 8px', textAlign: 'right', fontWeight: 700, verticalAlign: 'top' }}>$ {li.total.toFixed(2)}</td>
                   </tr>
                 )
               })}
@@ -990,6 +954,38 @@ function PreviewView({
               )}
             </div>
           </div>
+
+          {/* ═══ INCLUDED SERVICE PLANS ═══ */}
+          {selectedPlans.length > 0 && (
+            <div style={{ marginBottom: 24, borderTop: '1px solid ' + Z.border, paddingTop: 18 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: Z.navy, marginBottom: 10 }}>INCLUDED SERVICE PLANS</div>
+              <div style={{ fontSize: 11, color: Z.muted, marginBottom: 10 }}>
+                The following service plans are included with this quote. Plans activate after installation is complete. Billing begins according to each plan's schedule.
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid ' + Z.border }}>
+                    <th style={{ padding: '6px 8px', fontSize: 11, fontWeight: 700, color: Z.navy, textAlign: 'left' }}>Plan</th>
+                    <th style={{ padding: '6px 8px', fontSize: 11, fontWeight: 700, color: Z.navy, textAlign: 'left' }}>Service Type</th>
+                    <th style={{ padding: '6px 8px', fontSize: 11, fontWeight: 700, color: Z.navy, textAlign: 'right' }}>Price</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedPlans.map((sp: SelectedServicePlan) => (
+                    <tr key={sp._key} style={{ borderBottom: '1px solid ' + Z.border, background: '#fefbf3' }}>
+                      <td style={{ padding: '8px 8px', fontSize: 12, fontWeight: 600 }}>{sp.name}</td>
+                      <td style={{ padding: '8px 8px', fontSize: 11, color: Z.muted }}>
+                        {FULFILLMENT_TYPE_LABELS[sp.fulfillment_type] || sp.fulfillment_type}
+                      </td>
+                      <td style={{ padding: '8px 8px', fontSize: 12, fontWeight: 700, textAlign: 'right', color: '#b45309' }}>
+                        $ {sp.price.toFixed(2)}{BILLING_CYCLE_LABELS[sp.billing_cycle] || ''}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Customer Authorization */}
           <div style={{ borderTop: '1px solid ' + Z.border, paddingTop: 20, marginBottom: 20 }}>
@@ -1058,7 +1054,7 @@ function PreviewView({
   )
 }
 
-// ─── Rental Agreement Modal ───────────────────────────────────
+// ─── Rental Agreement Modal (unchanged) ───────────────────────
 
 function RentalAgreementModal({ quoteNumber, customerName, customerAddress, lineItems, monthlySubtotal, installFeeTotal, onClose }: any) {
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
@@ -1070,21 +1066,13 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
       script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'
       script.onload = () => doDownloadAgreement()
       document.head.appendChild(script)
-    } else {
-      doDownloadAgreement()
-    }
+    } else { doDownloadAgreement() }
   }
 
   function doDownloadAgreement() {
     const el = document.getElementById('zenith-agreement-content')
     if (!el) return
-    html2pdf().set({
-      margin: 10,
-      filename: `Rental_Agreement_${customerName.replace(/\s+/g,'-')}.pdf`,
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    }).from(el).save()
+    html2pdf().set({ margin: 10, filename: `Rental_Agreement_${customerName.replace(/\s+/g, '-')}.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } }).from(el).save()
   }
 
   return (
@@ -1100,10 +1088,8 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
             <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #334155', cursor: 'pointer', background: 'transparent', color: '#94a3b8', fontWeight: 600, fontSize: 13 }}>Close</button>
           </div>
         </div>
-
         <div style={{ padding: 28, overflowY: 'auto', maxHeight: '75vh' }}>
           <div id="zenith-agreement-content" style={{ background: '#fff', color: '#1a2a3a', fontFamily: "'DM Sans', Arial, sans-serif", fontSize: 12, lineHeight: 1.6, padding: '40px 48px', borderRadius: 4 }}>
-
             <div style={{ textAlign: 'center', marginBottom: 28, borderBottom: '2px solid #0c1e35', paddingBottom: 20 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 8 }}>
                 <div style={{ width: 40, height: 40, background: '#0c1e35', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1114,19 +1100,14 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
                   <div style={{ fontSize: 10, color: '#64748b' }}>6951 E 30th, Suite B • Indianapolis, IN 46219</div>
                 </div>
               </div>
-              <div style={{ fontWeight: 800, fontSize: 18, color: '#0c1e35', letterSpacing: 1, marginTop: 12 }}>
-                RESIDENTIAL EQUIPMENT RENTAL AGREEMENT
-              </div>
+              <div style={{ fontWeight: 800, fontSize: 18, color: '#0c1e35', letterSpacing: 1, marginTop: 12 }}>RESIDENTIAL EQUIPMENT RENTAL AGREEMENT</div>
               <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>Generated: {today} • Ref: {quoteNumber}</div>
             </div>
-
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 20 }}>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 11, textTransform: 'uppercase' as const, color: '#64748b', marginBottom: 6 }}>Company (Lessor)</div>
                 <div style={{ fontWeight: 600 }}>Zenith Pure Solutions LLC</div>
-                <div>6951 E 30th, Suite B</div>
-                <div>Indianapolis, IN 46219</div>
-                <div>Phone: +1 (317) 690-4172</div>
+                <div>6951 E 30th, Suite B</div><div>Indianapolis, IN 46219</div><div>Phone: +1 (317) 690-4172</div>
               </div>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 11, textTransform: 'uppercase' as const, color: '#64748b', marginBottom: 6 }}>Customer (Lessee)</div>
@@ -1134,19 +1115,10 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
                 {customerAddress && <div>{customerAddress}</div>}
               </div>
             </div>
-
             <div style={{ marginBottom: 20 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: '#0c1e35', borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 10 }}>
-                APPENDIX A — EQUIPMENT SCHEDULE
-              </div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#0c1e35', borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 10 }}>APPENDIX A — EQUIPMENT SCHEDULE</div>
               <table style={{ width: '100%', borderCollapse: 'collapse' as const }}>
-                <thead>
-                  <tr style={{ background: '#f0f4f8' }}>
-                    {['Description', 'Monthly Rate', 'Term'].map(h => (
-                      <th key={h} style={{ border: '1px solid #e2e8f0', padding: '8px 12px', textAlign: 'left' as const, fontSize: 11, fontWeight: 700 }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
+                <thead><tr style={{ background: '#f0f4f8' }}>{['Description', 'Monthly Rate', 'Term'].map(h => (<th key={h} style={{ border: '1px solid #e2e8f0', padding: '8px 12px', textAlign: 'left' as const, fontSize: 11, fontWeight: 700 }}>{h}</th>))}</tr></thead>
                 <tbody>
                   {recurringItems.map((li: any, i: number) => (
                     <tr key={i}>
@@ -1162,9 +1134,7 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
                   </tr>
                   {installFeeTotal > 0 && (
                     <tr style={{ background: '#fffbf0' }}>
-                      <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px', color: '#b45309', fontWeight: 600 }}>
-                        Installation Fee <span style={{ fontSize: 10, fontWeight: 400 }}>(one-time — charged after installation is complete)</span>
-                      </td>
+                      <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px', color: '#b45309', fontWeight: 600 }}>Installation Fee <span style={{ fontSize: 10, fontWeight: 400 }}>(one-time)</span></td>
                       <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px', color: '#b45309', fontWeight: 700 }}>${installFeeTotal.toFixed(2)}</td>
                       <td style={{ border: '1px solid #e2e8f0', padding: '8px 12px', fontSize: 11, color: '#64748b' }}>One-time</td>
                     </tr>
@@ -1172,17 +1142,12 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
                 </tbody>
               </table>
             </div>
-
             <div style={{ marginBottom: 20 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: '#0c1e35', borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 10 }}>
-                KEY TERMS & CONDITIONS
-              </div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#0c1e35', borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 10 }}>KEY TERMS & CONDITIONS</div>
               {[
                 ['Initial Term', '36 months from installation date. Automatically renews month-to-month after initial term.'],
                 ['Monthly Payment', `$${monthlySubtotal.toFixed(2)}/month, due on the same day each month. Autopay via ACH or card on file.`],
-                ['Installation Fee', installFeeTotal > 0
-                  ? `$${installFeeTotal.toFixed(2)} one-time fee, charged after installation is complete. Credited 100% toward equipment buyout.`
-                  : 'Included.'],
+                ['Installation Fee', installFeeTotal > 0 ? `$${installFeeTotal.toFixed(2)} one-time fee, charged after installation is complete. Credited 100% toward equipment buyout.` : 'Included.'],
                 ['Buyout Option', 'Current Retail Price minus 50% of payments made minus installation fee. Exercisable at any time after month 6.'],
                 ['Late Fee', '1.75% per month (21% APR) on balances past due. NSF fee: $25.00.'],
                 ['Annual Price Increase', 'Up to CPI-U + 3% annually, with 30-day written notice.'],
@@ -1197,26 +1162,16 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
                 </div>
               ))}
             </div>
-
             <div style={{ marginBottom: 24 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: '#0c1e35', borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 10 }}>
-                PAYMENT — ACH DETAILS
-              </div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#0c1e35', borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 10 }}>PAYMENT — ACH DETAILS</div>
               <table style={{ width: '100%', borderCollapse: 'collapse' as const, maxWidth: 400 }}>
-                {[['Bank Name','Old National Bank'],['ABA / Routing','086300012'],['Account Number','0127726846'],['Account Name','ZENITH PURE SOLUTIONS LLC']].map(([k,v]) => (
-                  <tr key={k}>
-                    <td style={{ border: '1px solid #e2e8f0', padding: '7px 12px', fontWeight: 600, background: '#f0f4f8', width: '40%' }}>{k}:</td>
-                    <td style={{ border: '1px solid #e2e8f0', padding: '7px 12px' }}>{v}</td>
-                  </tr>
+                {[['Bank Name', 'Old National Bank'], ['ABA / Routing', '086300012'], ['Account Number', '0127726846'], ['Account Name', 'ZENITH PURE SOLUTIONS LLC']].map(([k, v]) => (
+                  <tr key={k}><td style={{ border: '1px solid #e2e8f0', padding: '7px 12px', fontWeight: 600, background: '#f0f4f8', width: '40%' }}>{k}:</td><td style={{ border: '1px solid #e2e8f0', padding: '7px 12px' }}>{v}</td></tr>
                 ))}
               </table>
             </div>
-
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40, marginTop: 32 }}>
-              {[
-                ['Customer Signature', customerName, 'Date'],
-                ['Authorized by Zenith', 'Kuldeep Singh, Zenith Pure Solutions LLC', 'Date'],
-              ].map(([label, name, dateLabel]) => (
+              {[['Customer Signature', customerName, 'Date'], ['Authorized by Zenith', 'Kuldeep Singh, Zenith Pure Solutions LLC', 'Date']].map(([label, name, dateLabel]) => (
                 <div key={label}>
                   <div style={{ borderBottom: '1px solid #1a2a3a', marginBottom: 4, height: 40 }}></div>
                   <div style={{ fontSize: 11, fontWeight: 600 }}>{label}</div>
@@ -1226,10 +1181,9 @@ function RentalAgreementModal({ quoteNumber, customerName, customerAddress, line
                 </div>
               ))}
             </div>
-
             <div style={{ marginTop: 28, paddingTop: 16, borderTop: '1px solid #e2e8f0', fontSize: 10, color: '#94a3b8', textAlign: 'center' as const }}>
               Zenith Pure Solutions LLC • 6951 E 30th, Suite B, Indianapolis IN 46219 • +1 (317) 690-4172 • zenithpuresolutions.com
-              <br/>Terms & Conditions: zenithpuresolutions.com/terms • Version v1.0 • {today}
+              <br />Terms & Conditions: zenithpuresolutions.com/terms • Version v1.0 • {today}
             </div>
           </div>
         </div>
