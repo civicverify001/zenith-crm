@@ -102,13 +102,13 @@ export async function resolveShippingAddress(customerId: string): Promise<{
   try {
     const { data: customer, error } = await supabase
       .from('customers')
-      .select('first_name, last_name, address, city, state, zip, service_address, service_city, service_state, service_zip')
+      .select('full_name, address, city, state, zip, service_address, service_city, service_state, service_zip')
       .eq('id', customerId)
       .single();
 
     if (error || !customer) return null;
 
-    const fullName = [customer.first_name, customer.last_name].filter(Boolean).join(' ');
+    const fullName = customer.full_name || '';
 
     // Priority 1: Service address (all fields must be non-null)
     if (customer.service_address && customer.service_city && customer.service_state && customer.service_zip) {
@@ -150,7 +150,7 @@ export async function fetchShipments(filters: ShipmentFilters = {}): Promise<Shi
       .from('shipments')
       .select(`
         *,
-        customers!inner(first_name, last_name, email, phone),
+        customers!inner(full_name, email, phone),
         products(name)
       `)
       .order('created_at', { ascending: false });
@@ -181,7 +181,7 @@ export async function fetchShipmentsByCustomer(customerId: string): Promise<Ship
       .from('shipments')
       .select(`
         *,
-        customers!inner(first_name, last_name, email, phone),
+        customers!inner(full_name, email, phone),
         products(name)
       `)
       .eq('customer_id', customerId)
@@ -201,7 +201,7 @@ export async function fetchShipmentById(id: string): Promise<Shipment | null> {
       .from('shipments')
       .select(`
         *,
-        customers!inner(first_name, last_name, email, phone),
+        customers!inner(full_name, email, phone),
         products(name)
       `)
       .eq('id', id)
@@ -455,9 +455,7 @@ function mapShipmentRow(row: Record<string, unknown>): Shipment {
 
   return {
     ...(row as unknown as Shipment),
-    customer_name: customers
-      ? [customers.first_name, customers.last_name].filter(Boolean).join(' ')
-      : undefined,
+    customer_name: customers?.full_name || undefined,
     customer_email: customers?.email || undefined,
     customer_phone: customers?.phone || undefined,
     product_name: products?.name || undefined,
