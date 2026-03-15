@@ -3,7 +3,7 @@ import { useComplianceProofs } from '../useCustomers'
 import { useAuth } from '../../../hooks/useAuth'
 import { ProofReviewModal } from '../modals/ProofReviewModal'
 import { useQuery } from '@tanstack/react-query'
-import { supabase } from '../../../lib/supabase'
+import { ZENITH_LOGO_FULL } from '../../../lib/pdfLogoBase64'
 
 interface Props { customerId: string }
 
