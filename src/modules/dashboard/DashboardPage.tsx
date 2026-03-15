@@ -338,7 +338,7 @@ function useWeekCalendarEvents(userId: string | undefined, role: string | null) 
       if (role === 'admin' || role === 'salesrep' || role === 'frontdesk') {
         let vq = supabase.from('site_visits')
           .select('id, lead_id, assigned_rep_id, visit_date, visit_hour, status')
-          .gte('visit_date', days[0]).lte('visit_date', days[6]).not('status', 'eq', 'cancelled')
+          .gte('visit_date', days[0]).lte('visit_date', days[6])
         if (role !== 'admin') vq = vq.eq('assigned_rep_id', userId)
         const { data: visits } = await vq
         const lids = [...new Set((visits || []).map((v: any) => v.lead_id).filter(Boolean))]
@@ -353,8 +353,8 @@ function useWeekCalendarEvents(userId: string | undefined, role: string | null) 
       }
       if (role === 'admin' || role === 'technician') {
         const { data: jobs } = await supabase.from('jobs')
-          .select('id, customer_name_snapshot, status, scheduled_date, system_type')
-          .gte('scheduled_date', days[0]).lte('scheduled_date', days[6] + 'T23:59:59').not('status', 'eq', 'cancelled')
+  .select('id, customer_name_snapshot, status, scheduled_date, system_type')
+  .gte('scheduled_date', days[0]).lte('scheduled_date', days[6] + 'T23:59:59')
         for (const j of (jobs || [])) {
           const dk = j.scheduled_date.split('T')[0]
           if (results[dk]) results[dk].jobs.push(j)
