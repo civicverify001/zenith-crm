@@ -1,4 +1,4 @@
-const CACHE = 'zenith-crm-v1'
+const CACHE = 'zenith-crm-v2'
 const OFFLINE_URL = '/'
 
 self.addEventListener('install', e => {
