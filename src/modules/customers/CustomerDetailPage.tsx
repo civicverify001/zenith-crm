@@ -75,7 +75,7 @@ export function CustomerDetailPage() {
     { key: 'billing',        label: 'Billing',          show: true },
     { key: 'quotes',         label: 'Quotes',           show: true },
     { key: 'service_plans',  label: 'Service Plans',    show: true },
-    { key: 'maintenance',    label: 'Maintenance',      show: true },
+    { key: 'maintenance',    label: 'Maintenance',      show: false }, // replaced by Service Plans tab
     { key: 'activity',       label: 'Activity',         show: true },
     { key: 'documents',      label: 'Documents',        show: true },
   ]
