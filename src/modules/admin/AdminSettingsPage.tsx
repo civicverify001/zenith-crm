@@ -1,6 +1,7 @@
 // src/modules/admin/AdminSettingsPage.tsx
 // Admin Settings — tabbed page: Qualifying Checklist | Site Visit Checklist | Term Blocks | Service Plans | Email Templates
 import { EmailTemplatesTab } from './EmailTemplatesTab'
+import { ChecklistTemplatesTab } from './ChecklistTemplatesTab'
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../hooks/useAuth'
@@ -62,7 +63,7 @@ const FIELD_TYPE_LABELS: Record<string, string> = {
   prefill_source:        'Auto-fill: Lead Source',
 }
 
-type AdminTab = 'qualifying' | 'site_visit' | 'terms' | 'service_plans' | 'email_templates'
+type AdminTab = 'qualifying' | 'site_visit' | 'terms' | 'service_plans' | 'email_templates' | 'checklists'
 
 const TABS: { key: AdminTab; label: string; icon: string; color: string }[] = [
   { key: 'qualifying',       label: 'Qualifying Checklist', icon: '✅', color: '#4ade80' },
@@ -70,6 +71,7 @@ const TABS: { key: AdminTab; label: string; icon: string; color: string }[] = [
   { key: 'terms',            label: 'Term Blocks',          icon: '📄', color: '#a78bfa' },
   { key: 'service_plans',    label: 'Service Plans',        icon: '🔄', color: '#f59e0b' },
   { key: 'email_templates',  label: 'Email Templates',      icon: '✉️', color: '#f472b6' },
+  { key: 'checklists',       label: 'Checklists',           icon: '📋', color: '#8b5cf6' },
 ]
 
 export default function AdminSettingsPage() {
@@ -144,6 +146,7 @@ export default function AdminSettingsPage() {
         {activeTab === 'terms'         && <TermBlocksTab />}
         {activeTab === 'service_plans' && <ServicePlansTemplateTab />}
         {activeTab === 'email_templates' && <EmailTemplatesTab />}
+        {activeTab === 'checklists'      && <ChecklistTemplatesTab />}
       </div>
     </div>
   )
