@@ -1,6 +1,6 @@
 // src/modules/admin/AdminSettingsPage.tsx
 // Admin Settings — tabbed page: Qualifying Checklist | Site Visit Checklist | Term Blocks | Service Plans
-
+import { EmailTemplatesTab } from './EmailTemplatesTab'
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../hooks/useAuth'
