@@ -3,10 +3,10 @@ type Resource = string
 type Action = string
 // Action-level permission matrix
 const PERMISSIONS: Record<string, Record<string, string[]>> = {
-  admin:      { leads: ['assign_rep', 'create', 'delete', 'edit', 'view'], quotes: ['edit', 'delete', 'view'], customers: ['edit', 'delete', 'view'], dispatch: ['edit', 'view'], installations: ['edit', 'view'], service_plans: ['create', 'edit', 'delete', 'view', 'manage_templates', 'override_price'], shipping: ['view', 'create', 'add_tracking', 'mark_shipped', 'mark_delivered', 'cancel', 'mark_returned'] },
-  frontdesk:  { leads: ['assign_rep', 'create', 'edit', 'view'], quotes: ['view'], customers: ['edit', 'view'], dispatch: ['view'], installations: ['view'], service_plans: ['create', 'view', 'pause'], shipping: ['view', 'create', 'add_tracking', 'mark_shipped', 'mark_delivered'] },
-  salesrep:   { leads: ['assign_rep', 'create', 'edit', 'view'], quotes: ['edit', 'view'], customers: ['view'], dispatch: [], installations: [], service_plans: ['create', 'view'], shipping: ['view_customer'] },
-  technician: { leads: [], quotes: [], customers: ['view'], dispatch: ['view'], installations: ['edit', 'view'], service_plans: ['view'], shipping: ['view_customer'] },
+  admin:      { leads: ['assign_rep', 'create', 'delete', 'edit', 'view'], quotes: ['edit', 'delete', 'view'], customers: ['edit', 'delete', 'view'], dispatch: ['edit', 'view'], installations: ['edit', 'view'], service_plans: ['create', 'edit', 'delete', 'view', 'manage_templates', 'override_price'], shipping: ['view', 'create', 'add_tracking', 'mark_shipped', 'mark_delivered', 'cancel', 'mark_returned'], fulfillment: ['view', 'create', 'edit', 'schedule', 'complete', 'cancel'] },
+  frontdesk:  { leads: ['assign_rep', 'create', 'edit', 'view'], quotes: ['view'], customers: ['edit', 'view'], dispatch: ['view'], installations: ['view'], service_plans: ['create', 'view', 'pause'], shipping: ['view', 'create', 'add_tracking', 'mark_shipped', 'mark_delivered'], fulfillment: ['view', 'create', 'schedule', 'complete'] },
+  salesrep:   { leads: ['assign_rep', 'create', 'edit', 'view'], quotes: ['edit', 'view'], customers: ['view'], dispatch: [], installations: [], service_plans: ['create', 'view'], shipping: ['view_customer'], fulfillment: ['view'] },
+  technician: { leads: [], quotes: [], customers: ['view'], dispatch: ['view'], installations: ['edit', 'view'], service_plans: ['view'], shipping: ['view_customer'], fulfillment: ['view', 'complete'] },
 }
 // Page definitions with group, icon, label
 export const ALL_PAGES = [
@@ -22,6 +22,7 @@ export const ALL_PAGES = [
   { path: '/dispatch',      group: 'Operations', icon: '🗺️',  label: 'Dispatch' },
   { path: '/installations', group: 'Operations', icon: '🔧', label: 'Installations' },
   { path: '/shipping',      group: 'Operations', icon: '📦', label: 'Shipping' },
+  { path: '/fulfillment',   group: 'Operations', icon: '🔔', label: 'Fulfillment Queue' },
   { path: '/service',       group: 'Operations', icon: '⚙️',  label: 'Service' },
   { path: '/inventory',     group: 'Operations', icon: '🏗️', label: 'Inventory' },
   // Finance
@@ -36,9 +37,9 @@ export const ALL_PAGES = [
 ]
 export const ROLE_DEFAULT_PAGES: Record<string, string[]> = {
   admin:      ALL_PAGES.map(p => p.path),
-  frontdesk:  ['/dashboard', '/leads', '/customers', '/follow-ups', '/quotes', '/invoices', '/shipping'],
+  frontdesk:  ['/dashboard', '/leads', '/customers', '/follow-ups', '/quotes', '/invoices', '/shipping', '/fulfillment'],
   salesrep:   ['/dashboard', '/leads', '/customers', '/quotes', '/follow-ups'],
-  technician: ['/dashboard', '/dispatch', '/installations'],
+  technician: ['/dashboard', '/dispatch', '/installations', '/fulfillment'],
 }
 export function usePermissions(roleOverride?: string | null) {
   const { user, profile } = useAuth()
