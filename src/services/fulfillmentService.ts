@@ -35,7 +35,7 @@ export interface FulfillmentRequest {
   customers?: { id: string; full_name: string; phone: string; email: string }
   customer_service_plans?: {
     id: string
-    plan_name: string
+    plan_id: string
     status: string
     next_fulfillment_date: string | null
     service_plans?: { id: string; name: string; fulfillment_type: string }
@@ -56,9 +56,9 @@ export interface CreateFulfillmentInput {
 
 const SELECT_WITH_JOINS = `
   *,
-  customers!inner(id, full_name, phone, email),
-  customer_service_plans!inner(
-    id, plan_name, status, next_fulfillment_date,
+  customers(id, full_name, phone, email),
+  customer_service_plans(
+    id, plan_id, status, next_fulfillment_date,
     service_plans(id, name, fulfillment_type)
   )
 `
