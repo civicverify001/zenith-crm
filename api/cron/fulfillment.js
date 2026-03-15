@@ -186,13 +186,13 @@ async function resolveAddress(supabase, customerId) {
   try {
     const { data: customer, error } = await supabase
       .from('customers')
-      .select('first_name, last_name, address, city, state, zip, service_address, service_city, service_state, service_zip')
+      .select('full_name, address, city, state, zip, service_address, service_city, service_state, service_zip')
       .eq('id', customerId)
       .single();
 
     if (error || !customer) return null;
 
-    const name = [customer.first_name, customer.last_name].filter(Boolean).join(' ');
+    const name = customer.full_name || '';
 
     // Priority 1: Service address
     if (customer.service_address && customer.service_city && customer.service_state && customer.service_zip) {
