@@ -42,8 +42,6 @@ module.exports = async function handler(req, res) {
     const alreadyComplete = job.status === 'complete';
 
     // ── 2. Customer lookup — two layers ──────────────────────────────
-    //   Layer 1: customers.lead_id = job.lead_id  (standard pipeline path)
-    //   Layer 2: customers.job_id  = job.id       (covers convertJobToCustomer-created customers)
     let customerId = null;
 
     if (job.lead_id) {
@@ -65,20 +63,10 @@ module.exports = async function handler(req, res) {
     }
 
     // ── 3. Ownership + fee resolution — four-layer cascade ───────────
-    //
-    //   Layer 1: quotes WHERE lead_id/opportunity_id = job.lead_id, status IN (accepted, signed)
-    //   Layer 2: quotes WHERE customer_id = customerId, status IN (accepted, signed)
-    //   Layer 3: agreements WHERE customer_id = customerId, status = signed
-    //   Layer 4: contracts WHERE customer_id = customerId, type = rental, status = active
-    //
-    //   install_fee:    quote → agreement → 0
-    //   monthlyAmount:  quote → agreement → null
-    //   ownershipType:  resolved from whichever layer fires first
-
     let acceptedQuote = null;
     let installFee = 0;
     let monthlyAmount = null;
-    let ownershipType = 'purchased'; // safe default
+    let ownershipType = 'purchased';
     let ownershipSource = 'default';
 
     // Layer 1 — quote by lead_id / opportunity_id
@@ -94,7 +82,7 @@ module.exports = async function handler(req, res) {
       if (q) { acceptedQuote = q; ownershipSource = 'quote_lead_id'; }
     }
 
-    // Layer 2 — quote by customer_id (covers quotes created from CustomerQuotesTab)
+    // Layer 2 — quote by customer_id
     if (!acceptedQuote && customerId) {
       const { data: q } = await supabase
         .from('quotes')
@@ -107,7 +95,7 @@ module.exports = async function handler(req, res) {
       if (q) { acceptedQuote = q; ownershipSource = 'quote_customer_id'; }
     }
 
-    // Resolve ownership + fee from quote (layers 1 or 2)
+    // Resolve ownership + fee from quote
     if (acceptedQuote) {
       const ct = acceptedQuote.commercial_type;
       ownershipType = ct === 'rental'  ? 'rented'
@@ -119,7 +107,7 @@ module.exports = async function handler(req, res) {
       monthlyAmount = acceptedQuote.monthly_amount ? parseFloat(acceptedQuote.monthly_amount) : null;
     }
 
-    // Layer 3 — signed agreement (fallback when no quote found)
+    // Layer 3 — signed agreement
     if (!acceptedQuote && customerId) {
       const { data: ag } = await supabase
         .from('agreements')
@@ -137,7 +125,7 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // Layer 4 — active contract (last resort)
+    // Layer 4 — active contract
     if (ownershipSource === 'default' && customerId) {
       const { data: con } = await supabase
         .from('contracts')
@@ -155,9 +143,42 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // ── 4. Get product info for system snapshot ───────────────────────
+    // ── 4. Get product info — from quote line items first, then quote.product_id ──
     let product = null;
-    if (acceptedQuote?.product_id) {
+
+    // FIX: Check document_line_items for the actual product (item_type = 'product')
+    if (acceptedQuote?.id) {
+      const { data: productLineItem } = await supabase
+        .from('document_line_items')
+        .select('product_id, description, sku, unit_price')
+        .eq('document_id', acceptedQuote.id)
+        .eq('item_type', 'product')
+        .order('sort_order', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (productLineItem?.product_id) {
+        const { data: prod } = await supabase
+          .from('products')
+          .select('id, name, sku, retail_price, warranty_months, category')
+          .eq('id', productLineItem.product_id)
+          .maybeSingle();
+        product = prod;
+      } else if (productLineItem) {
+        // Line item exists but no product_id — use description as name, sku from line item
+        product = {
+          id: null,
+          name: productLineItem.description?.split('\n')[0]?.trim() || 'Installed System',
+          sku: productLineItem.sku || null,
+          retail_price: productLineItem.unit_price || null,
+          warranty_months: null,
+          category: null,
+        };
+      }
+    }
+
+    // Fallback: quote.product_id (legacy path)
+    if (!product && acceptedQuote?.product_id) {
       const { data: prod } = await supabase
         .from('products')
         .select('id, name, sku, retail_price, warranty_months, category')
@@ -182,7 +203,7 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // ── 5b. Set job_id on customer record (only if not already set) ───
+    // ── 5b. Set job_id on customer record ─────────────────────────────
     if (customerId) {
       await supabase
         .from('customers')
@@ -191,7 +212,7 @@ module.exports = async function handler(req, res) {
         .is('job_id', null);
     }
 
-    // ── 5c. Set billing_day on active contract = today's install date ─
+    // ── 5c. Set billing_day on active contract ────────────────────────
     if (customerId) {
       const billingDay = new Date().getDate();
       try {
@@ -203,7 +224,7 @@ module.exports = async function handler(req, res) {
       } catch(e) { console.error('[BEST-EFFORT] billing_day update:', e.message); }
     }
 
-    // ── 5d. Move lead to 'won' now that install is physically complete ─
+    // ── 5d. Move lead to 'won' ────────────────────────────────────────
     if (!alreadyComplete && job.lead_id) {
       try {
         await supabase
@@ -246,18 +267,24 @@ module.exports = async function handler(req, res) {
 
       if (existingRow) {
         installedSystemId = existingRow.id;
+        // FIX: Also update product name/sku on re-run
         await supabase
           .from('installed_systems')
           .update({
             ownership_type:          ownershipType,
             install_fee_snapshot:    installFee || null,
             monthly_amount_snapshot: monthlyAmount,
+            product_catalog_id:      product?.id || null,
+            name_snapshot:           product?.name || nameMap[job.system_type] || job.system_type?.replace(/_/g, ' ') || 'Installed System',
+            sku_snapshot:            product?.sku || null,
+            retail_price_snapshot:   product?.retail_price || null,
           })
           .eq('id', existingRow.id);
 
         console.log(
           `[complete.js] UPDATED installed_system ${existingRow.id}:`,
           `ownership=${ownershipType} (was ${existingRow.ownership_type}),`,
+          `product=${product?.name || 'none'},`,
           `source=${ownershipSource}`
         );
 
@@ -269,6 +296,7 @@ module.exports = async function handler(req, res) {
             system_type:             job.system_type || product?.category || 'unknown',
             name_snapshot:           product?.name || nameMap[job.system_type] || job.system_type?.replace(/_/g, ' ') || 'Installed System',
             sku_snapshot:            product?.sku || null,
+            product_catalog_id:      product?.id || null,
             ownership_type:          ownershipType,
             install_date:            today,
             retail_price_snapshot:   product?.retail_price || null,
@@ -286,7 +314,7 @@ module.exports = async function handler(req, res) {
           console.error('[installed_systems insert error]', sysError?.message);
         }
 
-        // Warranty: only on INSERT path (never duplicate on re-run)
+        // Warranty: only on INSERT path
         if (installedSystemId && product?.warranty_months) {
           const warrantyEnd = new Date();
           warrantyEnd.setMonth(warrantyEnd.getMonth() + product.warranty_months);
@@ -341,11 +369,9 @@ module.exports = async function handler(req, res) {
 
     // ── 7b. SERVICE PLAN ACTIVATION ───────────────────────────────────
     // Two sources:
-    //   A) Quote-origin: document_line_items with item_type = 'service_plan' from the accepted quote
-    //   B) Auto-enroll: service_plans templates where auto_activate_on_install = true and category matches
-    //
-    // Idempotent: partial unique index on customer_service_plans prevents duplicates.
-    // Plans that already exist are silently skipped (23505 = unique_violation).
+    //   A) Quote-origin: document_line_items with item_type = 'service_plan'
+    //      FIX: Match by price to find the service_plans template (no metadata column)
+    //   B) Auto-enroll: service_plans templates where auto_activate_on_install = true
 
     const activatedPlans = [];
 
@@ -374,40 +400,78 @@ module.exports = async function handler(req, res) {
             .eq('item_type', 'service_plan');
 
           if (planItems && planItems.length > 0) {
-            for (const item of planItems) {
-              const meta = item.metadata || {};
-              const templateId = meta.plan_template_id;
-              if (!templateId) continue;
+            // Fetch all active service plan templates to match against
+            const { data: allTemplates } = await supabase
+              .from('service_plans')
+              .select('id, name, billing_cycle, price, fulfillment_type, fulfillment_interval_months')
+              .eq('is_active', true);
 
-              const planPrice = item.unit_price || item.total || 0;
-              const billingCycle = meta.billing_cycle || 'yearly';
+            for (const item of planItems) {
+              // FIX: Match template by price since document_line_items has no metadata column
+              // Try exact price match first, then closest match
+              let templateId = null;
+              let matchedTemplate = null;
+              const itemPrice = parseFloat(item.unit_price) || 0;
+
+              if (allTemplates && allTemplates.length > 0) {
+                // Exact price match
+                matchedTemplate = allTemplates.find(t => parseFloat(t.price) === itemPrice);
+
+                // If no exact match, try matching by description containing template name
+                if (!matchedTemplate) {
+                  const itemDesc = (item.description || '').toLowerCase();
+                  matchedTemplate = allTemplates.find(t =>
+                    itemDesc.includes(t.name.toLowerCase()) || t.name.toLowerCase().includes(itemDesc.split('—')[0].trim().toLowerCase())
+                  );
+                }
+              }
+
+              if (!matchedTemplate) {
+                console.log(`[complete.js] Could not match service plan line item: price=${itemPrice}, desc="${item.description}"`);
+                continue;
+              }
+
+              templateId = matchedTemplate.id;
+              const planPrice = itemPrice;
+              const billingCycle = matchedTemplate.billing_cycle || 'monthly';
               const initialStatus = hasCard ? 'active' : 'pending_payment_method';
+
+              // Calculate next fulfillment date
+              let nextFulfillment = null;
+              if (matchedTemplate.fulfillment_type === 'tech_visit' || matchedTemplate.fulfillment_type === 'shipment') {
+                if (matchedTemplate.fulfillment_interval_months) {
+                  const fd = new Date();
+                  fd.setMonth(fd.getMonth() + matchedTemplate.fulfillment_interval_months);
+                  nextFulfillment = fd.toISOString().split('T')[0];
+                }
+              }
 
               try {
                 const { data: newPlan } = await supabase
                   .from('customer_service_plans')
                   .insert({
-                    customer_id:          customerId,
-                    plan_id:              templateId,
-                    installed_system_id:  installedSystemId,
-                    source:               'quote',
-                    source_quote_id:      acceptedQuote.id,
-                    status:               initialStatus,
-                    billing_cycle:        billingCycle,
-                    price:                planPrice,
-                    start_date:           todayDate,
-                    billing_start_date:   hasCard ? todayDate : null,
-                    next_billing_date:    hasCard ? todayDate : null,
-                    activated_at:         hasCard ? nowISO : null,
+                    customer_id:           customerId,
+                    plan_id:               templateId,
+                    installed_system_id:   installedSystemId,
+                    source:                'quote',
+                    source_quote_id:       acceptedQuote.id,
+                    status:                initialStatus,
+                    billing_cycle:         billingCycle,
+                    price:                 planPrice,
+                    start_date:            todayDate,
+                    billing_start_date:    hasCard ? todayDate : null,
+                    next_billing_date:     hasCard ? todayDate : null,
+                    next_fulfillment_date: nextFulfillment,
+                    next_service:          nextFulfillment,
+                    activated_at:          hasCard ? nowISO : null,
                   })
                   .select('id')
                   .single();
 
                 if (newPlan) {
-                  activatedPlans.push({ id: newPlan.id, source: 'quote', template_id: templateId, status: initialStatus });
+                  activatedPlans.push({ id: newPlan.id, source: 'quote', template_id: templateId, status: initialStatus, name: matchedTemplate.name });
                 }
               } catch (insertErr) {
-                // 23505 = unique constraint violation — plan already exists, skip
                 if (insertErr.code === '23505') {
                   console.log(`[complete.js] Service plan already exists for template ${templateId}, skipping`);
                 } else {
@@ -422,8 +486,6 @@ module.exports = async function handler(req, res) {
       }
 
       // ── B) Auto-enroll service plans ───────────────────────────────
-      // Find templates where auto_activate_on_install = true
-      // and the installed system's category matches applies_to_categories (or [] = all)
       try {
         const { data: autoTemplates } = await supabase
           .from('service_plans')
@@ -435,13 +497,11 @@ module.exports = async function handler(req, res) {
           const systemCategory = job.system_type || product?.category || 'unknown';
 
           for (const tmpl of autoTemplates) {
-            // Check category match: empty array = all categories
             const cats = Array.isArray(tmpl.applies_to_categories) ? tmpl.applies_to_categories : [];
             if (cats.length > 0 && !cats.includes(systemCategory)) {
-              continue; // category doesn't match
+              continue;
             }
 
-            // Skip if already activated from quote path above
             if (activatedPlans.some(ap => ap.template_id === tmpl.id)) {
               continue;
             }
@@ -449,7 +509,6 @@ module.exports = async function handler(req, res) {
             const initialStatus = hasCard ? 'active' : 'pending_payment_method';
             const planPrice = parseFloat(tmpl.price) || 0;
 
-            // Calculate next fulfillment date
             let nextFulfillment = null;
             if (tmpl.fulfillment_type === 'tech_visit' || tmpl.fulfillment_type === 'shipment') {
               if (tmpl.fulfillment_interval_months) {
@@ -463,20 +522,20 @@ module.exports = async function handler(req, res) {
               const { data: newPlan } = await supabase
                 .from('customer_service_plans')
                 .insert({
-                  customer_id:          customerId,
-                  plan_id:              tmpl.id,
-                  installed_system_id:  installedSystemId,
-                  source:               'auto_install',
-                  source_quote_id:      null,
-                  status:               initialStatus,
-                  billing_cycle:        tmpl.billing_cycle,
-                  price:                planPrice,
-                  start_date:           todayDate,
-                  billing_start_date:   hasCard ? todayDate : null,
-                  next_billing_date:    hasCard ? todayDate : null,
+                  customer_id:           customerId,
+                  plan_id:               tmpl.id,
+                  installed_system_id:   installedSystemId,
+                  source:                'auto_install',
+                  source_quote_id:       null,
+                  status:                initialStatus,
+                  billing_cycle:         tmpl.billing_cycle,
+                  price:                 planPrice,
+                  start_date:            todayDate,
+                  billing_start_date:    hasCard ? todayDate : null,
+                  next_billing_date:     hasCard ? todayDate : null,
                   next_fulfillment_date: nextFulfillment,
-                  next_service:         nextFulfillment,
-                  activated_at:         hasCard ? nowISO : null,
+                  next_service:          nextFulfillment,
+                  activated_at:          hasCard ? nowISO : null,
                 })
                 .select('id')
                 .single();
@@ -531,6 +590,8 @@ module.exports = async function handler(req, res) {
             customer_id:         customerId,
             ownership_type:      ownershipType,
             ownership_source:    ownershipSource,
+            product_name:        product?.name || null,
+            product_sku:         product?.sku || null,
             service_plans_activated: activatedPlans.length,
           },
           actor_id:   completed_by || 'system',
@@ -544,7 +605,7 @@ module.exports = async function handler(req, res) {
           await supabase.from('customer_activity_log').insert({
             customer_id: customerId,
             event_type:  'system_installed',
-            title:       'System installed',
+            title:       `System installed: ${product?.name || job.system_type || 'System'}`,
             actor_id:    null,
             actor_name:  'Zenith Installer',
             metadata: {
@@ -554,6 +615,8 @@ module.exports = async function handler(req, res) {
               ownership_type:      ownershipType,
               ownership_source:    ownershipSource,
               system_type:         job.system_type || null,
+              product_name:        product?.name || null,
+              product_sku:         product?.sku || null,
               service_plans_activated: activatedPlans.length,
             },
           });
