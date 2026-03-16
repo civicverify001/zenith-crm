@@ -18,6 +18,9 @@ import { ConsentsTab } from './tabs/ConsentsTab'
 import { JobActivityTab } from '../dispatch/tabs/JobActivityTab'
 import SiteSurveyCapture from '../leads/SiteSurveyCapture'
 import MarkCompleteButton from './MarkCompleteButton'
+import { WaterTestForm } from '../shared/WaterTestForm'
+import { WaterTestHistory, WaterTestComparison } from '../shared/WaterTestResults'
+import { fetchByJob, fetchByLead, type WaterTest } from '../../services/waterTestService'
 
 type InstallTab = 'checklist' | 'photos' | 'handover' | 'consents' | 'activity'
 
@@ -56,6 +59,13 @@ export function InstallationDetailPage() {
   const [activeTab, setActiveTab] = useState<InstallTab>('checklist')
   const [statusError, setStatusError] = useState('')
 
+  // Water test state
+  const [waterTests, setWaterTests] = useState<WaterTest[]>([])
+  const [allTests, setAllTests] = useState<WaterTest[]>([]) // includes lead tests for before/after
+  const [showWaterTestForm, setShowWaterTestForm] = useState(false)
+  const [editingWaterTest, setEditingWaterTest] = useState<WaterTest | null>(null)
+  const [waterTestsLoaded, setWaterTestsLoaded] = useState(false)
+
   const currentJob = job || fetchedJob
 
   const { data: completionStatus } = useQuery<CompletionStatus>({
@@ -77,14 +87,11 @@ export function InstallationDetailPage() {
   })
 
   // ── Install fee: fetch from accepted/signed quote linked to this job ──
-  // Layer 1: quote by lead_id OR opportunity_id, status IN (accepted, signed)
-  // Layer 2: quote by customer_id if Layer 1 misses (covers CustomerQuotesTab-created quotes)
   const { data: installFeeData } = useQuery({
     queryKey: ['job_install_fee', currentJob?.id],
     queryFn: async () => {
       const fallback = { installFee: 0, customerName: currentJob?.customer_name_snapshot || 'Customer' }
 
-      // Layer 1: lead_id / opportunity_id
       let quote: any = null
       if (currentJob?.lead_id) {
         const { data: q } = await supabase
@@ -98,7 +105,6 @@ export function InstallationDetailPage() {
         quote = q || null
       }
 
-      // Layer 2: customer_id fallback (when quote has no lead_id)
       if (!quote) {
         const { data: cust } = await supabase
           .from('customers')
@@ -128,6 +134,31 @@ export function InstallationDetailPage() {
     staleTime: 30_000,
   })
 
+  // ── Load water tests for this job + lead (for before/after) ──
+  useEffect(() => {
+    if (!currentJob?.id) return
+    loadWaterTests()
+  }, [currentJob?.id])
+
+  async function loadWaterTests() {
+    if (!currentJob) return
+    const jobTests = await fetchByJob(currentJob.id)
+    setWaterTests(jobTests)
+
+    // Also load lead tests for before/after comparison
+    const leadTests = currentJob.lead_id ? await fetchByLead(currentJob.lead_id) : []
+    const combined = [...leadTests, ...jobTests]
+    // Deduplicate
+    const seen = new Set<string>()
+    const deduped = combined.filter(t => {
+      if (seen.has(t.id)) return false
+      seen.add(t.id)
+      return true
+    })
+    setAllTests(deduped)
+    setWaterTestsLoaded(true)
+  }
+
   const canComplete = completionStatus?.ready === true
 
   const handleJobUpdated = useCallback((updated: Job) => {
@@ -148,16 +179,13 @@ export function InstallationDetailPage() {
     }
   }
 
-  // Called when MarkCompleteButton finishes the complete + charge flow
   function handleInstallCompleted(result: any) {
-    // Refresh all relevant queries
     qc.invalidateQueries({ queryKey: JOB_KEYS.detail(currentJob!.id) })
     qc.invalidateQueries({ queryKey: JOB_KEYS.board() })
     qc.invalidateQueries({ queryKey: JOB_KEYS.activity(currentJob!.id) })
     qc.invalidateQueries({ queryKey: ['job_completion', currentJob!.id] })
     qc.invalidateQueries({ queryKey: ['job_customer', currentJob!.id] })
 
-    // Optimistic local update so UI reflects complete immediately
     if (currentJob) {
       setJob({
         ...currentJob,
@@ -165,6 +193,25 @@ export function InstallationDetailPage() {
         completed_at: new Date().toISOString(),
       })
     }
+  }
+
+  // Water test handlers
+  function handleWaterTestSaved(test: WaterTest) {
+    setShowWaterTestForm(false)
+    setEditingWaterTest(null)
+    loadWaterTests()
+  }
+
+  function handleEditWaterTest(test: WaterTest) {
+    setEditingWaterTest(test)
+    setShowWaterTestForm(true)
+  }
+
+  async function handleDeleteWaterTest(test: WaterTest) {
+    if (!confirm('Delete this water test? This cannot be undone.')) return
+    const { deleteWaterTest } = await import('../../services/waterTestService')
+    await deleteWaterTest(test.id)
+    loadWaterTests()
   }
 
   if (isLoading) {
@@ -189,6 +236,9 @@ export function InstallationDetailPage() {
 
   const userRole = profile?.role
   const canMarkComplete = userRole === 'admin' || userRole === 'tech'
+  const showWaterTest = currentJob.status === 'in_progress' || currentJob.status === 'complete'
+  const hasInitialTest = allTests.some(t => t.test_type === 'initial')
+  const hasPostInstall = waterTests.some(t => t.test_type === 'post_install')
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -207,7 +257,6 @@ export function InstallationDetailPage() {
           ← Back to Installations
         </button>
 
-        {/* Name + badge row */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <h1 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 18, margin: 0, lineHeight: 1.3 }}>
@@ -326,7 +375,6 @@ export function InstallationDetailPage() {
             <div style={{ color: '#4ade80', fontSize: 13, fontWeight: 600 }}>
               ✅ Complete — {formatDate(currentJob.completed_at)}
             </div>
-            {/* Show charge status if available */}
             {(currentJob as any).install_fee_charged && (
               <span style={{
                 fontSize: 11, padding: '3px 8px', borderRadius: 6,
@@ -369,7 +417,6 @@ export function InstallationDetailPage() {
           </div>
         )}
 
-        {/* Date chips */}
         <div style={{ display: 'flex', gap: 8, marginLeft: mob ? 0 : 'auto', flexWrap: 'wrap', alignItems: 'center' }}>
           {currentJob.scheduled_date && (
             <span style={{ color: '#64748b', fontSize: 12 }}>
@@ -411,9 +458,97 @@ export function InstallationDetailPage() {
           />
         </div>
 
+        {/* ── Post-Install Water Test Section ── */}
+        {showWaterTest && waterTestsLoaded && (
+          <div style={{ padding: '12px 16px 0' }}>
+            <div style={{
+              background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14,
+              overflow: 'hidden',
+            }}>
+              {/* Header */}
+              <div style={{
+                padding: '12px 16px', borderBottom: '1px solid #1e3a4f',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 16 }}>💧</span>
+                  <div>
+                    <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 14 }}>
+                      Post-Install Water Test
+                    </div>
+                    <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>
+                      {hasPostInstall
+                        ? 'Post-install test recorded'
+                        : hasInitialTest
+                          ? 'Initial test found — record post-install to show improvement'
+                          : 'Record readings after installation'
+                      }
+                    </div>
+                  </div>
+                </div>
+                {!showWaterTestForm && (
+                  <button
+                    onClick={() => { setEditingWaterTest(null); setShowWaterTestForm(true) }}
+                    style={{
+                      padding: '5px 14px', borderRadius: 8, fontSize: 11, fontWeight: 700,
+                      background: 'rgba(34,211,238,0.1)', color: '#22d3ee',
+                      border: '1px solid rgba(34,211,238,0.25)', cursor: 'pointer',
+                    }}
+                  >
+                    + {hasPostInstall ? 'New Test' : 'Record Test'}
+                  </button>
+                )}
+              </div>
+
+              <div style={{ padding: 16 }}>
+                {/* Water test form */}
+                {showWaterTestForm && (
+                  <div style={{ marginBottom: 12 }}>
+                    <WaterTestForm
+                      jobId={currentJob.id}
+                      leadId={currentJob.lead_id || undefined}
+                      testType="post_install"
+                      existingTest={editingWaterTest}
+                      onSaved={handleWaterTestSaved}
+                      onCancel={() => { setShowWaterTestForm(false); setEditingWaterTest(null) }}
+                    />
+                  </div>
+                )}
+
+                {/* Before/After comparison (if both initial and post-install exist) */}
+                {!showWaterTestForm && hasInitialTest && hasPostInstall && (
+                  <div style={{ marginBottom: 12 }}>
+                    <WaterTestComparison tests={allTests} />
+                  </div>
+                )}
+
+                {/* Job water test history */}
+                {!showWaterTestForm && waterTests.length > 0 && (
+                  <WaterTestHistory
+                    tests={waterTests}
+                    onEdit={handleEditWaterTest}
+                    onDelete={handleDeleteWaterTest}
+                  />
+                )}
+
+                {/* Empty state */}
+                {!showWaterTestForm && waterTests.length === 0 && (
+                  <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                    <div style={{ fontSize: 24, marginBottom: 6, opacity: 0.4 }}>💧</div>
+                    <p style={{ color: '#64748b', fontSize: 12 }}>
+                      {hasInitialTest
+                        ? 'Record a post-install test to show the improvement after installation.'
+                        : 'No water tests yet. Record a test after installation to document results.'}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Tabs ── */}
         <div style={{ padding: '16px 16px 0' }}>
-          {/* Tab bar — scrolls horizontally on mobile */}
           <div style={{
             display: 'flex',
             overflowX: 'auto',
@@ -449,7 +584,6 @@ export function InstallationDetailPage() {
             ))}
           </div>
 
-          {/* Tab content — full width, proper padding */}
           <div style={{ paddingTop: 16, paddingBottom: 32, minHeight: 300 }}>
             {activeTab === 'checklist' && <InstallerChecklistTab jobId={currentJob.id} />}
             {activeTab === 'photos'    && <PhotosTab jobId={currentJob.id} />}
