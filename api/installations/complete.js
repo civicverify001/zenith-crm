@@ -146,9 +146,10 @@ module.exports = async function handler(req, res) {
     // ── 4. Get product info — from quote line items first, then quote.product_id ──
     let product = null;
 
-    // FIX: Check document_line_items for the actual product (item_type = 'product')
+    console.log('[COMPLETE][S4] Starting product lookup. acceptedQuote:', acceptedQuote?.id || 'none');
+
     if (acceptedQuote?.id) {
-      const { data: productLineItem } = await supabase
+      const { data: productLineItem, error: pliErr } = await supabase
         .from('document_line_items')
         .select('product_id, description, sku, unit_price')
         .eq('document_id', acceptedQuote.id)
@@ -157,15 +158,21 @@ module.exports = async function handler(req, res) {
         .limit(1)
         .maybeSingle();
 
+      console.log('[COMPLETE][S4] document_line_items query result:', JSON.stringify(productLineItem), 'error:', pliErr?.message || 'none');
+
       if (productLineItem?.product_id) {
-        const { data: prod } = await supabase
+        console.log('[COMPLETE][S4] Found product_id on line item:', productLineItem.product_id, '— querying products table');
+        const { data: prod, error: prodErr } = await supabase
           .from('products')
           .select('id, name, sku, retail_price, warranty_months, category')
           .eq('id', productLineItem.product_id)
           .maybeSingle();
+
+        console.log('[COMPLETE][S4] Products table result:', JSON.stringify(prod), 'error:', prodErr?.message || 'none');
         product = prod;
       } else if (productLineItem) {
         // Line item exists but no product_id — use description as name, sku from line item
+        console.log('[COMPLETE][S4] Line item found but no product_id — using description:', productLineItem.description?.substring(0, 60));
         product = {
           id: null,
           name: productLineItem.description?.split('\n')[0]?.trim() || 'Installed System',
@@ -174,18 +181,24 @@ module.exports = async function handler(req, res) {
           warranty_months: null,
           category: null,
         };
+      } else {
+        console.log('[COMPLETE][S4] No product line items found for quote:', acceptedQuote.id);
       }
     }
 
     // Fallback: quote.product_id (legacy path)
     if (!product && acceptedQuote?.product_id) {
+      console.log('[COMPLETE][S4] Trying legacy quote.product_id:', acceptedQuote.product_id);
       const { data: prod } = await supabase
         .from('products')
         .select('id, name, sku, retail_price, warranty_months, category')
         .eq('id', acceptedQuote.product_id)
         .maybeSingle();
       product = prod;
+      console.log('[COMPLETE][S4] Legacy product result:', JSON.stringify(prod));
     }
+
+    console.log('[COMPLETE][S4] Final product resolved:', product ? `${product.name} (id=${product.id})` : 'NONE — will use system_type fallback');
 
     // ── 5. Mark job complete (only if not already complete) ──────────
     if (!alreadyComplete) {
@@ -241,6 +254,10 @@ module.exports = async function handler(req, res) {
     }
 
     // ── 6. Installed systems — idempotent upsert ──────────────────────
+    // FIX: Removed product_catalog_id from both INSERT and UPDATE paths.
+    //       That FK points to the product_catalog table (NOT products).
+    //       Writing a products.id value causes FK constraint violation → silent rollback.
+    //       name_snapshot, sku_snapshot, retail_price_snapshot are plain columns — safe to write.
     let installedSystemId = null;
 
     if (customerId) {
@@ -267,28 +284,34 @@ module.exports = async function handler(req, res) {
 
       if (existingRow) {
         installedSystemId = existingRow.id;
-        // FIX: Also update product name/sku on re-run
-        await supabase
+        // UPDATE path — correct ownership and product snapshots on re-run
+        // NOTE: product_catalog_id intentionally NOT written here (FK mismatch)
+        const { error: updateSysErr } = await supabase
           .from('installed_systems')
           .update({
             ownership_type:          ownershipType,
             install_fee_snapshot:    installFee || null,
             monthly_amount_snapshot: monthlyAmount,
-            product_catalog_id:      product?.id || null,
             name_snapshot:           product?.name || nameMap[job.system_type] || job.system_type?.replace(/_/g, ' ') || 'Installed System',
             sku_snapshot:            product?.sku || null,
             retail_price_snapshot:   product?.retail_price || null,
           })
           .eq('id', existingRow.id);
 
-        console.log(
-          `[complete.js] UPDATED installed_system ${existingRow.id}:`,
-          `ownership=${ownershipType} (was ${existingRow.ownership_type}),`,
-          `product=${product?.name || 'none'},`,
-          `source=${ownershipSource}`
-        );
+        if (updateSysErr) {
+          console.error('[COMPLETE][S6] UPDATE installed_systems FAILED:', updateSysErr.message);
+        } else {
+          console.log(
+            `[COMPLETE][S6] UPDATED installed_system ${existingRow.id}:`,
+            `ownership=${ownershipType} (was ${existingRow.ownership_type}),`,
+            `product=${product?.name || 'none'},`,
+            `source=${ownershipSource}`
+          );
+        }
 
       } else {
+        // INSERT path — create new installed_systems row
+        // NOTE: product_catalog_id intentionally NOT written here (FK mismatch)
         const { data: sysRecord, error: sysError } = await supabase
           .from('installed_systems')
           .insert({
@@ -296,7 +319,6 @@ module.exports = async function handler(req, res) {
             system_type:             job.system_type || product?.category || 'unknown',
             name_snapshot:           product?.name || nameMap[job.system_type] || job.system_type?.replace(/_/g, ' ') || 'Installed System',
             sku_snapshot:            product?.sku || null,
-            product_catalog_id:      product?.id || null,
             ownership_type:          ownershipType,
             install_date:            today,
             retail_price_snapshot:   product?.retail_price || null,
@@ -310,8 +332,9 @@ module.exports = async function handler(req, res) {
 
         if (!sysError && sysRecord) {
           installedSystemId = sysRecord.id;
+          console.log(`[COMPLETE][S6] INSERTED installed_system ${sysRecord.id}: ownership=${ownershipType}, product=${product?.name || 'fallback'}`);
         } else {
-          console.error('[installed_systems insert error]', sysError?.message);
+          console.error('[COMPLETE][S6] INSERT installed_systems FAILED:', sysError?.message);
         }
 
         // Warranty: only on INSERT path
@@ -370,7 +393,8 @@ module.exports = async function handler(req, res) {
     // ── 7b. SERVICE PLAN ACTIVATION ───────────────────────────────────
     // Two sources:
     //   A) Quote-origin: document_line_items with item_type = 'service_plan'
-    //      FIX: Match by price to find the service_plans template (no metadata column)
+    //      FIX: Match by description FIRST (primary), then price (fallback).
+    //           Custom quote prices don't match template prices — description is reliable.
     //   B) Auto-enroll: service_plans templates where auto_activate_on_install = true
 
     const activatedPlans = [];
@@ -390,14 +414,18 @@ module.exports = async function handler(req, res) {
         .maybeSingle();
       const hasCard = !!pmCheck;
 
+      console.log('[COMPLETE][S7b] Starting service plan activation. customerId:', customerId, 'hasCard:', hasCard, 'acceptedQuote:', acceptedQuote?.id || 'none');
+
       // ── A) Quote-origin service plans ──────────────────────────────
       if (acceptedQuote?.id) {
         try {
-          const { data: planItems } = await supabase
+          const { data: planItems, error: planItemsErr } = await supabase
             .from('document_line_items')
             .select('*')
             .eq('document_id', acceptedQuote.id)
             .eq('item_type', 'service_plan');
+
+          console.log('[COMPLETE][S7b-A] Plan line items found:', planItems?.length || 0, 'error:', planItemsErr?.message || 'none');
 
           if (planItems && planItems.length > 0) {
             // Fetch all active service plan templates to match against
@@ -406,32 +434,65 @@ module.exports = async function handler(req, res) {
               .select('id, name, billing_cycle, price, fulfillment_type, fulfillment_interval_months')
               .eq('is_active', true);
 
+            console.log('[COMPLETE][S7b-A] Active templates loaded:', allTemplates?.length || 0);
+
             for (const item of planItems) {
-              // FIX: Match template by price since document_line_items has no metadata column
-              // Try exact price match first, then closest match
-              let templateId = null;
-              let matchedTemplate = null;
               const itemPrice = parseFloat(item.unit_price) || 0;
+              const itemDesc = (item.description || '').toLowerCase().trim();
+              let matchedTemplate = null;
+              let matchMethod = 'none';
+
+              console.log('[COMPLETE][S7b-A] Matching line item: desc="' + item.description + '", price=' + itemPrice);
 
               if (allTemplates && allTemplates.length > 0) {
-                // Exact price match
-                matchedTemplate = allTemplates.find(t => parseFloat(t.price) === itemPrice);
+                // ── STRATEGY 1 (PRIMARY): Description-based matching ──
+                // Check if template name appears in the line item description (case-insensitive)
+                // OR if the line item description appears in the template name
+                // Normalize both sides: strip special chars, compare substrings
+                for (const t of allTemplates) {
+                  const tName = (t.name || '').toLowerCase().trim();
 
-                // If no exact match, try matching by description containing template name
+                  // Direct containment: item desc contains template name
+                  if (tName.length >= 3 && itemDesc.includes(tName)) {
+                    matchedTemplate = t;
+                    matchMethod = 'desc_contains_template_name';
+                    break;
+                  }
+                  // Reverse: template name contains the main part of item desc
+                  // Strip anything after — or - (often "Plan Name — $X.XX/mo")
+                  const itemDescMain = itemDesc.split(/[—\-–]/)[0].trim();
+                  if (itemDescMain.length >= 3 && tName.includes(itemDescMain)) {
+                    matchedTemplate = t;
+                    matchMethod = 'template_name_contains_desc';
+                    break;
+                  }
+                  // Word overlap: if 2+ significant words match (ignoring common words)
+                  const commonWords = new Set(['plan', 'service', 'monthly', 'annual', 'the', 'a', 'for', 'and', 'or', 'per', 'mo']);
+                  const tWords = tName.split(/\s+/).filter(w => w.length > 2 && !commonWords.has(w));
+                  const dWords = itemDescMain.split(/\s+/).filter(w => w.length > 2 && !commonWords.has(w));
+                  const overlap = tWords.filter(w => dWords.some(dw => dw.includes(w) || w.includes(dw)));
+                  if (overlap.length >= 2) {
+                    matchedTemplate = t;
+                    matchMethod = 'word_overlap(' + overlap.join(',') + ')';
+                    break;
+                  }
+                }
+
+                // ── STRATEGY 2 (FALLBACK): Exact price match ──
                 if (!matchedTemplate) {
-                  const itemDesc = (item.description || '').toLowerCase();
-                  matchedTemplate = allTemplates.find(t =>
-                    itemDesc.includes(t.name.toLowerCase()) || t.name.toLowerCase().includes(itemDesc.split('—')[0].trim().toLowerCase())
-                  );
+                  matchedTemplate = allTemplates.find(t => parseFloat(t.price) === itemPrice);
+                  if (matchedTemplate) matchMethod = 'exact_price';
                 }
               }
 
               if (!matchedTemplate) {
-                console.log(`[complete.js] Could not match service plan line item: price=${itemPrice}, desc="${item.description}"`);
+                console.log(`[COMPLETE][S7b-A] ⚠ NO MATCH for plan line item: price=${itemPrice}, desc="${item.description}". Available templates: ${(allTemplates || []).map(t => `"${t.name}" @$${t.price}`).join(', ')}`);
                 continue;
               }
 
-              templateId = matchedTemplate.id;
+              console.log(`[COMPLETE][S7b-A] ✓ MATCHED: "${item.description}" → template "${matchedTemplate.name}" (method: ${matchMethod})`);
+
+              const templateId = matchedTemplate.id;
               const planPrice = itemPrice;
               const billingCycle = matchedTemplate.billing_cycle || 'monthly';
               const initialStatus = hasCard ? 'active' : 'pending_payment_method';
@@ -447,7 +508,7 @@ module.exports = async function handler(req, res) {
               }
 
               try {
-                const { data: newPlan } = await supabase
+                const { data: newPlan, error: planInsertErr } = await supabase
                   .from('customer_service_plans')
                   .insert({
                     customer_id:           customerId,
@@ -468,20 +529,27 @@ module.exports = async function handler(req, res) {
                   .select('id')
                   .single();
 
-                if (newPlan) {
+                if (planInsertErr) {
+                  if (planInsertErr.code === '23505') {
+                    console.log(`[COMPLETE][S7b-A] Plan already exists for template ${templateId}, skipping (duplicate)`);
+                  } else {
+                    console.error('[COMPLETE][S7b-A] Plan insert FAILED:', planInsertErr.message);
+                  }
+                } else if (newPlan) {
+                  console.log(`[COMPLETE][S7b-A] ✓ Plan activated: id=${newPlan.id}, template="${matchedTemplate.name}", status=${initialStatus}, price=$${planPrice}`);
                   activatedPlans.push({ id: newPlan.id, source: 'quote', template_id: templateId, status: initialStatus, name: matchedTemplate.name });
                 }
               } catch (insertErr) {
                 if (insertErr.code === '23505') {
-                  console.log(`[complete.js] Service plan already exists for template ${templateId}, skipping`);
+                  console.log(`[COMPLETE][S7b-A] Service plan already exists for template ${templateId}, skipping`);
                 } else {
-                  console.error('[BEST-EFFORT] quote service plan insert:', insertErr.message);
+                  console.error('[COMPLETE][S7b-A] quote service plan insert error:', insertErr.message);
                 }
               }
             }
           }
         } catch (e) {
-          console.error('[BEST-EFFORT] quote service plan lookup:', e.message);
+          console.error('[COMPLETE][S7b-A] Quote service plan lookup error:', e.message);
         }
       }
 
@@ -493,16 +561,21 @@ module.exports = async function handler(req, res) {
           .eq('is_active', true)
           .eq('auto_activate_on_install', true);
 
+        console.log('[COMPLETE][S7b-B] Auto-enroll templates found:', autoTemplates?.length || 0);
+
         if (autoTemplates && autoTemplates.length > 0) {
           const systemCategory = job.system_type || product?.category || 'unknown';
+          console.log('[COMPLETE][S7b-B] System category for matching:', systemCategory);
 
           for (const tmpl of autoTemplates) {
             const cats = Array.isArray(tmpl.applies_to_categories) ? tmpl.applies_to_categories : [];
             if (cats.length > 0 && !cats.includes(systemCategory)) {
+              console.log(`[COMPLETE][S7b-B] Skipping "${tmpl.name}" — category mismatch (needs: ${cats.join(',')}, got: ${systemCategory})`);
               continue;
             }
 
             if (activatedPlans.some(ap => ap.template_id === tmpl.id)) {
+              console.log(`[COMPLETE][S7b-B] Skipping "${tmpl.name}" — already activated via quote`);
               continue;
             }
 
@@ -519,7 +592,7 @@ module.exports = async function handler(req, res) {
             }
 
             try {
-              const { data: newPlan } = await supabase
+              const { data: newPlan, error: autoInsertErr } = await supabase
                 .from('customer_service_plans')
                 .insert({
                   customer_id:           customerId,
@@ -540,21 +613,30 @@ module.exports = async function handler(req, res) {
                 .select('id')
                 .single();
 
-              if (newPlan) {
+              if (autoInsertErr) {
+                if (autoInsertErr.code === '23505') {
+                  console.log(`[COMPLETE][S7b-B] Auto-enroll plan already exists for template ${tmpl.id}, skipping`);
+                } else {
+                  console.error(`[COMPLETE][S7b-B] Auto-enroll insert FAILED for "${tmpl.name}":`, autoInsertErr.message);
+                }
+              } else if (newPlan) {
+                console.log(`[COMPLETE][S7b-B] ✓ Auto-enrolled: id=${newPlan.id}, template="${tmpl.name}", status=${initialStatus}`);
                 activatedPlans.push({ id: newPlan.id, source: 'auto_install', template_id: tmpl.id, status: initialStatus, name: tmpl.name });
               }
             } catch (insertErr) {
               if (insertErr.code === '23505') {
-                console.log(`[complete.js] Auto-enroll plan already exists for template ${tmpl.id}, skipping`);
+                console.log(`[COMPLETE][S7b-B] Auto-enroll plan already exists for template ${tmpl.id}, skipping`);
               } else {
-                console.error('[BEST-EFFORT] auto-enroll plan insert:', insertErr.message);
+                console.error('[COMPLETE][S7b-B] auto-enroll plan insert error:', insertErr.message);
               }
             }
           }
         }
       } catch (e) {
-        console.error('[BEST-EFFORT] auto-enroll template lookup:', e.message);
+        console.error('[COMPLETE][S7b-B] auto-enroll template lookup error:', e.message);
       }
+
+      console.log('[COMPLETE][S7b] Plan activation complete. Total activated:', activatedPlans.length, activatedPlans.map(p => p.name).join(', '));
 
       // ── Activity logs for activated plans ──────────────────────────
       for (const ap of activatedPlans) {
