@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   useCustomer, useInstalledSystems, useRentalContracts,
   useWarrantyRecords, useMaintenancePlans, useServiceScheduleItems,
 } from './useCustomers'
 import { LIFECYCLE_LABELS, LIFECYCLE_COLORS } from './customers.types'
+import { supabase } from '../../lib/supabase'
 
 import { CustomerOverviewTab } from './tabs/CustomerOverviewTab'
 import { InstalledSystemsTab } from './tabs/InstalledSystemsTab'
@@ -36,6 +37,34 @@ export function CustomerDetailPage() {
   const { data: plans } = useMaintenancePlans(customerId || '')
   const { data: schedules } = useServiceScheduleItems(customerId || '')
 
+  // ─── Active service plan (from customer_service_plans, not deprecated maintenance_plans) ───
+  const [activeServicePlan, setActiveServicePlan] = useState<any>(null)
+  const [servicePlanCount, setServicePlanCount] = useState(0)
+
+  useEffect(() => {
+    if (!customerId) return
+    async function fetchServicePlans() {
+      try {
+        const { data, error: spErr } = await supabase
+          .from('customer_service_plans')
+          .select('id, status, price, billing_cycle, plan_id, service_plans(name)')
+          .eq('customer_id', customerId!)
+          .in('status', ['active', 'pending_payment_method'])
+          .order('created_at', { ascending: false })
+
+        if (!spErr && data) {
+          setServicePlanCount(data.length)
+          // Pick the first active one for the summary card
+          const active = data.find((p: any) => p.status === 'active') || data[0] || null
+          setActiveServicePlan(active)
+        }
+      } catch (e) {
+        // best effort
+      }
+    }
+    fetchServicePlans()
+  }, [customerId])
+
   const [activeTab, setActiveTab] = useState<CustTab>('overview')
 
   if (isLoading) return <div className="flex items-center justify-center h-full"><div className="text-muted text-sm">Loading customer...</div></div>
@@ -59,7 +88,8 @@ export function CustomerDetailPage() {
   const voidWarranties = warrantyIssues.filter((w: any) => w.warranty_status === 'void')
   const warningWarranties = warrantyIssues.filter((w: any) => w.warranty_status === 'warning')
 
-  const activePlan = (plans || []).find((p: any) => p.status === 'active')
+  // Use customer_service_plans for the summary card (not deprecated maintenance_plans)
+  const hasActiveServicePlan = !!activeServicePlan
   const activeContract = (contracts || []).find((c: any) => c.status === 'active')
   const hasRentals = (contracts || []).length > 0
 
@@ -68,6 +98,27 @@ export function CustomerDetailPage() {
 
   const isAtRisk = customer.lifecycle_status === 'at_risk'
   const hasAlerts = voidWarranties.length > 0 || isAtRisk || overdueSchedules.length > 0
+
+  // ─── Service plan summary for card ────────────────────────
+  let planCardValue = 'None'
+  let planCardSub = 'No active plan'
+  let planCardColor = '#94a3b8'
+
+  if (hasActiveServicePlan) {
+    const planName = (activeServicePlan as any)?.service_plans?.name || 'Service Plan'
+    const planPrice = activeServicePlan.price ? `$${Number(activeServicePlan.price).toFixed(2)}` : ''
+    const cycle = activeServicePlan.billing_cycle === 'yearly' ? '/yr' : activeServicePlan.billing_cycle === 'monthly' ? '/mo' : ''
+
+    if (activeServicePlan.status === 'active') {
+      planCardValue = servicePlanCount > 1 ? `${servicePlanCount} Active` : 'Active'
+      planCardSub = planPrice ? `${planName} — ${planPrice}${cycle}` : planName
+      planCardColor = '#4ade80'
+    } else if (activeServicePlan.status === 'pending_payment_method') {
+      planCardValue = 'Pending'
+      planCardSub = `${planName} — needs card`
+      planCardColor = '#fbbf24'
+    }
+  }
 
   // ─── Tabs ─────────────────────────────────────────────────
   const TABS: { key: CustTab; label: string; show: boolean }[] = [
@@ -156,12 +207,10 @@ export function CustomerDetailPage() {
           color={voidWarranties.length > 0 ? '#f87171' : warningWarranties.length > 0 ? '#fbbf24' : '#4ade80'}
         />
         <SummaryCard
-          label="Maintenance Plan"
-          value={activePlan ? 'Active' : 'None'}
-          sub={activePlan
-            ? ((activePlan as any).included_in_rental ? 'Included in rental' : `$${(activePlan as any).price_snapshot}/yr`)
-            : 'No active plan'}
-          color={activePlan ? '#4ade80' : '#94a3b8'}
+          label="Service Plan"
+          value={planCardValue}
+          sub={planCardSub}
+          color={planCardColor}
         />
         <SummaryCard
           label="Service Schedule"
