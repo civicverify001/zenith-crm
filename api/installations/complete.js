@@ -70,28 +70,31 @@ module.exports = async function handler(req, res) {
     let ownershipSource = 'default';
 
     // Layer 1 — quote by lead_id / opportunity_id
+    // NOTE: quotes table does NOT have product_id column — selecting it causes 400 from PostgREST
     if (job.lead_id) {
-      const { data: q } = await supabase
+      const { data: q, error: q1Err } = await supabase
         .from('quotes')
-        .select('id, install_fee, monthly_amount, customer_name, product_id, commercial_type')
+        .select('id, install_fee, monthly_amount, customer_name, commercial_type')
         .or(`lead_id.eq.${job.lead_id},opportunity_id.eq.${job.lead_id}`)
         .in('status', ['accepted', 'signed'])
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+      console.log('[COMPLETE][S3] Layer 1 quote by lead_id:', q?.id || 'none', 'error:', q1Err?.message || 'none');
       if (q) { acceptedQuote = q; ownershipSource = 'quote_lead_id'; }
     }
 
     // Layer 2 — quote by customer_id
     if (!acceptedQuote && customerId) {
-      const { data: q } = await supabase
+      const { data: q, error: q2Err } = await supabase
         .from('quotes')
-        .select('id, install_fee, monthly_amount, customer_name, product_id, commercial_type')
+        .select('id, install_fee, monthly_amount, customer_name, commercial_type')
         .eq('customer_id', customerId)
         .in('status', ['accepted', 'signed'])
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+      console.log('[COMPLETE][S3] Layer 2 quote by customer_id:', q?.id || 'none', 'error:', q2Err?.message || 'none');
       if (q) { acceptedQuote = q; ownershipSource = 'quote_customer_id'; }
     }
 
@@ -108,10 +111,11 @@ module.exports = async function handler(req, res) {
     }
 
     // Layer 3 — signed agreement
+    let fallbackQuoteId = null; // For product + plan lookup when quote queries fail
     if (!acceptedQuote && customerId) {
       const { data: ag } = await supabase
         .from('agreements')
-        .select('agreement_type, monthly_amount, install_fee')
+        .select('agreement_type, monthly_amount, install_fee, quote_id')
         .eq('customer_id', customerId)
         .eq('status', 'signed')
         .order('created_at', { ascending: false })
@@ -122,6 +126,8 @@ module.exports = async function handler(req, res) {
         installFee    = ag.install_fee    ? parseFloat(ag.install_fee)    : 0;
         monthlyAmount = ag.monthly_amount ? parseFloat(ag.monthly_amount) : null;
         ownershipSource = 'agreement';
+        if (ag.quote_id) fallbackQuoteId = ag.quote_id;
+        console.log('[COMPLETE][S3] Layer 3 agreement found: type=' + ag.agreement_type + ', quote_id=' + (ag.quote_id || 'none'));
       }
     }
 
@@ -129,7 +135,7 @@ module.exports = async function handler(req, res) {
     if (ownershipSource === 'default' && customerId) {
       const { data: con } = await supabase
         .from('contracts')
-        .select('type, monthly_amount')
+        .select('type, monthly_amount, quote_id')
         .eq('customer_id', customerId)
         .eq('status', 'active')
         .in('type', ['rental', 'purchase', 'financed'])
@@ -140,19 +146,25 @@ module.exports = async function handler(req, res) {
         ownershipType = con.type === 'rental' ? 'rented' : 'purchased';
         monthlyAmount = con.monthly_amount ? parseFloat(con.monthly_amount) : null;
         ownershipSource = 'contract';
+        if (con.quote_id && !fallbackQuoteId) fallbackQuoteId = con.quote_id;
+        console.log('[COMPLETE][S3] Layer 4 contract found: type=' + con.type + ', quote_id=' + (con.quote_id || 'none'));
       }
     }
 
-    // ── 4. Get product info — from quote line items first, then quote.product_id ──
+    console.log('[COMPLETE][S3] Ownership resolved: type=' + ownershipType + ', source=' + ownershipSource + ', installFee=' + installFee + ', acceptedQuote=' + (acceptedQuote?.id || 'none') + ', fallbackQuoteId=' + (fallbackQuoteId || 'none'));
+
+    // ── 4. Get product info — from quote line items ─────────────────
+    // Uses acceptedQuote.id first, then fallbackQuoteId from agreement/contract
     let product = null;
+    const quoteIdForLookup = acceptedQuote?.id || fallbackQuoteId;
 
-    console.log('[COMPLETE][S4] Starting product lookup. acceptedQuote:', acceptedQuote?.id || 'none');
+    console.log('[COMPLETE][S4] Starting product lookup. acceptedQuote:', acceptedQuote?.id || 'none', 'fallbackQuoteId:', fallbackQuoteId || 'none', 'using:', quoteIdForLookup || 'NONE');
 
-    if (acceptedQuote?.id) {
+    if (quoteIdForLookup) {
       const { data: productLineItem, error: pliErr } = await supabase
         .from('document_line_items')
         .select('product_id, description, sku, unit_price')
-        .eq('document_id', acceptedQuote.id)
+        .eq('document_id', quoteIdForLookup)
         .eq('item_type', 'product')
         .order('sort_order', { ascending: true })
         .limit(1)
@@ -182,20 +194,10 @@ module.exports = async function handler(req, res) {
           category: null,
         };
       } else {
-        console.log('[COMPLETE][S4] No product line items found for quote:', acceptedQuote.id);
+        console.log('[COMPLETE][S4] No product line items found for quote:', quoteIdForLookup);
       }
-    }
-
-    // Fallback: quote.product_id (legacy path)
-    if (!product && acceptedQuote?.product_id) {
-      console.log('[COMPLETE][S4] Trying legacy quote.product_id:', acceptedQuote.product_id);
-      const { data: prod } = await supabase
-        .from('products')
-        .select('id, name, sku, retail_price, warranty_months, category')
-        .eq('id', acceptedQuote.product_id)
-        .maybeSingle();
-      product = prod;
-      console.log('[COMPLETE][S4] Legacy product result:', JSON.stringify(prod));
+    } else {
+      console.log('[COMPLETE][S4] No quote ID available for product lookup — will use system_type fallback');
     }
 
     console.log('[COMPLETE][S4] Final product resolved:', product ? `${product.name} (id=${product.id})` : 'NONE — will use system_type fallback');
@@ -417,12 +419,14 @@ module.exports = async function handler(req, res) {
       console.log('[COMPLETE][S7b] Starting service plan activation. customerId:', customerId, 'hasCard:', hasCard, 'acceptedQuote:', acceptedQuote?.id || 'none');
 
       // ── A) Quote-origin service plans ──────────────────────────────
-      if (acceptedQuote?.id) {
+      // Uses acceptedQuote.id first, then fallbackQuoteId from agreement/contract
+      const planQuoteId = acceptedQuote?.id || fallbackQuoteId;
+      if (planQuoteId) {
         try {
           const { data: planItems, error: planItemsErr } = await supabase
             .from('document_line_items')
             .select('*')
-            .eq('document_id', acceptedQuote.id)
+            .eq('document_id', planQuoteId)
             .eq('item_type', 'service_plan');
 
           console.log('[COMPLETE][S7b-A] Plan line items found:', planItems?.length || 0, 'error:', planItemsErr?.message || 'none');
@@ -515,7 +519,7 @@ module.exports = async function handler(req, res) {
                     plan_id:               templateId,
                     installed_system_id:   installedSystemId,
                     source:                'quote',
-                    source_quote_id:       acceptedQuote.id,
+                    source_quote_id:       planQuoteId,
                     status:                initialStatus,
                     billing_cycle:         billingCycle,
                     price:                 planPrice,
