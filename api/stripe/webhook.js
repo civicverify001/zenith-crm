@@ -218,14 +218,49 @@ export default async function handler(req, res) {
     }
 
     // ── 3. Log payment transaction ───────────────────────────────
+    // FIX: Check invoice deposit_percent to determine if this is a deposit or full payment
     const amountDollars = (session.amount_total || 0) / 100
+
+    let txType = 'deposit'
+    let txDescription = 'Purchase payment'
+
+    if (quote_type === 'rental') {
+      txType = 'first_month'
+      txDescription = 'First month rental payment'
+    } else if (quote_type === 'purchase' && invoice_id) {
+      // Check invoice to determine deposit vs full payment
+      try {
+        const { data: invCheck } = await supabase
+          .from('invoices')
+          .select('deposit_percent, total')
+          .eq('id', invoice_id)
+          .single()
+
+        if (invCheck) {
+          const isFullPayment = invCheck.deposit_percent >= 100 ||
+            (invCheck.total && Math.abs(amountDollars - invCheck.total) < 0.02)
+
+          if (isFullPayment) {
+            txType = 'purchase_full'
+            txDescription = 'Purchase payment (full)'
+          } else {
+            txType = 'deposit'
+            txDescription = `Purchase deposit (${invCheck.deposit_percent || 50}%)`
+          }
+        }
+      } catch (e) {
+        // fallback — use amount heuristic
+        txType = 'deposit'
+        txDescription = 'Purchase payment'
+      }
+    }
 
     await supabase.from('payment_transactions').insert({
       customer_id, contract_id: agreement_id || null, payment_method_id: savedPmId,
       amount: amountDollars, status: 'succeeded',
-      type: quote_type === 'rental' ? 'first_month' : 'deposit',
+      type: txType,
       external_id: session.payment_intent || session.id,
-      description: quote_type === 'rental' ? 'First month rental payment' : 'Purchase deposit (50%)',
+      description: txDescription,
       attempted_at: now, completed_at: now,
     })
 
@@ -277,7 +312,6 @@ export default async function handler(req, res) {
     // ── 6. Send email based on flow type ─────────────────────────
     if (custEmail) {
       if (quote_type === 'rental') {
-        // Card saved — no charge today, autopay starts after install
         await sendEmail({
           to: custEmail,
           subject: `Payment method saved — Zenith Pure Solutions`,
@@ -292,8 +326,7 @@ export default async function handler(req, res) {
           document_id: agreement_id || null,
         })
       } else if (quote_type === 'purchase') {
-        // Purchase deposit or full payment receipt
-        const isDeposit = amountDollars < 10000 // heuristic — deposit is ~50%
+        const isDeposit = txType === 'deposit'
         await sendEmail({
           to: custEmail,
           subject: `${isDeposit ? 'Deposit' : 'Payment'} received — $${amountDollars.toFixed(2)} — Zenith Pure Solutions`,
@@ -368,7 +401,7 @@ export default async function handler(req, res) {
       }
     }
 
-    console.log('Webhook processed:', { quote_type, quote_id, customer_id, agreement_id, invoice_id, amount: amountDollars, pm_saved: !!savedPmId })
+    console.log('Webhook processed:', { quote_type, quote_id, customer_id, agreement_id, invoice_id, amount: amountDollars, pm_saved: !!savedPmId, tx_type: txType })
     return res.status(200).json({ received: true })
 
   } catch (err) {
