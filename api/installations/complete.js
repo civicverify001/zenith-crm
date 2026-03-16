@@ -156,6 +156,7 @@ module.exports = async function handler(req, res) {
     // ── 4. Get product info — from quote line items ─────────────────
     // Uses acceptedQuote.id first, then fallbackQuoteId from agreement/contract
     let product = null;
+    let quotedUnitPrice = null; // The price on the quote line item (what customer actually pays)
     const quoteIdForLookup = acceptedQuote?.id || fallbackQuoteId;
 
     console.log('[COMPLETE][S4] Starting product lookup. acceptedQuote:', acceptedQuote?.id || 'none', 'fallbackQuoteId:', fallbackQuoteId || 'none', 'using:', quoteIdForLookup || 'NONE');
@@ -171,6 +172,11 @@ module.exports = async function handler(req, res) {
         .maybeSingle();
 
       console.log('[COMPLETE][S4] document_line_items query result:', JSON.stringify(productLineItem), 'error:', pliErr?.message || 'none');
+
+      // Always capture the quoted unit price from the line item
+      if (productLineItem?.unit_price) {
+        quotedUnitPrice = parseFloat(productLineItem.unit_price);
+      }
 
       if (productLineItem?.product_id) {
         console.log('[COMPLETE][S4] Found product_id on line item:', productLineItem.product_id, '— querying products table');
@@ -200,7 +206,7 @@ module.exports = async function handler(req, res) {
       console.log('[COMPLETE][S4] No quote ID available for product lookup — will use system_type fallback');
     }
 
-    console.log('[COMPLETE][S4] Final product resolved:', product ? `${product.name} (id=${product.id})` : 'NONE — will use system_type fallback');
+    console.log('[COMPLETE][S4] Final product resolved:', product ? `${product.name} (id=${product.id})` : 'NONE — will use system_type fallback', '| quotedUnitPrice:', quotedUnitPrice || 'none');
 
     // ── 5. Mark job complete (only if not already complete) ──────────
     if (!alreadyComplete) {
@@ -288,6 +294,7 @@ module.exports = async function handler(req, res) {
         installedSystemId = existingRow.id;
         // UPDATE path — correct ownership and product snapshots on re-run
         // NOTE: product_catalog_id intentionally NOT written here (FK mismatch)
+        // retail_price_snapshot = quoted price (what customer pays), not catalog price
         const { error: updateSysErr } = await supabase
           .from('installed_systems')
           .update({
@@ -296,7 +303,7 @@ module.exports = async function handler(req, res) {
             monthly_amount_snapshot: monthlyAmount,
             name_snapshot:           product?.name || nameMap[job.system_type] || job.system_type?.replace(/_/g, ' ') || 'Installed System',
             sku_snapshot:            product?.sku || null,
-            retail_price_snapshot:   product?.retail_price || null,
+            retail_price_snapshot:   quotedUnitPrice || product?.retail_price || null,
           })
           .eq('id', existingRow.id);
 
@@ -314,6 +321,7 @@ module.exports = async function handler(req, res) {
       } else {
         // INSERT path — create new installed_systems row
         // NOTE: product_catalog_id intentionally NOT written here (FK mismatch)
+        // retail_price_snapshot = quoted price (what customer pays), not catalog price
         const { data: sysRecord, error: sysError } = await supabase
           .from('installed_systems')
           .insert({
@@ -323,7 +331,7 @@ module.exports = async function handler(req, res) {
             sku_snapshot:            product?.sku || null,
             ownership_type:          ownershipType,
             install_date:            today,
-            retail_price_snapshot:   product?.retail_price || null,
+            retail_price_snapshot:   quotedUnitPrice || product?.retail_price || null,
             install_fee_snapshot:    installFee || null,
             monthly_amount_snapshot: monthlyAmount,
             is_active:               true,
