@@ -100,10 +100,12 @@ interface SchedulerProps {
   currentJobId: string
   techs: { id: string; full_name: string }[]
   preselectedTechId: string | null
+  customerName: string
   onConfirm: (date: string, hour: number, techId: string, notes: string) => Promise<void>
+  onCancel: () => void
 }
 
-function InstallSchedulerCalendar({ currentJobId, techs, preselectedTechId, onConfirm }: SchedulerProps) {
+function InstallSchedulerCalendar({ currentJobId, techs, preselectedTechId, onConfirm, onCancel, customerName }: SchedulerProps) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [activeTechId, setActiveTechId] = useState<string>(preselectedTechId || (techs[0]?.id ?? ''))
   const [busySlots, setBusySlots] = useState<BusySlot[]>([])
@@ -117,7 +119,6 @@ function InstallSchedulerCalendar({ currentJobId, techs, preselectedTechId, onCo
   const weekStart = toDateKey(weekDates[0])
   const weekEnd = toDateKey(weekDates[6])
 
-  // Load busy slots for all techs this week
   useEffect(() => {
     if (!techs.length) return
     setLoadingSlots(true)
@@ -132,7 +133,6 @@ function InstallSchedulerCalendar({ currentJobId, techs, preselectedTechId, onCo
       .neq('id', currentJobId)
       .then(({ data }) => {
         if (data) {
-          // Parse hour from scheduled_date timestamp
           const slots: BusySlot[] = data.map(row => {
             const dt = new Date(row.scheduled_date)
             return {
@@ -148,7 +148,6 @@ function InstallSchedulerCalendar({ currentJobId, techs, preselectedTechId, onCo
       })
   }, [weekStart, weekEnd, techs, currentJobId])
 
-  // Busy map: "techId-date-hour" → customer name
   const busyMap = useMemo(() => {
     const map: Record<string, string> = {}
     for (const s of busySlots) {
@@ -183,32 +182,22 @@ function InstallSchedulerCalendar({ currentJobId, techs, preselectedTechId, onCo
   const selectedTechName = techs.find(t => t.id === activeTechId)?.full_name || ''
   const canConfirm = !!selectedDate && selectedHour !== null && !!activeTechId && !confirming
 
+  // ── Full-screen modal overlay (same pattern as SiteVisitScheduler) ──
   return (
-    <div style={{
-      background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.25)',
-      borderRadius: 14, overflow: 'hidden',
-    }}>
-      {/* Section header */}
-      <div style={{
-        padding: '12px 14px', borderBottom: '1px solid rgba(168,85,247,0.2)',
-        display: 'flex', alignItems: 'center', gap: 8,
-      }}>
-        <span style={{ fontSize: 16 }}>📞</span>
-        <div>
-          <div style={{ color: '#c084fc', fontWeight: 700, fontSize: 14 }}>Ready to Schedule</div>
-          <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 1 }}>
-            Pick a date and tech below, then confirm
-          </div>
-        </div>
-      </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}>
+      <div className="w-full max-w-5xl max-h-[90vh] rounded-2xl overflow-hidden flex flex-col" style={{ backgroundColor: '#1e293b', border: '1px solid #334155' }}>
 
-      {/* Tech tabs */}
-      {techs.length > 0 && (
-        <div style={{
-          display: 'flex', gap: 6, padding: '10px 12px',
-          borderBottom: '1px solid rgba(255,255,255,0.05)',
-          overflowX: 'auto',
-        }}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 flex-shrink-0" style={{ borderBottom: '1px solid #334155' }}>
+          <div>
+            <h2 className="text-lg font-bold text-white">Schedule Installation</h2>
+            <p className="text-sm mt-0.5" style={{ color: '#94a3b8' }}>{customerName} · Pick a tech and time slot</p>
+          </div>
+          <button onClick={onCancel} style={{ color: '#64748b', fontSize: 22, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+        </div>
+
+        {/* Tech tabs */}
+        <div className="flex items-center gap-2 px-6 py-3 flex-shrink-0" style={{ borderBottom: '1px solid #334155', overflowX: 'auto' }}>
           {techs.map(tech => {
             const isActive = activeTechId === tech.id
             const initials = tech.full_name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
@@ -216,201 +205,183 @@ function InstallSchedulerCalendar({ currentJobId, techs, preselectedTechId, onCo
               <button
                 key={tech.id}
                 onClick={() => { setActiveTechId(tech.id); setSelectedDate(null); setSelectedHour(null) }}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-shrink-0"
                 style={{
-                  flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 12,
-                  fontWeight: isActive ? 700 : 500,
-                  background: isActive ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.03)',
-                  border: `1px solid ${isActive ? 'rgba(168,85,247,0.5)' : '#1e3a4f'}`,
-                  color: isActive ? '#c084fc' : '#64748b',
-                  boxShadow: isActive ? '0 0 10px rgba(168,85,247,0.15)' : 'none',
+                  background: isActive ? 'rgba(168,85,247,0.2)' : '#1e293b',
+                  border: `2px solid ${isActive ? '#a855f7' : '#334155'}`,
+                  color: isActive ? '#c084fc' : '#94a3b8',
+                  boxShadow: isActive ? '0 0 12px rgba(168,85,247,0.2)' : 'none',
+                  cursor: 'pointer',
                 }}
               >
                 <div style={{
-                  width: 22, height: 22, borderRadius: '50%', display: 'flex',
-                  alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800,
-                  background: isActive ? 'rgba(168,85,247,0.4)' : '#1e3a4f',
-                  color: isActive ? '#e9d5ff' : '#64748b',
+                  width: 28, height: 28, borderRadius: '50%', display: 'flex',
+                  alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800,
+                  background: isActive ? 'rgba(168,85,247,0.4)' : '#334155',
+                  color: isActive ? '#e9d5ff' : '#94a3b8',
                 }}>
                   {initials}
                 </div>
-                {tech.full_name.split(' ')[0]}
+                {tech.full_name}
               </button>
             )
           })}
         </div>
-      )}
 
-      {/* Week nav */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.05)',
-      }}>
-        <button
-          onClick={() => { setWeekOffset(o => o - 1); setSelectedDate(null); setSelectedHour(null) }}
-          style={{
-            padding: '4px 10px', borderRadius: 6, border: '1px solid #1e3a4f',
-            background: 'rgba(255,255,255,0.03)', color: '#94a3b8', cursor: 'pointer', fontSize: 11,
-          }}
-        >← Prev</button>
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0' }}>
-          {weekDates[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} —{' '}
-          {weekDates[6].toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+        {/* Week nav */}
+        <div className="flex items-center justify-between px-6 py-3 flex-shrink-0" style={{ borderBottom: '1px solid #334155' }}>
+          <button
+            onClick={() => { setWeekOffset(o => o - 1); setSelectedDate(null); setSelectedHour(null) }}
+            className="px-3 py-1.5 text-sm font-medium rounded-lg"
+            style={{ background: '#334155', color: '#cbd5e1', border: 'none', cursor: 'pointer' }}
+          >← Prev Week</button>
+          <div className="text-sm font-bold text-white">
+            {weekDates[0].toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} — {weekDates[6].toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+          </div>
+          <button
+            onClick={() => { setWeekOffset(o => o + 1); setSelectedDate(null); setSelectedHour(null) }}
+            className="px-3 py-1.5 text-sm font-medium rounded-lg"
+            style={{ background: '#334155', color: '#cbd5e1', border: 'none', cursor: 'pointer' }}
+          >Next Week →</button>
         </div>
-        <button
-          onClick={() => { setWeekOffset(o => o + 1); setSelectedDate(null); setSelectedHour(null) }}
-          style={{
-            padding: '4px 10px', borderRadius: 6, border: '1px solid #1e3a4f',
-            background: 'rgba(255,255,255,0.03)', color: '#94a3b8', cursor: 'pointer', fontSize: 11,
-          }}
-        >Next →</button>
-      </div>
 
-      {/* Calendar grid — 7 columns, compact for drawer width */}
-      <div style={{ padding: '10px 10px 6px', overflowX: 'auto' }}>
-        {loadingSlots ? (
-          <div style={{ textAlign: 'center', padding: '20px 0', color: '#64748b', fontSize: 12 }}>
-            Loading schedule...
-          </div>
-        ) : (
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(7, minmax(56px, 1fr))',
-            gap: 4, minWidth: 420,
-          }}>
-            {weekDates.map(date => {
-              const dateKey = toDateKey(date)
-              const weekend = isWeekend(date)
-              const isToday = toDateKey(new Date()) === dateKey
-              return (
-                <div key={dateKey} style={{
-                  borderRadius: 8, overflow: 'hidden',
-                  border: isToday ? '1px solid #a855f7' : '1px solid #1e3a4f',
-                  background: '#0f1923',
-                }}>
-                  {/* Day header */}
-                  <div style={{
-                    padding: '4px 2px', textAlign: 'center',
-                    background: weekend ? '#1c1407' : '#162232',
-                    borderBottom: '1px solid #1e3a4f',
+        {/* Calendar grid */}
+        <div className="flex-1 overflow-auto px-6 py-4">
+          {loadingSlots ? (
+            <div className="text-center py-12" style={{ color: '#64748b' }}>Loading schedule...</div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
+              {weekDates.map(date => {
+                const dateKey = toDateKey(date)
+                const weekend = isWeekend(date)
+                const isToday = toDateKey(new Date()) === dateKey
+                return (
+                  <div key={dateKey} style={{
+                    borderRadius: 12, overflow: 'hidden',
+                    border: `1px solid ${isToday ? '#a855f7' : '#1e293b'}`,
+                    background: '#0f172a',
+                    boxShadow: isToday ? '0 0 0 1px rgba(168,85,247,0.3)' : 'none',
                   }}>
+                    {/* Day header */}
                     <div style={{
-                      fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
-                      color: isToday ? '#c084fc' : weekend ? '#f59e0b' : '#64748b',
+                      padding: '8px 4px', textAlign: 'center',
+                      background: weekend ? '#451a03' : '#1e293b',
+                      borderBottom: '1px solid #334155',
                     }}>
-                      {date.toLocaleDateString('en-US', { weekday: 'short' })}
+                      <div style={{
+                        fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
+                        color: isToday ? '#c084fc' : weekend ? '#fbbf24' : '#94a3b8',
+                      }}>
+                        {date.toLocaleDateString('en-US', { weekday: 'short' })}
+                      </div>
+                      <div style={{
+                        fontSize: 16, fontWeight: 800, marginTop: 2,
+                        color: isToday ? '#e9d5ff' : weekend ? '#fbbf24' : '#e2e8f0',
+                      }}>
+                        {date.getDate()}
+                      </div>
+                      {weekend && <div style={{ fontSize: 9, color: '#f59e0b', marginTop: 1 }}>⚡ confirm w/ tech</div>}
                     </div>
-                    <div style={{
-                      fontSize: 12, fontWeight: 800,
-                      color: isToday ? '#e9d5ff' : weekend ? '#fbbf24' : '#cbd5e1',
-                    }}>
-                      {date.getDate()}
-                    </div>
-                  </div>
 
-                  {/* Time slots */}
-                  <div style={{ padding: '3px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    {SCHED_HOURS.map(hour => {
-                      const busy = activeTechId ? isBusy(activeTechId, dateKey, hour) : null
-                      const past = isPastSlot(date, hour)
-                      const selected = selectedDate === dateKey && selectedHour === hour
+                    {/* Time slots */}
+                    <div style={{ padding: '4px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {SCHED_HOURS.map(hour => {
+                        const busy = activeTechId ? isBusy(activeTechId, dateKey, hour) : null
+                        const past = isPastSlot(date, hour)
+                        const selected = selectedDate === dateKey && selectedHour === hour
 
-                      if (past) {
-                        return (
-                          <div key={hour} style={{
-                            padding: '2px 3px', borderRadius: 4, textAlign: 'center',
-                            background: 'rgba(255,255,255,0.02)',
-                          }}>
-                            <div style={{ fontSize: 8, color: '#334155' }}>{HOUR_LABELS[hour]}</div>
-                          </div>
-                        )
-                      }
-
-                      if (busy) {
-                        return (
-                          <div key={hour} title={busy} style={{
-                            padding: '2px 3px', borderRadius: 4, textAlign: 'center',
-                            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
-                          }}>
-                            <div style={{ fontSize: 8, color: '#f87171', fontWeight: 600 }}>{HOUR_LABELS[hour]}</div>
-                            <div style={{ fontSize: 7, color: '#ef4444', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {busy.split(' ')[0]}
+                        if (past) {
+                          return (
+                            <div key={hour} style={{ padding: '4px 3px', borderRadius: 6, textAlign: 'center', background: '#1e293b' }}>
+                              <div style={{ fontSize: 10, color: '#475569' }}>{HOUR_LABELS[hour]}</div>
                             </div>
-                          </div>
+                          )
+                        }
+
+                        if (busy) {
+                          return (
+                            <div key={hour} title={busy} style={{
+                              padding: '4px 3px', borderRadius: 6, textAlign: 'center',
+                              background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)',
+                            }}>
+                              <div style={{ fontSize: 10, color: '#f87171', fontWeight: 600 }}>{HOUR_LABELS[hour]}</div>
+                              <div style={{ fontSize: 9, color: '#ef4444', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {busy.split(' ')[0]}
+                              </div>
+                            </div>
+                          )
+                        }
+
+                        return (
+                          <button
+                            key={hour}
+                            onClick={() => handleSlotClick(dateKey, hour)}
+                            style={{
+                              padding: '5px 3px', borderRadius: 6, textAlign: 'center', cursor: 'pointer',
+                              background: selected ? '#166534' : '#0f2a1a',
+                              border: `1px solid ${selected ? '#22c55e' : '#1a3a2a'}`,
+                              boxShadow: selected ? '0 0 10px rgba(34,197,94,0.25)' : 'none',
+                            }}
+                          >
+                            <div style={{ fontSize: 10, color: selected ? '#4ade80' : '#86efac', fontWeight: selected ? 700 : 500 }}>
+                              {HOUR_LABELS[hour]}
+                            </div>
+                            {selected && <div style={{ fontSize: 9, color: '#4ade80' }}>✓ Selected</div>}
+                          </button>
                         )
-                      }
-
-                      return (
-                        <button
-                          key={hour}
-                          onClick={() => handleSlotClick(dateKey, hour)}
-                          style={{
-                            padding: '3px', borderRadius: 4, textAlign: 'center', cursor: 'pointer',
-                            background: selected ? '#166534' : 'rgba(74,222,128,0.05)',
-                            border: `1px solid ${selected ? '#22c55e' : 'rgba(74,222,128,0.15)'}`,
-                            boxShadow: selected ? '0 0 8px rgba(34,197,94,0.2)' : 'none',
-                          }}
-                        >
-                          <div style={{ fontSize: 8, color: selected ? '#4ade80' : '#86efac', fontWeight: selected ? 700 : 500 }}>
-                            {HOUR_LABELS[hour]}
-                          </div>
-                          {selected && <div style={{ fontSize: 7, color: '#4ade80' }}>✓</div>}
-                        </button>
-                      )
-                    })}
+                      })}
+                    </div>
                   </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
 
-      {/* Notes */}
-      <div style={{ padding: '8px 12px 0' }}>
-        <input
-          type="text"
-          value={notes}
-          onChange={e => setNotes(e.target.value)}
-          placeholder="Notes for tech (optional)"
-          style={{
-            width: '100%', boxSizing: 'border-box',
-            background: 'rgba(255,255,255,0.03)', border: '1px solid #1e3a4f',
-            borderRadius: 8, padding: '8px 12px', color: '#e2e8f0', fontSize: 12, outline: 'none',
-          }}
-        />
-      </div>
-
-      {/* Confirm footer */}
-      <div style={{ padding: '10px 12px 12px' }}>
-        {selectedDate && selectedHour !== null ? (
-          <div style={{ marginBottom: 8, fontSize: 11, color: '#94a3b8' }}>
-            <span style={{ color: '#4ade80', fontWeight: 700 }}>✓ </span>
-            {selectedTechName} · {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · {HOUR_LABELS[selectedHour]}
-            {isWeekend(new Date(selectedDate + 'T12:00:00')) && (
-              <span style={{ marginLeft: 6, color: '#f59e0b', fontWeight: 600 }}>⚡ Weekend</span>
+        {/* Footer */}
+        <div className="flex items-center justify-between px-6 py-4 flex-shrink-0" style={{ background: '#0f172a', borderTop: '1px solid #334155' }}>
+          <div>
+            {selectedDate && selectedHour !== null ? (
+              <div className="text-sm text-white">
+                <span style={{ color: '#4ade80', fontWeight: 700 }}>✓ Selected: </span>
+                {selectedTechName} · {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · {HOUR_LABELS[selectedHour]}
+                {isWeekend(new Date(selectedDate + 'T12:00:00')) && (
+                  <span className="ml-2 text-xs font-medium px-2 py-0.5 rounded" style={{ background: '#451a03', color: '#fbbf24' }}>⚡ Weekend</span>
+                )}
+              </div>
+            ) : (
+              <div className="text-sm" style={{ color: '#475569' }}>Click an open (green) slot to select a time</div>
             )}
           </div>
-        ) : (
-          <div style={{ marginBottom: 8, fontSize: 11, color: '#475569' }}>
-            {activeTechId ? 'Tap an open (green) slot to select' : 'Select a tech first'}
+          <div className="flex items-center gap-3">
+            {selectedDate && (
+              <input
+                type="text"
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                placeholder="Notes for tech (optional)"
+                className="px-3 py-2 rounded-lg text-sm text-white w-52"
+                style={{ background: '#1e293b', border: '1px solid #334155', outline: 'none' }}
+              />
+            )}
+            <button onClick={onCancel} className="px-4 py-2 text-sm" style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer' }}>Cancel</button>
+            <button
+              onClick={handleConfirm}
+              disabled={!canConfirm}
+              className="px-5 py-2 text-sm font-bold text-white rounded-lg"
+              style={{
+                background: canConfirm ? 'linear-gradient(135deg, #a855f7, #7c3aed)' : '#334155',
+                border: 'none', cursor: canConfirm ? 'pointer' : 'not-allowed',
+                opacity: canConfirm ? 1 : 0.4,
+                boxShadow: canConfirm ? '0 4px 20px rgba(168,85,247,0.35)' : 'none',
+              }}
+            >
+              {confirming ? 'Scheduling...' : selectedDate && selectedHour !== null
+                ? `📅 Confirm — ${new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${HOUR_LABELS[selectedHour]}`
+                : '📅 Confirm Schedule'}
+            </button>
           </div>
-        )}
-        <button
-          onClick={handleConfirm}
-          disabled={!canConfirm}
-          style={{
-            width: '100%', padding: '11px 16px', borderRadius: 10, fontSize: 13, fontWeight: 700,
-            cursor: canConfirm ? 'pointer' : 'not-allowed',
-            opacity: canConfirm ? 1 : 0.4,
-            background: 'linear-gradient(135deg, #a855f7, #7c3aed)',
-            color: '#fff', border: 'none',
-            boxShadow: canConfirm ? '0 4px 20px rgba(168,85,247,0.3)' : 'none',
-          }}
-        >
-          {confirming ? 'Scheduling...' : selectedDate && selectedHour !== null
-            ? `📅 Confirm — ${new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${HOUR_LABELS[selectedHour]}`
-            : '📅 Confirm Schedule'}
-        </button>
+        </div>
       </div>
     </div>
   )
@@ -423,6 +394,7 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
   const { data: techs } = useTechnicians()
   const { mutateAsync: assignTech } = useAssignTechnician()
   const { mutateAsync: updateStatus, isPending: statusPending } = useUpdateJobStatus()
+  const [showCalendar, setShowCalendar] = useState(false)
 
   // Read-only completion readiness
   const { data: completionStatus } = useQuery({
@@ -556,24 +528,46 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
         </div>
       )}
 
-      {/* ── Calendar Scheduler (replaces date/time/tech form for ready_to_schedule) ── */}
-      {job.status === 'ready_to_schedule' && techs && techs.length > 0 && (
+      {/* ── Schedule Install trigger button ── */}
+      {job.status === 'ready_to_schedule' && (
+        <div style={{
+          background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.25)',
+          borderRadius: 14, padding: '16px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 16 }}>📞</span>
+            <div>
+              <div style={{ color: '#c084fc', fontWeight: 700, fontSize: 14 }}>Ready to Schedule</div>
+              <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>Call customer, pick a date and tech</div>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowCalendar(true)}
+            style={{
+              padding: '10px 18px', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+              background: 'linear-gradient(135deg, #a855f7, #7c3aed)', color: '#fff', border: 'none',
+              boxShadow: '0 4px 16px rgba(168,85,247,0.35)', flexShrink: 0,
+            }}
+          >
+            📅 Open Calendar
+          </button>
+        </div>
+      )}
+
+      {/* ── Calendar modal (portal-style overlay) ── */}
+      {showCalendar && techs && techs.length > 0 && (
         <InstallSchedulerCalendar
           currentJobId={job.id}
           techs={techs}
           preselectedTechId={job.assigned_technician_id || null}
-          onConfirm={handleCalendarConfirm}
+          customerName={job.customer_name_snapshot}
+          onConfirm={async (date, hour, techId, notes) => {
+            await handleCalendarConfirm(date, hour, techId, notes)
+            setShowCalendar(false)
+          }}
+          onCancel={() => setShowCalendar(false)}
         />
-      )}
-
-      {/* Loading techs state */}
-      {job.status === 'ready_to_schedule' && !techs && (
-        <div style={{
-          background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.25)',
-          borderRadius: 14, padding: '20px', textAlign: 'center', color: '#64748b', fontSize: 13,
-        }}>
-          Loading calendar...
-        </div>
       )}
 
       {/* ── Products Being Installed (Gap 6) ── */}
