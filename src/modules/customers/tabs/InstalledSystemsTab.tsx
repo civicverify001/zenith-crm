@@ -95,10 +95,10 @@ export function InstalledSystemsTab({ customerId }: Props) {
             )}
 
             {isPurchased && sys.retail_price_snapshot && (
-              <div className="flex items-center gap-4 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2 mb-3">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, background: '#0a2a3a', border: '1px solid #1e3a4f', borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
                 <div>
-                  <div className="text-[10px] text-green-400/70 font-semibold uppercase tracking-wide">Purchase Price</div>
-                  <div className="text-sm font-bold text-green-300">{fmt(sys.retail_price_snapshot)}</div>
+                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#4ade80' }}>Purchase Price</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#ffffff' }}>{fmt(sys.retail_price_snapshot)}</div>
                 </div>
                 {sys.install_fee_snapshot > 0 && (
                   <div>
