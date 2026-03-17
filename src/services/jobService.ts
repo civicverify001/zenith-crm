@@ -39,6 +39,9 @@ async function logJobActivity(entry: {
 
 // ═══════════════════════════════════════════════════════════════
 // CREATE INSTALL JOB FROM LEAD
+// CHANGED: status = 'ready_to_schedule' (was 'scheduled')
+// Job now enters dispatch board without a date. Front desk
+// confirms date + tech later via scheduleExistingJob().
 // ═══════════════════════════════════════════════════════════════
 export async function createInstallJobFromLead(
   lead: Lead,
@@ -66,12 +69,15 @@ export async function createInstallJobFromLead(
     throw new Error('A job already exists for this lead. Cannot create duplicate.')
   }
 
-  // ── Step 2: Create job row (REQUIRED) ──
+  // ── Step 2: Create job row ──
+  // CHANGED: status = 'ready_to_schedule' when no date, 'scheduled' when date provided
+  const jobStatus = scheduledDate ? 'scheduled' : 'ready_to_schedule'
+
   const { data: job, error: jobError } = await supabase
     .from('jobs')
     .insert({
       lead_id: lead.id,
-      status: 'scheduled',
+      status: jobStatus,
       job_type: 'standard_install',
       system_type: systemType,
       scheduled_date: scheduledDate,
@@ -201,6 +207,54 @@ export async function createInstallJobFromLead(
   })
 
   return createdJob
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SCHEDULE EXISTING JOB (NEW — for confirming date on auto-created jobs)
+// Front desk calls this after talking to customer to confirm date.
+// Updates existing ready_to_schedule job → scheduled with date + tech.
+// ═══════════════════════════════════════════════════════════════
+export async function scheduleExistingJob(
+  jobId: string,
+  scheduledDate: string,
+  techId: string | null,
+  notes: string | null,
+  actor: ActorInfo
+): Promise<Job> {
+  const updateData: Record<string, any> = {
+    status: 'scheduled',
+    scheduled_date: scheduledDate,
+  }
+  if (techId) {
+    updateData.assigned_technician_id = techId
+    updateData.assigned_at = new Date().toISOString()
+  }
+  if (notes) {
+    updateData.notes = notes
+  }
+
+  const { data, error } = await supabase
+    .from('jobs')
+    .update(updateData)
+    .eq('id', jobId)
+    .in('status', ['ready_to_schedule', 'waiting_for_stock'])
+    .select(JOB_SELECT)
+    .single()
+
+  if (error) throw new Error(`Failed to schedule job: ${error.message}`)
+
+  await logJobActivity({
+    job_id: jobId,
+    event_type: 'job_scheduled',
+    title: `Job scheduled for ${new Date(scheduledDate).toLocaleDateString()}`,
+    metadata: {
+      scheduled_date: scheduledDate,
+      technician_id: techId,
+    },
+    ...actor,
+  })
+
+  return data as Job
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -352,7 +406,7 @@ export interface CompletionStatus {
   formsRequired: number
   formsCompleted: number
   generalPhotos: number
-  inventoryStatus: string | null  // NEW: inventory_status from job
+  inventoryStatus: string | null
   issues: string[]
   ready: boolean
 }
@@ -367,7 +421,6 @@ export async function getCompletionStatus(jobId: string): Promise<CompletionStat
     issues: [], ready: false,
   }
 
-  // Checklist items
   const { data: items } = await supabase
     .from('job_checklist_items')
     .select('*')
@@ -393,7 +446,6 @@ export async function getCompletionStatus(jobId: string): Promise<CompletionStat
     }
   }
 
-  // Required forms
   const { data: forms } = await supabase
     .from('job_required_forms')
     .select('*')
@@ -415,7 +467,6 @@ export async function getCompletionStatus(jobId: string): Promise<CompletionStat
     }
   }
 
-  // General photos
   const { count } = await supabase
     .from('job_photos')
     .select('id', { count: 'exact', head: true })
@@ -426,7 +477,6 @@ export async function getCompletionStatus(jobId: string): Promise<CompletionStat
     status.issues.push('At least 1 job photo required')
   }
 
-  // ── PHASE A STEP 4: Inventory readiness check ──
   const { data: jobData } = await supabase
     .from('jobs')
     .select('inventory_status')
@@ -446,7 +496,6 @@ export async function getCompletionStatus(jobId: string): Promise<CompletionStat
   return status
 }
 
-// Legacy wrapper for updateJobStatus
 async function validateJobCompletion(jobId: string): Promise<string[]> {
   const status = await getCompletionStatus(jobId)
   return status.issues
