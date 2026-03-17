@@ -513,12 +513,13 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
 
                 {lead.stage === 'agreement_signed' && <AgreementSignedPanel lead={lead} onLeadUpdated={handleLeadUpdated} />}
 
-                <SiteSurveyCapture
+                {/* FEATURE FLAG: Site Survey hidden — re-enable when ready */}
+                {false && <SiteSurveyCapture
                   context="lead"
                   opportunityId={lead.id}
                   systemTypeContext={{ opportunityProductType: lead.water_concern || null }}
                   defaultCollapsed={true}
-                />
+                />}
 
                 {lead.stage === 'lost' && lead.lost_reason && (
                   <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3">
