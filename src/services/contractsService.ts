@@ -25,6 +25,7 @@ export interface Contract {
   payment_day: number
   buyout_formula: string | null
   buyout_amount: number | null
+  retail_price_snapshot: number | null
   notes: string | null
   signed_at: string | null
   cancelled_at: string | null
@@ -38,7 +39,7 @@ export interface Contract {
 }
 
 export type CreateContractInput = Omit<Contract,
-  'id' | 'reference_number' | 'amount_paid' | 'created_at' | 'updated_at' | 'customer_name' | 'customer_phone' | 'customer_email'>
+  'id' | 'reference_number' | 'amount_paid' | 'created_at' | 'updated_at' | 'customer_name' | 'customer_phone' | 'customer_email' | 'retail_price_snapshot'>
 
 // ─── Status / type display maps ───────────────────────────────
 
@@ -210,4 +211,116 @@ export function monthsElapsed(contract: Contract): number {
 export function buyoutRemaining(contract: Contract): number {
   if (!contract.total_amount) return 0
   return Math.max(0, contract.total_amount - (contract.amount_paid || 0))
+}
+
+// ─── Contract Detail (Gap 15) ─────────────────────────────────
+
+export interface ContractLineItem {
+  id: string
+  product_id: string | null
+  description: string
+  quantity: number
+  unit_price: number
+  total: number
+  item_type: string
+  sku: string | null
+  sort_order: number
+}
+
+export interface ContractDetailData {
+  contract: Contract
+  lineItems: ContractLineItem[]
+  payments: {
+    id: string
+    amount: number
+    status: string
+    type: string
+    description: string | null
+    attempted_at: string
+    completed_at: string | null
+    failure_reason: string | null
+  }[]
+  totalPaid: number
+  buyoutAmount: number | null
+}
+
+/**
+ * Fetch full contract detail: contract + quote line items + payment history + buyout calc.
+ * Line items come from the quote (via contract.quote_id → document_line_items).
+ * Payments come from payment_transactions filtered by contract_id.
+ */
+export async function fetchContractDetail(contractId: string): Promise<ContractDetailData> {
+  // 1. Fetch contract with customer join
+  const contract = await fetchContractById(contractId)
+
+  // 2. Fetch line items from the linked quote
+  let lineItems: ContractLineItem[] = []
+  if (contract.quote_id) {
+    try {
+      const { data, error } = await supabase
+        .from('document_line_items')
+        .select('id, product_id, description, quantity, unit_price, total, item_type, sku, sort_order')
+        .eq('document_id', contract.quote_id)
+        .order('sort_order', { ascending: true })
+      if (!error && data) {
+        lineItems = data.map(row => ({
+          ...row,
+          quantity: row.quantity || 1,
+          unit_price: Number(row.unit_price) || 0,
+          total: Number(row.total) || 0,
+        }))
+      }
+    } catch (e) {
+      console.error('fetchContractDetail: line items error', e)
+    }
+  }
+
+  // 3. Fetch payment history for this contract
+  let payments: ContractDetailData['payments'] = []
+  try {
+    const { data, error } = await supabase
+      .from('payment_transactions')
+      .select('id, amount, status, type, description, attempted_at, completed_at, failure_reason')
+      .eq('contract_id', contractId)
+      .order('attempted_at', { ascending: false })
+    if (!error && data) {
+      payments = data.map(row => ({ ...row, amount: Number(row.amount) || 0 }))
+    }
+  } catch (e) {
+    console.error('fetchContractDetail: payments error', e)
+  }
+
+  // If no payments matched by contract_id, try by customer_id + type=rental
+  // (some older payments may not have contract_id set)
+  if (payments.length === 0 && contract.customer_id && contract.type === 'rental') {
+    try {
+      const { data, error } = await supabase
+        .from('payment_transactions')
+        .select('id, amount, status, type, description, attempted_at, completed_at, failure_reason')
+        .eq('customer_id', contract.customer_id)
+        .in('type', ['rental', 'monthly_rental', 'autopay'])
+        .order('attempted_at', { ascending: false })
+      if (!error && data) {
+        payments = data.map(row => ({ ...row, amount: Number(row.amount) || 0 }))
+      }
+    } catch (e) {
+      console.error('fetchContractDetail: customer payments fallback error', e)
+    }
+  }
+
+  // 4. Compute totals
+  const totalPaid = payments
+    .filter(p => p.status === 'succeeded')
+    .reduce((sum, p) => sum + p.amount, 0)
+
+  // 5. Buyout calculation (rental only)
+  //    Formula: retail_price_snapshot - (50% of total payments made)
+  //    Floor at $0 — can't go negative
+  let buyoutAmount: number | null = null
+  if (contract.type === 'rental' && contract.retail_price_snapshot) {
+    const creditFromPayments = totalPaid * 0.5
+    buyoutAmount = Math.max(0, contract.retail_price_snapshot - creditFromPayments)
+  }
+
+  return { contract, lineItems, payments, totalPaid, buyoutAmount }
 }
