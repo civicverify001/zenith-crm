@@ -373,7 +373,7 @@ export default async function handler(req, res) {
               email_snapshot: custData?.email || null,
               system_type: quote.system_type || null,
               source_quote_id: quote_id,
-              status: 'scheduled',
+              status: 'ready_to_schedule',
               inventory_status: 'pending_check',
               created_at: now,
             }).select('id').single()
@@ -394,6 +394,23 @@ export default async function handler(req, res) {
         if (jobId) {
           const invResult = await commitForFulfillmentWebhook(supabase, jobId)
           console.log('Inventory commitment:', { jobId, ...invResult })
+
+          // ── NEW: Set job status based on inventory result ──
+          // reserved/not_required → ready_to_schedule (front desk calls to book)
+          // short → waiting_for_stock (auto-moves to ready_to_schedule when stock arrives)
+          if (invResult.status === 'short') {
+            await supabase.from('jobs').update({ status: 'waiting_for_stock' }).eq('id', jobId)
+          }
+          // ready_to_schedule is already set at creation — no change needed for reserved/not_required
+        }
+
+        // ── NEW: Mark lead.job_created so Pipeline shows correct status ──
+        if (jobId) {
+          const { data: jobForLead } = await supabase.from('jobs').select('lead_id').eq('id', jobId).single()
+          if (jobForLead?.lead_id) {
+            await supabase.from('leads').update({ job_created: true }).eq('id', jobForLead.lead_id)
+              .then(() => {}).catch(() => {})
+          }
         }
 
       } catch (invErr) {
