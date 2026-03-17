@@ -22,15 +22,20 @@ import { WaterTestForm } from '../shared/WaterTestForm'
 import { WaterTestHistory, WaterTestComparison } from '../shared/WaterTestResults'
 import { fetchByJob, fetchByLead, type WaterTest } from '../../services/waterTestService'
 
-type InstallTab = 'checklist' | 'photos' | 'handover' | 'consents' | 'activity'
+// ── CHANGED: Removed 'checklist' from tabs — now shown as primary content above tabs ──
+type InstallTab = 'photos' | 'handover' | 'consents' | 'activity'
 
 const TABS: { key: InstallTab; label: string; icon: string }[] = [
-  { key: 'checklist', label: 'Checklist', icon: '✓' },
   { key: 'photos',   label: 'Photos',    icon: '📷' },
   { key: 'handover', label: 'Handover',  icon: '🤝' },
   { key: 'consents', label: 'Consents',  icon: '📋' },
   { key: 'activity', label: 'Activity',  icon: '🕐' },
 ]
+
+const CATEGORY_LABELS: Record<string, string> = {
+  ro: 'Reverse Osmosis', softener: 'Water Softener', whole_home_filter: 'Whole Home Filter',
+  replacement_filter: 'Replacement Filter', accessory: 'Accessory', service: 'Service',
+}
 
 function formatDate(str: string | null) {
   if (!str) return '—'
@@ -56,7 +61,7 @@ export function InstallationDetailPage() {
   const { mutateAsync: updateStatus, isPending: statusPending } = useUpdateJobStatus()
 
   const [job, setJob] = useState<Job | null>(null)
-  const [activeTab, setActiveTab] = useState<InstallTab>('checklist')
+  const [activeTab, setActiveTab] = useState<InstallTab>('photos')
   const [statusError, setStatusError] = useState('')
 
   // Water test state
@@ -132,6 +137,55 @@ export function InstallationDetailPage() {
     },
     enabled: !!currentJob?.id && (currentJob?.status === 'in_progress' || currentJob?.status === 'scheduled'),
     staleTime: 30_000,
+  })
+
+  // ── NEW: Products being installed — from document_line_items of signed quote ──
+  const { data: installProducts } = useQuery({
+    queryKey: ['job_install_products', currentJob?.id],
+    queryFn: async () => {
+      if (!currentJob?.lead_id) return []
+
+      // Find the accepted/signed quote for this lead
+      const { data: quote } = await supabase
+        .from('quotes')
+        .select('id')
+        .eq('lead_id', currentJob.lead_id)
+        .in('status', ['accepted', 'signed'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (!quote) return []
+
+      // Get line items
+      const { data: lineItems } = await supabase
+        .from('document_line_items')
+        .select('product_id, description, quantity')
+        .eq('document_id', quote.id)
+        .order('sort_order', { ascending: true })
+
+      if (!lineItems?.length) return []
+
+      // Resolve product details
+      const productIds = lineItems.map(li => li.product_id).filter(Boolean)
+      let productMap = new Map<string, any>()
+      if (productIds.length > 0) {
+        const { data: products } = await supabase
+          .from('products')
+          .select('id, name, category, sku')
+          .in('id', productIds)
+        productMap = new Map((products || []).map(p => [p.id, p]))
+      }
+
+      return lineItems
+        .filter(li => li.product_id && productMap.has(li.product_id))
+        .map(li => {
+          const prod = productMap.get(li.product_id)
+          return { name: prod.name, category: prod.category, sku: prod.sku, quantity: li.quantity || 1 }
+        })
+    },
+    enabled: !!currentJob?.id && !!currentJob?.lead_id,
+    staleTime: 60_000,
   })
 
   // ── Load water tests for this job + lead (for before/after) ──
@@ -240,13 +294,16 @@ export function InstallationDetailPage() {
   const hasInitialTest = allTests.some(t => t.test_type === 'initial')
   const hasPostInstall = waterTests.some(t => t.test_type === 'post_install')
 
+  // Mobile-friendly button padding
+  const btnPad = mob ? '12px 20px' : '9px 18px'
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
 
       {/* ── Header ── */}
       <div style={{
         flexShrink: 0,
-        padding: '12px 16px',
+        padding: mob ? '10px 12px' : '12px 16px',
         borderBottom: '1px solid #1e3a4f',
         background: '#0f1923',
       }}>
@@ -259,7 +316,7 @@ export function InstallationDetailPage() {
 
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <h1 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 18, margin: 0, lineHeight: 1.3 }}>
+            <h1 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: mob ? 16 : 18, margin: 0, lineHeight: 1.3 }}>
               {currentJob.customer_name_snapshot}
             </h1>
             <div style={{ color: '#64748b', fontSize: 13, marginTop: 2, wordBreak: 'break-word' }}>
@@ -286,7 +343,7 @@ export function InstallationDetailPage() {
       {/* ── Action bar ── */}
       <div style={{
         flexShrink: 0,
-        padding: '10px 16px',
+        padding: mob ? '8px 12px' : '10px 16px',
         borderBottom: '1px solid #1e3a4f',
         display: 'flex',
         flexWrap: 'wrap',
@@ -300,10 +357,10 @@ export function InstallationDetailPage() {
             onClick={() => handleStatusChange('in_progress')}
             disabled={statusPending}
             style={{
-              fontSize: 13, padding: '9px 18px', borderRadius: 8, fontWeight: 600, cursor: 'pointer',
+              fontSize: mob ? 14 : 13, padding: btnPad, borderRadius: 8, fontWeight: 600, cursor: 'pointer',
               backgroundColor: 'rgba(6,182,212,0.15)', color: '#22d3ee', border: '1px solid rgba(6,182,212,0.3)',
               opacity: statusPending ? 0.5 : 1, whiteSpace: 'nowrap',
-              ...(mob ? { alignSelf: 'stretch', textAlign: 'center' } : {}),
+              ...(mob ? { alignSelf: 'stretch', textAlign: 'center' as const } : {}),
             }}
           >
             🔧 Start Installation
@@ -326,7 +383,7 @@ export function InstallationDetailPage() {
                 <button
                   disabled
                   style={{
-                    fontSize: 13, padding: '9px 18px', borderRadius: 8, fontWeight: 600,
+                    fontSize: mob ? 14 : 13, padding: btnPad, borderRadius: 8, fontWeight: 600,
                     backgroundColor: 'rgba(148,163,184,0.1)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.2)',
                     cursor: 'not-allowed', opacity: 0.7, whiteSpace: 'nowrap',
                   }}
@@ -350,11 +407,11 @@ export function InstallationDetailPage() {
               onClick={() => handleStatusChange('complete')}
               disabled={statusPending || !canComplete}
               style={canComplete ? {
-                fontSize: 13, padding: '9px 18px', borderRadius: 8, fontWeight: 600, cursor: 'pointer',
+                fontSize: mob ? 14 : 13, padding: btnPad, borderRadius: 8, fontWeight: 600, cursor: 'pointer',
                 backgroundColor: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)',
                 whiteSpace: 'nowrap',
               } : {
-                fontSize: 13, padding: '9px 18px', borderRadius: 8, fontWeight: 600,
+                fontSize: mob ? 14 : 13, padding: btnPad, borderRadius: 8, fontWeight: 600,
                 backgroundColor: 'rgba(148,163,184,0.1)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.2)',
                 cursor: 'not-allowed', opacity: 0.7, whiteSpace: 'nowrap',
               }}
@@ -442,10 +499,10 @@ export function InstallationDetailPage() {
       {/* ── Scrollable body ── */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
 
-        {/* Completion Readiness */}
-        <div style={{ padding: '12px 16px 0' }}>
+        {/* FEATURE FLAG: Completion Readiness hidden — checklist progress is now visible directly */}
+        {false && <div style={{ padding: '12px 16px 0' }}>
           <CompletionReadinessPanel jobId={currentJob.id} jobStatus={currentJob.status} />
-        </div>
+        </div>}
 
         {/* FEATURE FLAG: Site Survey hidden — re-enable when ready */}
         {false && <div style={{ padding: '12px 16px 0' }}>
@@ -457,6 +514,60 @@ export function InstallationDetailPage() {
             defaultCollapsed={true}
           />
         </div>}
+
+        {/* ── NEW: Products Being Installed ── */}
+        {installProducts && installProducts.length > 0 && (
+          <div style={{ padding: '12px 16px 0' }}>
+            <div style={{
+              background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14,
+              overflow: 'hidden',
+            }}>
+              <div style={{
+                padding: '10px 16px', borderBottom: '1px solid #1e3a4f',
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}>
+                <span style={{ fontSize: 14 }}>📦</span>
+                <span style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 13 }}>
+                  Products Being Installed
+                </span>
+                <span style={{ color: '#4ade80', fontSize: 11, fontWeight: 600 }}>
+                  {installProducts.length} item{installProducts.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              {installProducts.map((p: any, i: number) => (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '10px 16px',
+                  borderBottom: i < installProducts.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                }}>
+                  <div>
+                    <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{p.name}</div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+                      {p.category && (
+                        <span style={{ color: '#64748b', fontSize: 11 }}>
+                          {CATEGORY_LABELS[p.category] || p.category}
+                        </span>
+                      )}
+                      {p.sku && (
+                        <span style={{ color: '#475569', fontSize: 11, fontFamily: 'monospace' }}>
+                          {p.sku}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <span style={{ color: '#94a3b8', fontSize: 12, fontWeight: 600 }}>× {p.quantity}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Installer Checklist — PRIMARY CONTENT (moved out of tabs) ── */}
+        {(currentJob.status === 'in_progress' || currentJob.status === 'scheduled') && (
+          <div style={{ padding: '12px 16px 0' }}>
+            <InstallerChecklistTab jobId={currentJob.id} />
+          </div>
+        )}
 
         {/* ── Post-Install Water Test Section ── */}
         {showWaterTest && waterTestsLoaded && (
@@ -547,7 +658,7 @@ export function InstallationDetailPage() {
           </div>
         )}
 
-        {/* ── Tabs ── */}
+        {/* ── Tabs (Photos, Handover, Consents, Activity — checklist removed) ── */}
         <div style={{ padding: '16px 16px 0' }}>
           <div style={{
             display: 'flex',
@@ -563,7 +674,7 @@ export function InstallationDetailPage() {
                 onClick={() => setActiveTab(tab.key)}
                 style={{
                   flexShrink: 0,
-                  padding: '10px 18px',
+                  padding: mob ? '12px 16px' : '10px 18px',
                   fontSize: 13,
                   fontWeight: 600,
                   cursor: 'pointer',
@@ -585,7 +696,6 @@ export function InstallationDetailPage() {
           </div>
 
           <div style={{ paddingTop: 16, paddingBottom: 32, minHeight: 300 }}>
-            {activeTab === 'checklist' && <InstallerChecklistTab jobId={currentJob.id} />}
             {activeTab === 'photos'    && <PhotosTab jobId={currentJob.id} />}
             {activeTab === 'handover'  && <CustomerHandoverTab jobId={currentJob.id} />}
             {activeTab === 'consents'  && <ConsentsTab jobId={currentJob.id} />}
