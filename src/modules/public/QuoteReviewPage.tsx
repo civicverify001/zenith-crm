@@ -348,6 +348,24 @@ function generateInvoiceHTML(invoice: Invoice, customer: Customer | undefined, t
 }
 
 // ─── Lead → Customer conversion ──────────────────────────────────
+async function autoCreateJobFromLead(leadId: string | null | undefined) {
+  if (!leadId) return
+  try {
+    const res = await fetch('/api/jobs/auto-create-from-lead', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lead_id: leadId }),
+    })
+    const data = await res.json()
+    if (data.success) {
+      console.log('[QuoteReview] Job auto-created:', data.job_id, data.already_existed ? '(already existed)' : '')
+    } else {
+      console.error('[QuoteReview] Auto-create job failed:', data.error)
+    }
+  } catch (e) {
+    console.error('[QuoteReview] Auto-create job error:', e)
+  }
+}
 async function convertLeadToCustomer(leadId: string | null | undefined, customerId: string | null | undefined) {
   if (!leadId || !customerId) return
   try {
@@ -1184,6 +1202,7 @@ export function QuoteReviewPage() {
       if (contractErr) throw contractErr
 
       setAgreement(prev => prev ? { ...prev, status: 'signed', signed_at: now, signed_name: signedName } : prev)
+      autoCreateJobFromLead(quote!.lead_id)
       setStep('stripe_card_save'); scrollTop()
     } catch (e: any) { setError(e.message) }
     setSigning(false)
@@ -1199,6 +1218,7 @@ export function QuoteReviewPage() {
       }).eq('id', invoice.id)
       if (e) throw e
       setInvoice(prev => prev ? { ...prev, status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName } : prev)
+      autoCreateJobFromLead(quote!.lead_id)
       setStep('payment_choice'); scrollTop()
     } catch (e: any) { setError(e.message) }
     setSigning(false)
