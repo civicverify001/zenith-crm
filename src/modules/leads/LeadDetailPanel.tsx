@@ -346,6 +346,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
               onScheduleVisit={() => setShowVisitScheduler(true)}
               siteVisitComplete={siteVisitComplete}
               callAttemptCount={calls?.length || 0}
+              hasNoContactRequest={calls?.some((c: any) => c.outcome === 'no_contact_requested') ?? false}
             />
 
             {preparingQuote && (
@@ -619,6 +620,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                       <option value="voicemail">Voicemail</option>
                       <option value="no_answer">No Answer</option>
                       <option value="callback_scheduled">Callback Scheduled</option>
+                      <option value="no_contact_requested">⛔ Requested No Contact</option>
                     </select>
                   </div>
                   <div>
