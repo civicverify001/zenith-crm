@@ -201,7 +201,15 @@ export function QuoteBuilder({
   function buildProductDescription(p: Product): string {
     let desc = p.name
     if (p.description) desc += `\n${p.description}`
-    if (p.warranty_months) {
+
+    const hasPartsWarranty = p.parts_warranty && p.parts_warranty.trim()
+    const hasLabourWarranty = p.labour_warranty && p.labour_warranty.trim()
+
+    if (hasPartsWarranty || hasLabourWarranty) {
+      desc += '\n'
+      if (hasPartsWarranty) desc += `\nParts Warranty – ${p.parts_warranty}`
+      if (hasLabourWarranty) desc += `\nLabor Warranty – ${p.labour_warranty}`
+    } else if (p.warranty_months) {
       const yrs = Math.floor(p.warranty_months / 12)
       desc += `\n\nWarranty – ${yrs > 0 ? `${yrs} year${yrs > 1 ? 's' : ''}` : `${p.warranty_months} months`}`
     }
