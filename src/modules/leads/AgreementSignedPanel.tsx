@@ -26,6 +26,7 @@ interface DetectedProduct {
   name: string
   category: string
   quantity: number
+  sku?: string
 }
 
 interface JobSlot {
@@ -270,7 +271,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   const [notes, setNotes] = useState('')
   const [agreementFetched, setAgreementFetched] = useState(false)
   const [detectedProducts, setDetectedProducts] = useState<DetectedProduct[]>([])
-  const [detectionSource, setDetectionSource] = useState<'invoice'|'quote'|'fallback'|null>(null)
+  const [detectionSource, setDetectionSource] = useState<'line_items'|'invoice'|'quote'|'fallback'|null>(null)
   const [jobSlots, setJobSlots] = useState<JobSlot[]>([])
   const [financingStatus, setFinancingStatus] = useState<FinancingStatus | null>(null)
   const [financingLoading, setFinancingLoading] = useState(false)
@@ -421,6 +422,68 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     if (agreementFetched) return
     setLoadingAgreement(true)
     try {
+      // ── PRIMARY PATH: Query document_line_items from accepted/signed quote ──
+      // This is the authoritative source — QuoteBuilder saves all line items here.
+      const { data: signedQuote } = await supabase
+        .from('quotes')
+        .select('id')
+        .eq('lead_id', lead.id)
+        .in('status', ['accepted', 'signed'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (signedQuote) {
+        const { data: docLineItems } = await supabase
+          .from('document_line_items')
+          .select('product_id, description, quantity')
+          .eq('document_id', signedQuote.id)
+          .order('sort_order', { ascending: true })
+
+        if (docLineItems && docLineItems.length > 0) {
+          // Resolve product details from catalog
+          const productIds = docLineItems.map(li => li.product_id).filter(Boolean)
+          let productMap = new Map<string, any>()
+          if (productIds.length > 0) {
+            const { data: products } = await supabase
+              .from('products')
+              .select('id, name, category, sku')
+              .in('id', productIds)
+            productMap = new Map((products || []).map(p => [p.id, p]))
+          }
+
+          const detected: DetectedProduct[] = docLineItems
+            .filter(li => li.product_id && productMap.has(li.product_id))
+            .map(li => {
+              const prod = productMap.get(li.product_id)
+              return { name: prod.name, category: prod.category, quantity: li.quantity || 1, sku: prod.sku }
+            })
+
+          if (detected.length > 0) {
+            setDetectedProducts(detected)
+            setDetectionSource('line_items')
+            applySystemType(systemTypeFromCategories(detected.map(p => p.category)))
+            setAgreementFetched(true)
+            return
+          }
+
+          // Products not in catalog — use descriptions as fallback names
+          const descFallback: DetectedProduct[] = docLineItems
+            .filter(li => li.description)
+            .map(li => ({ name: li.description, category: '', quantity: li.quantity || 1 }))
+          if (descFallback.length > 0) {
+            setDetectedProducts(descFallback)
+            setDetectionSource('line_items')
+            const textType = systemTypeFromText(null, docLineItems.map(li => ({ description: li.description })))
+            applySystemType(textType)
+            setAgreementFetched(true)
+            return
+          }
+        }
+      }
+      // ── END PRIMARY PATH ──
+
+      // ── FALLBACK 1: Agreement line_items_snapshot ──
       const { data: agreement } = await supabase
         .from('agreements')
         .select('agreement_type, line_items_snapshot, commercial_type')
@@ -445,6 +508,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
         applySystemType(textDetected); setAgreementFetched(true); return
       }
 
+      // ── FALLBACK 2: Quote line_items_snapshot ──
       const { data: quote } = await supabase
         .from('quotes')
         .select('line_items_snapshot, commercial_type, quote_type')
@@ -469,6 +533,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
         applySystemType(textDetected); setAgreementFetched(true); return
       }
 
+      // ── FALLBACK 3: Water concern text ──
       setDetectionSource('fallback')
       if (lead.water_concern) {
         const wc = lead.water_concern.toLowerCase()
@@ -762,7 +827,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                   {loadingAgreement
                     ? <span className="text-accent animate-pulse">Loading products…</span>
                     : detectedProducts.length > 0
-                    ? <>Products Being Installed <span className="ml-1 font-normal normal-case text-green">✓ from {detectionSource === 'invoice' ? 'signed agreement' : 'quote'}</span></>
+                    ? <>Products Being Installed <span className="ml-1 font-normal normal-case text-green">✓ from {detectionSource === 'line_items' ? 'quote line items' : detectionSource === 'invoice' ? 'signed agreement' : 'quote'}</span></>
                     : 'Products Being Installed'}
                 </label>
                 {loadingAgreement ? (
@@ -776,7 +841,10 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
                       <div key={i} className="flex items-center justify-between px-3 py-2.5">
                         <div>
                           <div className="text-sm font-medium text-slate-200">{p.name}</div>
-                          {p.category && <div className="text-xs text-muted mt-0.5">{CATEGORY_LABELS[p.category] || p.category}</div>}
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {p.category && <span className="text-xs text-muted">{CATEGORY_LABELS[p.category] || p.category}</span>}
+                            {p.sku && <span className="text-xs font-mono" style={{ color: '#64748b' }}>{p.sku}</span>}
+                          </div>
                         </div>
                         <span className="text-xs text-slate-400 font-semibold ml-3">× {p.quantity}</span>
                       </div>
