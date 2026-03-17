@@ -5,6 +5,22 @@ import type { JobStatus } from '../dispatch.types'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getCompletionStatus } from '../../../services/jobService'
+import { checkJobReadiness } from '../../../services/inventoryService'
+import { supabase } from '../../../lib/supabase'
+
+const CATEGORY_LABELS: Record<string, string> = {
+  ro: 'Reverse Osmosis', softener: 'Water Softener', whole_home_filter: 'Whole Home Filter',
+  replacement_filter: 'Replacement Filter', accessory: 'Accessory', service: 'Service',
+}
+
+const INVENTORY_STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; border: string; icon: string }> = {
+  reserved:      { label: 'Stock Reserved',    color: '#4ade80', bg: 'rgba(74,222,128,0.1)',  border: 'rgba(74,222,128,0.25)', icon: '✅' },
+  short:         { label: 'Stock Shortage',    color: '#f87171', bg: 'rgba(248,113,113,0.1)', border: 'rgba(248,113,113,0.25)', icon: '⚠️' },
+  pending_check: { label: 'Checking Stock',    color: '#fbbf24', bg: 'rgba(251,191,36,0.1)',  border: 'rgba(251,191,36,0.25)', icon: '⏳' },
+  not_required:  { label: 'No Stock Needed',   color: '#64748b', bg: 'rgba(100,116,139,0.1)', border: 'rgba(100,116,139,0.2)', icon: '—' },
+  ready:         { label: 'Stock Ready',       color: '#4ade80', bg: 'rgba(74,222,128,0.1)',  border: 'rgba(74,222,128,0.25)', icon: '✅' },
+  n_a:           { label: 'N/A',               color: '#64748b', bg: 'rgba(100,116,139,0.1)', border: 'rgba(100,116,139,0.2)', icon: '—' },
+}
 
 interface Props {
   job: Job
@@ -45,6 +61,65 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
     staleTime: 15_000,
   })
 
+  // ── NEW: Products from quote line items ──
+  const { data: jobProducts } = useQuery({
+    queryKey: ['job_products', job.id],
+    queryFn: async () => {
+      // Try source_quote_id first (webhook path), then lead_id (manual path)
+      let quoteId = (job as any).source_quote_id || null
+
+      if (!quoteId && job.lead_id) {
+        const { data: quote } = await supabase
+          .from('quotes')
+          .select('id')
+          .eq('lead_id', job.lead_id)
+          .in('status', ['accepted', 'signed'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        quoteId = quote?.id || null
+      }
+
+      if (!quoteId) return []
+
+      const { data: lineItems } = await supabase
+        .from('document_line_items')
+        .select('product_id, description, quantity')
+        .eq('document_id', quoteId)
+        .order('sort_order', { ascending: true })
+
+      if (!lineItems?.length) return []
+
+      const productIds = lineItems.map(li => li.product_id).filter(Boolean)
+      let productMap = new Map<string, any>()
+      if (productIds.length > 0) {
+        const { data: products } = await supabase
+          .from('products')
+          .select('id, name, category, sku')
+          .in('id', productIds)
+        productMap = new Map((products || []).map(p => [p.id, p]))
+      }
+
+      return lineItems
+        .filter(li => li.product_id && productMap.has(li.product_id))
+        .map(li => {
+          const prod = productMap.get(li.product_id)
+          return { name: prod.name, category: prod.category, sku: prod.sku, quantity: li.quantity || 1 }
+        })
+    },
+    enabled: !!job.id,
+    staleTime: 60_000,
+  })
+
+  // ── NEW: Inventory readiness detail (only when short or pending) ──
+  const invStatus = (job as any).inventory_status as string | null
+  const { data: inventoryDetail } = useQuery({
+    queryKey: ['job_inventory_readiness', job.id],
+    queryFn: () => checkJobReadiness(job.id),
+    enabled: !!job.id && (invStatus === 'short' || invStatus === 'pending_check' || invStatus === 'reserved'),
+    staleTime: 15_000,
+  })
+
   const actions = DISPATCH_STATUS_ACTIONS[job.status] || []
 
   async function handleStatusChange(target: JobStatus) {
@@ -64,6 +139,8 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
       console.error(e)
     }
   }
+
+  const invConfig = invStatus ? INVENTORY_STATUS_CONFIG[invStatus] : null
 
   return (
     <div className="space-y-4">
@@ -89,6 +166,139 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
               {a.label}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* ── NEW: Products Being Installed (Gap 6) ── */}
+      {jobProducts && jobProducts.length > 0 && (
+        <div style={{
+          background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14,
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            padding: '10px 14px', borderBottom: '1px solid #1e3a4f',
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{ fontSize: 14 }}>📦</span>
+            <span style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 13 }}>
+              Products Being Installed
+            </span>
+            <span style={{ color: '#4ade80', fontSize: 11, fontWeight: 600 }}>
+              {jobProducts.length} item{jobProducts.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          {jobProducts.map((p: any, i: number) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '8px 14px',
+              borderBottom: i < jobProducts.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+            }}>
+              <div>
+                <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{p.name}</div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+                  {p.category && (
+                    <span style={{ color: '#64748b', fontSize: 11 }}>
+                      {CATEGORY_LABELS[p.category] || p.category}
+                    </span>
+                  )}
+                  {p.sku && (
+                    <span style={{ color: '#475569', fontSize: 11, fontFamily: 'monospace' }}>
+                      {p.sku}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <span style={{ color: '#94a3b8', fontSize: 12, fontWeight: 600 }}>× {p.quantity}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── NEW: Inventory Status (Gap 4) ── */}
+      {invConfig && invStatus !== 'not_required' && invStatus !== 'n_a' && (
+        <div style={{
+          background: invConfig.bg, border: `1px solid ${invConfig.border}`,
+          borderRadius: 14, overflow: 'hidden',
+        }}>
+          <div style={{
+            padding: '12px 14px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 14 }}>{invConfig.icon}</span>
+              <div>
+                <div style={{ color: invConfig.color, fontWeight: 700, fontSize: 13 }}>
+                  {invConfig.label}
+                </div>
+                {invStatus === 'short' && (
+                  <div style={{ color: '#f87171', fontSize: 11, marginTop: 2 }}>
+                    Cannot start installation until stock arrives
+                  </div>
+                )}
+                {invStatus === 'pending_check' && (
+                  <div style={{ color: '#fbbf24', fontSize: 11, marginTop: 2 }}>
+                    Inventory check in progress
+                  </div>
+                )}
+                {invStatus === 'reserved' && (
+                  <div style={{ color: '#4ade80', fontSize: 11, marginTop: 2 }}>
+                    All materials reserved — ready to install
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Inventory detail — per-product breakdown when short */}
+          {inventoryDetail && inventoryDetail.items.length > 0 && invStatus === 'short' && (
+            <div style={{ borderTop: `1px solid ${invConfig.border}`, padding: '10px 14px' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                Material Status
+              </div>
+              {inventoryDetail.items.map((item: any, i: number) => (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '6px 0',
+                  borderBottom: i < inventoryDetail.items.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                }}>
+                  <div style={{ color: '#e2e8f0', fontSize: 12 }}>{item.product_name}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {item.reserved ? (
+                      <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 600 }}>✅ Reserved</span>
+                    ) : (
+                      <span style={{ fontSize: 11, color: '#f87171', fontWeight: 600 }}>
+                        Short {item.shortage_amount > 0 ? `(need ${item.shortage_amount})` : ''}
+                      </span>
+                    )}
+                    {item.reorder_request_id && (
+                      <span style={{
+                        fontSize: 10, padding: '1px 6px', borderRadius: 8,
+                        background: 'rgba(251,191,36,0.1)', color: '#fbbf24',
+                        border: '1px solid rgba(251,191,36,0.2)',
+                      }}>
+                        On Order
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Reserved items detail */}
+          {inventoryDetail && inventoryDetail.items.length > 0 && invStatus === 'reserved' && (
+            <div style={{ borderTop: `1px solid ${invConfig.border}`, padding: '10px 14px' }}>
+              {inventoryDetail.items.map((item: any, i: number) => (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '4px 0',
+                }}>
+                  <span style={{ color: '#cbd5e1', fontSize: 12 }}>{item.product_name}</span>
+                  <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 600 }}>✅ × {item.quantity_needed}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
