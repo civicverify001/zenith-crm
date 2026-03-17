@@ -447,8 +447,8 @@ export function InstallationDetailPage() {
           <CompletionReadinessPanel jobId={currentJob.id} jobStatus={currentJob.status} />
         </div>
 
-        {/* Site Survey */}
-        <div style={{ padding: '12px 16px 0' }}>
+        {/* FEATURE FLAG: Site Survey hidden — re-enable when ready */}
+        {false && <div style={{ padding: '12px 16px 0' }}>
           <SiteSurveyCapture
             context="job"
             jobId={currentJob.id}
@@ -456,7 +456,7 @@ export function InstallationDetailPage() {
             systemTypeContext={{ jobSystemType: currentJob.system_type || null }}
             defaultCollapsed={true}
           />
-        </div>
+        </div>}
 
         {/* ── Post-Install Water Test Section ── */}
         {showWaterTest && waterTestsLoaded && (
