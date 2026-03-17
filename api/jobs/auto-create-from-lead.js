@@ -98,7 +98,6 @@ module.exports = async function handler(req, res) {
         equipment_summary: lead.equipment_summary || null,
         quote_total_snapshot: lead.quote_total,
         payment_method_snapshot: lead.payment_method,
-        created_by: null,
       })
       .select('id')
       .single();
