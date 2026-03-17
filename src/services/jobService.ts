@@ -238,8 +238,9 @@ export async function assignTechnician(
 // UPDATE JOB STATUS
 // ═══════════════════════════════════════════════════════════════
 const ALLOWED_STATUS_TRANSITIONS: Record<JobStatus, JobStatus[]> = {
-  scheduled: ['waiting_for_stock', 'in_progress'],
-  waiting_for_stock: ['in_progress', 'scheduled'],
+  ready_to_schedule: ['scheduled', 'waiting_for_stock'],
+  scheduled: ['waiting_for_stock', 'in_progress', 'ready_to_schedule'],
+  waiting_for_stock: ['ready_to_schedule', 'scheduled', 'in_progress'],
   in_progress: ['complete', 'waiting_for_stock'],
   complete: [],
 }
@@ -483,7 +484,7 @@ export async function fetchJobsByStatus(): Promise<Record<JobStatus, Job[]>> {
   if (error) throw new Error(`Failed to fetch jobs: ${error.message}`)
 
   const grouped: Record<string, Job[]> = {
-    scheduled: [], waiting_for_stock: [], in_progress: [], complete: [],
+    ready_to_schedule: [], scheduled: [], waiting_for_stock: [], in_progress: [], complete: [],
   }
   for (const job of (data || []) as Job[]) {
     if (grouped[job.status]) grouped[job.status].push(job)
