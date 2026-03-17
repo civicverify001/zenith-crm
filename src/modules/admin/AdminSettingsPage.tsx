@@ -1053,16 +1053,16 @@ function ServicePlansTemplateTab() {
     try {
       if (editing) {
         await updatePlanTemplate(editing.id, input)
-        // Save product_id directly
-        if (fFulfillment === 'shipment' && fProductId) {
+        // Save product_id for any fulfillment type
+        if (fProductId) {
           await supabase.from('service_plans').update({ product_id: fProductId }).eq('id', editing.id)
-        } else if (fFulfillment !== 'shipment') {
+        } else {
           await supabase.from('service_plans').update({ product_id: null }).eq('id', editing.id)
         }
       } else {
         const created = await createPlanTemplate(input)
         // Save product_id on newly created template
-        if (created && fFulfillment === 'shipment' && fProductId) {
+        if (created && fProductId) {
           await supabase.from('service_plans').update({ product_id: fProductId }).eq('id', created.id)
         }
       }
@@ -1203,10 +1203,10 @@ function ServicePlansTemplateTab() {
               )}
             </div>
 
-            {/* Row 3.5: Shipped Product (only for shipment fulfillment) */}
-            {fFulfillment === 'shipment' && (
+            {/* Row 3.5: Related Product (all fulfillment types except billing-only) */}
+            {fFulfillment !== 'none' && (
               <div>
-                <label style={labelStyle}>Shipped Product <span style={{ color: '#f59e0b' }}>— what goes in the box</span></label>
+                <label style={labelStyle}>{fFulfillment === 'shipment' ? 'Product to Ship' : fFulfillment === 'tech_visit' ? 'Parts / Filters for This Service' : 'Related Product'} <span style={{ color: '#f59e0b' }}>— {fFulfillment === 'shipment' ? 'what goes in the box' : 'so tech knows what to bring'}</span></label>
                 <select value={fProductId} onChange={e => setFProductId(e.target.value)} style={inputStyle}>
                   <option value="" style={{ background: '#0f1923' }}>Select product to ship...</option>
                   {products.map(p => <option key={p.id} value={p.id} style={{ background: '#0f1923' }}>{p.name}</option>)}
