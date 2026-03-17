@@ -331,15 +331,16 @@ export async function receiveStock(
           .in('status', ['open', 'grouped', 'ordered']);
 
         if (!remainingShorts || remainingShorts.length === 0) {
-          // All shortages resolved — update job status
-          await supabase
-            .from('jobs')
-            .update({
-              inventory_status: 'reserved',
-              inventory_checked_at: new Date().toISOString(),
-            })
-            .eq('id', req.job_id);
-        }
+  // All shortages resolved — move job to ready_to_schedule
+  await supabase
+    .from('jobs')
+    .update({
+      inventory_status: 'reserved',
+      inventory_checked_at: new Date().toISOString(),
+      status: 'ready_to_schedule',
+    })
+    .eq('id', req.job_id);
+}
 
         jobsRetried.push(req.job_id);
       }
