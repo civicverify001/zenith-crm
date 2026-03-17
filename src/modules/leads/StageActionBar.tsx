@@ -109,9 +109,11 @@ interface Props {
   siteVisitComplete?: boolean
   /** Number of call attempts logged for this lead — gates Lost/DND buttons */
   callAttemptCount?: number
+  /** True if any call was logged with outcome 'no_contact_requested' — bypasses 5-step gate */
+  hasNoContactRequest?: boolean
 }
 
-export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingComplete, onScheduleVisit, siteVisitComplete, callAttemptCount = 0 }: Props) {
+export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingComplete, onScheduleVisit, siteVisitComplete, callAttemptCount = 0, hasNoContactRequest = false }: Props) {
   const { user, profile, role } = useAuth()
   const [activeModal, setActiveModal] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
@@ -126,10 +128,10 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
     ? allActions.filter(a => !a.adminOnly)
     : allActions
 
-  // Contact gate: is this stage gated, and are we below the threshold?
+  // Contact gate: active when below threshold AND no explicit no-contact request
   const isGatedStage = CONTACT_GATED_STAGES.includes(lead.stage)
   const attemptsRemaining = Math.max(0, REQUIRED_CONTACT_ATTEMPTS - callAttemptCount)
-  const contactGateActive = isGatedStage && attemptsRemaining > 0
+  const contactGateActive = isGatedStage && attemptsRemaining > 0 && !hasNoContactRequest
 
   if (!user) return null
 
@@ -261,6 +263,17 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
         </div>
       )}
 
+      {/* ── No Contact Request bypass banner ────────────────────── */}
+      {hasNoContactRequest && isGatedStage && !isSalesRep && (
+        <div className="flex items-center gap-2 rounded-xl px-4 py-3" style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>
+          <span style={{ fontSize: 14 }}>⛔</span>
+          <div>
+            <span className="text-xs font-bold" style={{ color: '#f87171' }}>No Contact Requested</span>
+            <span className="text-xs ml-2" style={{ color: '#94a3b8' }}>Lead asked not to be contacted — Lost/DND unlocked immediately</span>
+          </div>
+        </div>
+      )}
+
       {/* ── Contact Gate Step Counter ────────────────────────────── */}
       {contactGateActive && !isSalesRep && (
         <div className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ backgroundColor: 'rgba(34,211,238,0.08)', border: '1px solid rgba(34,211,238,0.25)' }}>
@@ -288,7 +301,7 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
       )}
 
       {/* Gate complete indicator */}
-      {isGatedStage && !contactGateActive && callAttemptCount > 0 && !isSalesRep && (
+      {isGatedStage && !contactGateActive && !hasNoContactRequest && callAttemptCount > 0 && !isSalesRep && (
         <div className="flex items-center gap-2 rounded-lg px-3 py-1.5" style={{ backgroundColor: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)' }}>
           <span className="text-xs font-semibold" style={{ color: '#4ade80' }}>
             ✓ {callAttemptCount} call{callAttemptCount !== 1 ? 's' : ''} logged — all actions unlocked
