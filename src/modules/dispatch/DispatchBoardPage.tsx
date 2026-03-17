@@ -7,6 +7,7 @@ import { DISPATCH_COLUMNS, JOB_STATUS_LABELS, JOB_STATUS_COLORS, SYSTEM_TYPE_LAB
 import { useAuth } from '../../hooks/useAuth'
 
 const STATUS_COLORS: Record<JobStatus, string> = {
+  ready_to_schedule: 'border-t-purple-500',
   scheduled: 'border-t-accent',
   waiting_for_stock: 'border-t-amber',
   in_progress: 'border-t-cyan',
@@ -14,6 +15,7 @@ const STATUS_COLORS: Record<JobStatus, string> = {
 }
 
 const STATUS_DOT: Record<JobStatus, string> = {
+  ready_to_schedule: 'bg-purple-500',
   scheduled: 'bg-accent',
   waiting_for_stock: 'bg-amber',
   in_progress: 'bg-cyan',
@@ -255,6 +257,7 @@ function DayDetailPanel({ date, jobs, onJobClick, onClose }: {
   if (!date) return null
   const label = date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
   const byStatus: Record<JobStatus, Job[]> = {
+    ready_to_schedule: jobs.filter(j => j.status === 'ready_to_schedule'),
     scheduled: jobs.filter(j => j.status === 'scheduled'),
     waiting_for_stock: jobs.filter(j => j.status === 'waiting_for_stock'),
     in_progress: jobs.filter(j => j.status === 'in_progress'),
@@ -278,7 +281,7 @@ function DayDetailPanel({ date, jobs, onJobClick, onClose }: {
             <div className="text-sm text-muted">Open slot — no installs scheduled</div>
           </div>
         ) : (
-          (['scheduled','in_progress','waiting_for_stock','complete'] as JobStatus[]).map(status => {
+          (['ready_to_schedule','scheduled','in_progress','waiting_for_stock','complete'] as JobStatus[]).map(status => {
             const statusJobs = byStatus[status]
             if (!statusJobs.length) return null
             return (
@@ -417,9 +420,10 @@ function CalendarView({ allJobs, onJobClick }: { allJobs: Job[]; onJobClick: (jo
 function MobileBoardView({ jobsByStatus, searchQuery, onJobClick }: {
   jobsByStatus: Partial<Record<JobStatus, Job[]>>; searchQuery: string; onJobClick: (job: Job) => void
 }) {
-  const [activeStatus, setActiveStatus] = useState<JobStatus>('scheduled')
+  const [activeStatus, setActiveStatus] = useState<JobStatus>('ready_to_schedule')
 
   const tabDef: { status: JobStatus; color: string; bg: string; border: string }[] = [
+    { status: 'ready_to_schedule', color: '#a855f7', bg: 'rgba(168,85,247,0.15)', border: 'rgba(168,85,247,0.4)'  },
     { status: 'scheduled',         color: '#0d7ea3', bg: 'rgba(13,126,163,0.15)',  border: 'rgba(13,126,163,0.4)'  },
     { status: 'in_progress',       color: '#22d3ee', bg: 'rgba(34,211,238,0.15)', border: 'rgba(34,211,238,0.4)'  },
     { status: 'waiting_for_stock', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.4)'  },
