@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Job } from '../dispatch.types'
 import { JOB_STATUS_LABELS, SYSTEM_TYPE_LABELS } from '../dispatch.types'
 import { useTechnicians, useAssignTechnician, useUpdateJobStatus } from '../useJobs'
@@ -39,10 +40,15 @@ function formatCurrency(val: number | null) {
 
 // Dispatch only owns scheduling/stock transitions. Start Job + Mark Complete belong to Installations.
 const DISPATCH_STATUS_ACTIONS: Partial<Record<JobStatus, { label: string; target: JobStatus; variant: string }[]>> = {
-  scheduled: [
+  ready_to_schedule: [
     { label: 'Waiting for Stock', target: 'waiting_for_stock', variant: 'bg-amber/15 text-amber border-amber/30' },
   ],
+  scheduled: [
+    { label: 'Waiting for Stock', target: 'waiting_for_stock', variant: 'bg-amber/15 text-amber border-amber/30' },
+    { label: 'Back to Ready', target: 'ready_to_schedule', variant: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
+  ],
   waiting_for_stock: [
+    { label: 'Back to Ready', target: 'ready_to_schedule', variant: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
     { label: 'Back to Scheduled', target: 'scheduled', variant: 'bg-border text-slate-300 border-border' },
   ],
 }
@@ -52,6 +58,12 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
   const { data: techs } = useTechnicians()
   const { mutateAsync: assignTech } = useAssignTechnician()
   const { mutateAsync: updateStatus, isPending: statusPending } = useUpdateJobStatus()
+
+  // ── Scheduling form state (for ready_to_schedule jobs) ──
+  const [schedDate, setSchedDate] = useState('')
+  const [schedHour, setSchedHour] = useState('')
+  const [schedNotes, setSchedNotes] = useState(job.notes || '')
+  const [scheduling, setScheduling] = useState(false)
 
   // Read-only completion readiness
   const { data: completionStatus } = useQuery({
@@ -140,6 +152,28 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
     }
   }
 
+  // ── Confirm Schedule: sets date/time/tech and moves to 'scheduled' ──
+  async function handleConfirmSchedule() {
+    if (!schedDate || !schedHour) return
+    setScheduling(true)
+    try {
+      const datetime = `${schedDate}T${schedHour.padStart(2, '0')}:00:00`
+      // Update job fields first
+      await supabase.from('jobs').update({
+        scheduled_date: datetime,
+        notes: schedNotes || null,
+      }).eq('id', job.id)
+
+      // Move status to scheduled
+      const updated = await updateStatus({ jobId: job.id, newStatus: 'scheduled' as JobStatus, currentJob: { ...job, scheduled_date: datetime } })
+      onJobUpdated(updated)
+    } catch (e: any) {
+      alert('Failed to schedule: ' + e.message)
+    } finally {
+      setScheduling(false)
+    }
+  }
+
   const invConfig = invStatus ? INVENTORY_STATUS_CONFIG[invStatus] : null
 
   return (
@@ -166,6 +200,127 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
               {a.label}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* ── NEW: Scheduling Form (for ready_to_schedule jobs) ── */}
+      {job.status === 'ready_to_schedule' && (
+        <div style={{
+          background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.25)',
+          borderRadius: 14, padding: 16, display: 'flex', flexDirection: 'column', gap: 12,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 16 }}>📞</span>
+            <div>
+              <div style={{ color: '#c084fc', fontWeight: 700, fontSize: 14 }}>Ready to Schedule</div>
+              <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>Call customer, pick a date, assign tech, then confirm</div>
+            </div>
+          </div>
+
+          {/* Date */}
+          <div>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+              Install Date <span style={{ color: '#f87171' }}>*</span>
+            </label>
+            <input
+              type="date"
+              value={schedDate}
+              onChange={e => setSchedDate(e.target.value)}
+              min={new Date().toISOString().split('T')[0]}
+              style={{
+                width: '100%', boxSizing: 'border-box' as any,
+                background: 'rgba(255,255,255,0.04)', border: '1px solid #1e3a4f',
+                borderRadius: 8, padding: '10px 12px', color: '#e2e8f0', fontSize: 13, outline: 'none',
+              }}
+            />
+          </div>
+
+          {/* Time */}
+          <div>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+              Time Slot <span style={{ color: '#f87171' }}>*</span>
+            </label>
+            <select
+              value={schedHour}
+              onChange={e => setSchedHour(e.target.value)}
+              style={{
+                width: '100%', boxSizing: 'border-box' as any,
+                background: 'rgba(255,255,255,0.04)', border: '1px solid #1e3a4f',
+                borderRadius: 8, padding: '10px 12px', color: '#e2e8f0', fontSize: 13, outline: 'none',
+              }}
+            >
+              <option value="" style={{ background: '#0f1923' }}>Select time...</option>
+              {[8,9,10,11,12,13,14,15,16,17].map(h => (
+                <option key={h} value={String(h)} style={{ background: '#0f1923' }}>
+                  {h === 12 ? '12:00 PM' : h < 12 ? `${h}:00 AM` : `${h-12}:00 PM`}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Technician */}
+          <div>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+              Assign Technician
+            </label>
+            {techs ? (
+              <select
+                value={job.assigned_technician_id || ''}
+                onChange={e => e.target.value && handleAssignTech(e.target.value)}
+                style={{
+                  width: '100%', boxSizing: 'border-box' as any,
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid #1e3a4f',
+                  borderRadius: 8, padding: '10px 12px', color: '#e2e8f0', fontSize: 13, outline: 'none',
+                }}
+              >
+                <option value="" style={{ background: '#0f1923' }}>— Unassigned —</option>
+                {techs.map((t: any) => (
+                  <option key={t.id} value={t.id} style={{ background: '#0f1923' }}>{t.full_name}</option>
+                ))}
+              </select>
+            ) : (
+              <div style={{ color: '#94a3b8', fontSize: 13 }}>Loading...</div>
+            )}
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+              Notes for Tech
+            </label>
+            <textarea
+              value={schedNotes}
+              onChange={e => setSchedNotes(e.target.value)}
+              placeholder="Any install notes..."
+              rows={2}
+              style={{
+                width: '100%', boxSizing: 'border-box' as any,
+                background: 'rgba(255,255,255,0.04)', border: '1px solid #1e3a4f',
+                borderRadius: 8, padding: '10px 12px', color: '#e2e8f0', fontSize: 13, outline: 'none',
+                resize: 'none',
+              }}
+            />
+          </div>
+
+          {/* Confirm button */}
+          <button
+            onClick={handleConfirmSchedule}
+            disabled={!schedDate || !schedHour || scheduling}
+            style={{
+              padding: '12px 20px', borderRadius: 10, fontSize: 14, fontWeight: 700,
+              cursor: !schedDate || !schedHour || scheduling ? 'not-allowed' : 'pointer',
+              opacity: !schedDate || !schedHour || scheduling ? 0.5 : 1,
+              background: 'linear-gradient(135deg, #a855f7, #7c3aed)',
+              color: '#fff', border: 'none',
+              boxShadow: schedDate && schedHour ? '0 4px 20px rgba(168,85,247,0.3)' : 'none',
+            }}
+          >
+            {scheduling ? 'Scheduling...' : schedDate && schedHour
+              ? `📅 Confirm Schedule — ${new Date(schedDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${
+                  Number(schedHour) === 12 ? '12:00 PM' : Number(schedHour) < 12 ? `${schedHour}:00 AM` : `${Number(schedHour)-12}:00 PM`
+                }`
+              : '📅 Confirm Schedule'}
+          </button>
         </div>
       )}
 
