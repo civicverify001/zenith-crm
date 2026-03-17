@@ -25,7 +25,7 @@ module.exports = async function handler(req, res) {
     // ── 1. Fetch the lead ─────────────────────────────────────
     const { data: lead, error: leadErr } = await supabase
       .from('leads')
-      .select('id, full_name, phone, email, address, city, state, zip_code, water_concern, equipment_summary, quote_total, payment_method')
+      .select('*')
       .eq('id', lead_id)
       .single();
 
