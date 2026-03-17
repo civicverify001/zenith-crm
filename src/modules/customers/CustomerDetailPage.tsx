@@ -220,14 +220,14 @@ export function CustomerDetailPage() {
         />
       </div>
 
-      {/* ─── Pre-Install Survey (read-only) ──────────────── */}
-      <div className="mb-4 flex-shrink-0">
+      {/* FEATURE FLAG: Site Survey hidden — re-enable when ready */}
+      {false && <div className="mb-4 flex-shrink-0">
         <SiteSurveyCapture
           context="customer"
           customerId={customer.id}
           defaultCollapsed={true}
         />
-      </div>
+      </div>}
 
       {/* ─── Tabs ────────────────────────────────────────── */}
       <div className="flex border-b border-border flex-shrink-0 overflow-x-auto">
