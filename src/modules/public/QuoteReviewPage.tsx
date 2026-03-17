@@ -1202,7 +1202,7 @@ export function QuoteReviewPage() {
       if (contractErr) throw contractErr
 
       setAgreement(prev => prev ? { ...prev, status: 'signed', signed_at: now, signed_name: signedName } : prev)
-      autoCreateJobFromLead(quote!.lead_id)
+      await autoCreateJobFromLead(quote!.lead_id)
       setStep('stripe_card_save'); scrollTop()
     } catch (e: any) { setError(e.message) }
     setSigning(false)
@@ -1218,7 +1218,7 @@ export function QuoteReviewPage() {
       }).eq('id', invoice.id)
       if (e) throw e
       setInvoice(prev => prev ? { ...prev, status: 'signed', signed_at: new Date().toISOString(), signed_name: signedName } : prev)
-      autoCreateJobFromLead(quote!.lead_id)
+      await await autoCreateJobFromLead(quote!.lead_id)
       setStep('payment_choice'); scrollTop()
     } catch (e: any) { setError(e.message) }
     setSigning(false)
