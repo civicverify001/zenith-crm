@@ -4,12 +4,11 @@
 //   id, contract_number, customer_id, quote_id, type, status,
 //   monthly_amount, start_date, end_date, terms_snapshot,
 //   line_items_snapshot, signed_at, notes, created_at, updated_at,
-//   billing_day, last_billed_at
+//   billing_day, last_billed_at, retail_price_snapshot (Gap 15)
 //
 // Access: admin (full + cancel), frontdesk (read), salesrep (read), technician (blocked)
 // NOTE: Does NOT use contractsService.ts types — service interface mismatches real DB.
 //       Queries supabase directly with local types matched to actual columns.
-// NOTE: No buyout calculator — total_amount / amount_paid do not exist in DB.
 // NOTE: Cancel writes status='cancelled' only — cancelled_at/reason not in schema.
 
 import { useEffect, useState } from 'react'
@@ -37,6 +36,7 @@ interface RealContract {
   updated_at: string
   billing_day: number | null
   last_billed_at: string | null
+  retail_price_snapshot: number | null
   customer_name?: string
   customer_phone?: string
   customer_email?: string
@@ -136,6 +136,70 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
+// ─── Buyout Calculator Card (Gap 15) ───────────────────────────
+
+function BuyoutCalculatorCard({ contract, payments }: { contract: RealContract; payments: PaymentTx[] }) {
+  if (contract.type !== 'rental') return null
+
+  const retailPrice = contract.retail_price_snapshot
+  const succeededPayments = payments.filter(p => p.status === 'succeeded')
+  const totalPaid = succeededPayments.reduce((sum, p) => sum + Number(p.amount), 0)
+  const paymentCount = succeededPayments.length
+  const creditFromPayments = totalPaid * 0.5
+  const buyoutAmount = retailPrice ? Math.max(0, retailPrice - creditFromPayments) : null
+
+  return (
+    <Card style={{ border: '1px solid #0ea5e933' }}>
+      <SectionTitle>Buyout Calculator</SectionTitle>
+
+      {!retailPrice ? (
+        <p style={{ margin: 0, fontSize: 13, color: '#64748b', fontStyle: 'italic' }}>
+          Retail price not recorded on this contract. Re-run Mark Complete on the installation to populate,
+          or add <code style={{ color: '#94a3b8' }}>retail_price_snapshot</code> manually in the database.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* Retail price */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, color: '#94a3b8' }}>Retail Price (catalog)</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>{fmt(retailPrice)}</span>
+          </div>
+
+          {/* Total paid */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, color: '#94a3b8' }}>Total Payments Made</span>
+            <span style={{ fontSize: 14, fontWeight: 500, color: '#22c55e' }}>
+              {fmt(totalPaid)} <span style={{ fontSize: 11, color: '#64748b' }}>({paymentCount} payments)</span>
+            </span>
+          </div>
+
+          {/* 50% credit */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, color: '#94a3b8' }}>50% Payment Credit</span>
+            <span style={{ fontSize: 14, fontWeight: 500, color: '#f59e0b' }}>– {fmt(creditFromPayments)}</span>
+          </div>
+
+          {/* Divider */}
+          <div style={{ borderTop: '1px solid #0ea5e933', margin: '4px 0' }} />
+
+          {/* Buyout amount */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0' }}>Buyout Amount</span>
+            <span style={{ fontSize: 22, fontWeight: 700, color: '#0ea5e9' }}>{fmt(buyoutAmount)}</span>
+          </div>
+
+          {/* Formula explanation */}
+          <div style={{ background: '#0ea5e90a', border: '1px solid #0ea5e922', borderRadius: 8, padding: '10px 12px', marginTop: 4 }}>
+            <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
+              Formula: Retail Price – (50% × Total Payments) = Buyout Amount
+            </p>
+          </div>
+        </div>
+      )}
+    </Card>
+  )
+}
+
 // ─── Main Page ─────────────────────────────────────────────────
 
 export default function ContractDetailPage() {
@@ -172,7 +236,7 @@ export default function ContractDetailPage() {
           id, contract_number, customer_id, quote_id, type, status,
           monthly_amount, start_date, end_date, terms_snapshot,
           line_items_snapshot, signed_at, notes, created_at, updated_at,
-          billing_day, last_billed_at,
+          billing_day, last_billed_at, retail_price_snapshot,
           customers ( full_name, phone, email )
         `)
         .eq('id', contractId)
@@ -358,6 +422,9 @@ export default function ContractDetailPage() {
             </div>
           )}
         </Card>
+
+        {/* GAP 15: Buyout Calculator — rental contracts only */}
+        <BuyoutCalculatorCard contract={contract} payments={payments} />
 
         {/* Line Items Snapshot */}
         {contract.line_items_snapshot && (
