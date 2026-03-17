@@ -70,6 +70,8 @@ export interface Product {
   maintenance_price_monthly?: number | null
   filter_interval_months?: number | null
   warranty_months?: number | null
+  parts_warranty?: string | null
+  labour_warranty?: string | null
   is_active: boolean
 }
 
