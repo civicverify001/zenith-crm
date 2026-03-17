@@ -3,7 +3,7 @@ import type { Lead } from './leads.types'
 import { useTechnicians } from '../dispatch/useJobs'
 import { SYSTEM_TYPE_LABELS } from '../dispatch/dispatch.types'
 import type { SystemType } from '../dispatch/dispatch.types'
-import { createInstallJobFromLead } from '../../services/jobService'
+import { createInstallJobFromLead, scheduleExistingJob } from '../../services/jobService'
 import { useAuth } from '../../hooks/useAuth'
 import { useQueryClient } from '@tanstack/react-query'
 import { JOB_KEYS } from '../dispatch/useJobs'
@@ -286,8 +286,31 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
     commercial_type: string | null
   } | null>(null)
 
-  const jobAlreadyCreated = !!lead.job_created
+  // NEW: Existing job detection (auto-created by signing flow)
+  const [existingJobId, setExistingJobId] = useState<string | null>(null)
+  const [existingJobStatus, setExistingJobStatus] = useState<string | null>(null)
+  const [existingJobDate, setExistingJobDate] = useState<string | null>(null)
 
+  const jobAlreadyCreated = !!lead.job_created || !!existingJobId
+  const jobNeedsScheduling = existingJobId && (existingJobStatus === 'ready_to_schedule' || existingJobStatus === 'waiting_for_stock')
+  const jobIsScheduled = existingJobId && existingJobStatus === 'scheduled'
+  // ── Check for existing job on mount ───────────────────────────
+  useEffect(() => {
+    async function checkExistingJob() {
+      const { data } = await supabase
+        .from('jobs')
+        .select('id, status, scheduled_date')
+        .eq('lead_id', lead.id)
+        .limit(1)
+        .maybeSingle()
+      if (data) {
+        setExistingJobId(data.id)
+        setExistingJobStatus(data.status)
+        setExistingJobDate(data.scheduled_date)
+      }
+    }
+    checkExistingJob()
+  }, [lead.id])
   // ── Load agreement/quote data from DB ─────────────────────────
   // Strategy: try lead_id first, fall back to customer_id if empty.
   // signed_by lives on agreements only (customer types name during signing).
@@ -572,38 +595,52 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
   //          the install even happened. The 'won' stage move now lives in
   //          complete.js (api/installations/complete.js) and fires only
   //          after Kendrick marks the job done.
-  async function handleScheduleInstall() {
-  if (!user) return
-  setSubmitting(true)
-  try {
-    const datetime = buildScheduledDatetime()
-    const newJob = await createInstallJobFromLead(lead, systemType, datetime, needsFaucetHole, { actor_id: user.id, actor_name: profile?.full_name })
-    if (techId) await supabase.from('jobs').update({ assigned_technician_id: techId, assigned_at: new Date().toISOString() }).eq('id', newJob.id)
-    if (notes) await supabase.from('jobs').update({ notes }).eq('id', newJob.id)
+async function handleScheduleInstall() {
+    if (!user) return
+    setSubmitting(true)
+    try {
+      const datetime = buildScheduledDatetime()
 
-    // Push to Google Calendar (fire and forget)
-    syncToCalendar('job', newJob.id).catch(e => console.warn('Google Cal sync failed:', e))
+      if (existingJobId && jobNeedsScheduling) {
+        // ── PATH A: Update existing auto-created job with date + tech ──
+        await scheduleExistingJob(
+          existingJobId,
+          datetime || scheduledDate,
+          techId || null,
+          notes || null,
+          { actor_id: user.id, actor_name: profile?.full_name }
+        )
+        syncToCalendar('job', existingJobId).catch(e => console.warn('Google Cal sync failed:', e))
+        setExistingJobStatus('scheduled')
+        setExistingJobDate(datetime || scheduledDate)
+      } else {
+        // ── PATH B: Create new job (fallback if auto-create didn't fire) ──
+        const newJob = await createInstallJobFromLead(lead, systemType, datetime, needsFaucetHole, { actor_id: user.id, actor_name: profile?.full_name })
+        if (techId) await supabase.from('jobs').update({ assigned_technician_id: techId, assigned_at: new Date().toISOString() }).eq('id', newJob.id)
+        if (notes) await supabase.from('jobs').update({ notes }).eq('id', newJob.id)
+        syncToCalendar('job', newJob.id).catch(e => console.warn('Google Cal sync failed:', e))
+        setExistingJobId(newJob.id)
+        setExistingJobStatus(newJob.status)
+      }
 
-    // Move lead to 'won' — removes from pipeline kanban.
-    // Dispatch board is now the tracking point until install is complete.
-    await supabase.from('leads').update({
-      stage: 'won',
-      stage_changed_at: new Date().toISOString(),
-      stage_entered_at: new Date().toISOString(),
-    }).eq('id', lead.id)
+      // Move lead to 'won' — removes from pipeline kanban
+      await supabase.from('leads').update({
+        stage: 'won',
+        stage_changed_at: new Date().toISOString(),
+        stage_entered_at: new Date().toISOString(),
+      }).eq('id', lead.id)
 
-    queryClient.invalidateQueries({ queryKey: JOB_KEYS.board() })
-    queryClient.invalidateQueries({ queryKey: LEAD_KEYS.kanban() })
-    queryClient.invalidateQueries({ queryKey: LEAD_KEYS.counts })
-
-    onLeadUpdated?.({ ...lead, stage: 'won' as any })
-    setShowModal(false)
-  } catch (err: any) {
-    alert('Failed to create job: ' + (err.message || err))
-  } finally {
-    setSubmitting(false)
+      queryClient.invalidateQueries({ queryKey: JOB_KEYS.board() })
+      queryClient.invalidateQueries({ queryKey: LEAD_KEYS.kanban() })
+      queryClient.invalidateQueries({ queryKey: LEAD_KEYS.counts })
+      onLeadUpdated?.({ ...lead, stage: 'won' as any })
+      setShowModal(false)
+    } catch (err: any) {
+      alert('Failed: ' + (err.message || err))
+    } finally {
+      setSubmitting(false)
+    }
   }
-}
   const selectedDaySlot = scheduledDate ? jobSlots.find(s => s.date === scheduledDate) : null
   const bookedHoursForDay = selectedDaySlot?.bookedHours || []
 
@@ -664,6 +701,25 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
             <h4 className="text-sm font-bold text-green">Agreement Signed</h4>
           </div>
           {jobAlreadyCreated ? (
+            {jobIsScheduled ? (
+            <span className="text-xs px-3 py-1.5 bg-green/20 text-green border border-green/30 rounded-lg font-semibold">
+              ✓ Scheduled
+            </span>
+          ) : jobNeedsScheduling ? (
+            isSalesRep ? (
+              <span className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)' }}>
+                Awaiting scheduling
+              </span>
+            ) : (
+              <button
+                onClick={handleOpenModal}
+                className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors"
+                style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)' }}
+              >
+                📅 Confirm Date & Tech
+              </button>
+            )
+          ) : jobAlreadyCreated ? (
             <span className="text-xs px-3 py-1.5 bg-green/20 text-green border border-green/30 rounded-lg font-semibold">
               ✓ Job Created
             </span>
@@ -806,7 +862,7 @@ export function AgreementSignedPanel({ lead, onLeadUpdated }: Props) {
         )}
 
         <div className="flex items-center gap-2 pt-2 border-t border-green/10">
-          <StatusBadge active={!!lead.job_created} activeLabel="Job Created" inactiveLabel="Job Pending" />
+          <StatusBadge active={jobAlreadyCreated} activeLabel={jobNeedsScheduling ? 'Job Ready — Needs Date' : jobIsScheduled ? 'Job Scheduled' : 'Job Created'} inactiveLabel="Job Pending" />
           <StatusBadge active={!!(lead as any).inventory_reserved} activeLabel="Inventory Reserved" inactiveLabel="Not Reserved" />
         </div>
       </div>
