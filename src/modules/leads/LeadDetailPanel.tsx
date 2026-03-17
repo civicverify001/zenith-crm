@@ -345,6 +345,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
               qualifyingComplete={qualifyingComplete}
               onScheduleVisit={() => setShowVisitScheduler(true)}
               siteVisitComplete={siteVisitComplete}
+              callAttemptCount={calls?.length || 0}
             />
 
             {preparingQuote && (
