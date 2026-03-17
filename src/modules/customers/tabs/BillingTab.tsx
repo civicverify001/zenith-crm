@@ -577,6 +577,17 @@ function ChargeModal({
   )
 }
 
+// ─── Upcoming Charges Helper (Gap 11) ────────────────────────
+function getNextBillingDateFromDay(billingDay: number): string {
+  const now = new Date()
+  const thisMonth = new Date(now.getFullYear(), now.getMonth(), billingDay)
+  if (thisMonth > now) {
+    return thisMonth.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  }
+  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, billingDay)
+  return nextMonth.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 // ─── Main BillingTab ─────────────────────────────────────────
 export function BillingTab({ customerId, customer }: Props) {
   const qc = useQueryClient()
@@ -607,10 +618,37 @@ export function BillingTab({ customerId, customer }: Props) {
   const { data: contracts = [] } = useRentalContracts(customerId)
   const activeContract = (contracts as any[]).find((c: any) => c.status === 'active')
 
+  // GAP 11: Fetch active service plans for upcoming charges
+  const { data: activePlans = [] } = useQuery({
+    queryKey: ['active-service-plans', customerId],
+    queryFn: async () => {
+      try {
+        const { data, error } = await supabase
+          .from('customer_service_plans')
+          .select('id, price, billing_cycle, next_billing_date, status, plan_id, service_plans(name)')
+          .eq('customer_id', customerId)
+          .eq('status', 'active')
+          .order('next_billing_date', { ascending: true })
+        if (error) throw error
+        return (data || []).map((row: any) => ({
+          id: row.id,
+          name: row.service_plans?.name || 'Service Plan',
+          price: Number(row.price) || 0,
+          billing_cycle: row.billing_cycle || 'monthly',
+          next_billing_date: row.next_billing_date,
+        }))
+      } catch (e) {
+        console.error('Failed to fetch active plans:', e)
+        return []
+      }
+    },
+  })
+
   function invalidate() {
     qc.invalidateQueries({ queryKey: ['payment-methods', customerId] })
     qc.invalidateQueries({ queryKey: ['payment-transactions', customerId] })
     qc.invalidateQueries({ queryKey: ['rental-contracts', customerId] })
+    qc.invalidateQueries({ queryKey: ['active-service-plans', customerId] })
   }
 
   async function saveMonthlyAmount() {
@@ -685,6 +723,38 @@ export function BillingTab({ customerId, customer }: Props) {
 
   const succeededTotal = transactions.filter(t => t.status === 'succeeded').reduce((sum, t) => sum + Number(t.amount), 0)
   const failedRecent = transactions.filter(t => t.status === 'failed').slice(0, 3)
+
+  // GAP 11: Compute upcoming charges list
+  const upcomingCharges: { label: string; amount: number; date: string; type: 'rental' | 'plan' }[] = []
+
+  // Add rental contract charge
+  if (activeContract?.monthly_amount && activeContract?.billing_day) {
+    upcomingCharges.push({
+      label: `Rental — ${activeContract.contract_number}`,
+      amount: activeContract.monthly_amount,
+      date: getNextBillingDateFromDay(activeContract.billing_day),
+      type: 'rental',
+    })
+  }
+
+  // Add service plan charges
+  for (const plan of activePlans) {
+    if (plan.price > 0) {
+      upcomingCharges.push({
+        label: plan.name,
+        amount: plan.price,
+        date: plan.next_billing_date
+          ? new Date(plan.next_billing_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+          : 'TBD',
+        type: 'plan',
+      })
+    }
+  }
+
+  // Sort by date
+  upcomingCharges.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+  const totalUpcoming = upcomingCharges.reduce((s, c) => s + c.amount, 0)
 
   return (
     <Elements stripe={stripePromise}>
@@ -898,6 +968,36 @@ export function BillingTab({ customerId, customer }: Props) {
                   {monthlyError}
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ── GAP 11: Upcoming Charges ─────────────────────── */}
+        {upcomingCharges.length > 0 && (
+          <div className="bg-card border border-border rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">Upcoming Charges</div>
+              <div className="text-xs font-semibold" style={{ color: '#fbbf24' }}>
+                {fmt(totalUpcoming)}/mo total
+              </div>
+            </div>
+            <div className="space-y-2">
+              {upcomingCharges.map((charge, i) => (
+                <div key={i} className="flex items-center justify-between py-1.5 border-b last:border-0" style={{ borderColor: 'rgba(148,163,184,0.08)' }}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs flex-shrink-0" style={{ color: charge.type === 'rental' ? '#0ea5e9' : '#a855f7' }}>
+                      {charge.type === 'rental' ? '📄' : '🔧'}
+                    </span>
+                    <span className="text-xs truncate" style={{ color: '#e2e8f0' }}>{charge.label}</span>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0 ml-3">
+                    <span className="text-xs" style={{ color: '#64748b' }}>{charge.date}</span>
+                    <span className="text-xs font-semibold" style={{ color: charge.type === 'rental' ? '#0ea5e9' : '#a855f7' }}>
+                      {fmt(charge.amount)}
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
