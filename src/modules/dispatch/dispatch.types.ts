@@ -1,5 +1,5 @@
 // ─── Database enums ──────────────────────────────────────────
-export type JobStatus = 'scheduled' | 'waiting_for_stock' | 'in_progress' | 'complete'
+export type JobStatus = 'ready_to_schedule' | 'scheduled' | 'waiting_for_stock' | 'in_progress' | 'complete'
 export type JobType = 'standard_install' | 'service' | 'warranty' | 'filter_change' | 'rental_setup'
 export type SystemType = 'softener_only' | 'pure_start_softener' | 'advanced_softener' | 'dual_tank' | 'ro_install' | 'combo_whole_home_ro'
 export type JobEventType = 'job_created' | 'status_change' | 'tech_assigned' | 'checklist_item_completed' | 'tech_verification' | 'photo_uploaded' | 'handover_submitted' | 'consent_submitted' | 'job_completed' | 'note_added'
@@ -127,6 +127,7 @@ export interface JobFormResponse {
 
 // ─── Labels ──────────────────────────────────────────────────
 export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
+  ready_to_schedule: 'Ready to Schedule',
   scheduled: 'Scheduled',
   waiting_for_stock: 'Waiting for Stock',
   in_progress: 'In Progress',
@@ -134,6 +135,7 @@ export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
 }
 
 export const JOB_STATUS_COLORS: Record<JobStatus, string> = {
+  ready_to_schedule: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
   scheduled: 'bg-accent/20 text-accent border-accent/30',
   waiting_for_stock: 'bg-amber/20 text-amber border-amber/30',
   in_progress: 'bg-cyan/20 text-cyan border-cyan/30',
@@ -165,7 +167,8 @@ export const CHECKLIST_SECTION_LABELS: Record<ChecklistSection, string> = {
   technician_verification: 'Technician Verification',
 }
 
-export const DISPATCH_COLUMNS: JobStatus[] = ['scheduled', 'waiting_for_stock', 'in_progress', 'complete']
+// ── NEW: ready_to_schedule is the first column on the Dispatch board ──
+export const DISPATCH_COLUMNS: JobStatus[] = ['ready_to_schedule', 'scheduled', 'waiting_for_stock', 'in_progress', 'complete']
 
 // ─── Form rules by system type ───────────────────────────────
 export const SYSTEM_REQUIRED_FORMS: Record<SystemType, FormType[]> = {
