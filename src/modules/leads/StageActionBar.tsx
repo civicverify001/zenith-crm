@@ -19,6 +19,14 @@ import { AgreementModal } from './modals/AgreementModal'
 import { InstallJobModal } from './modals/InstallJobModal'
 import { ConfirmDialog } from './modals/ConfirmDialog'
 
+// ── Contact Gate Configuration ─────────────────────────────────
+const REQUIRED_CONTACT_ATTEMPTS = 5
+// Stages where the contact gate applies (Lost/DND locked until 5 attempts)
+const CONTACT_GATED_STAGES: LeadStage[] = [
+  'new_lead', 'qualifying', 'qualified', 'site_visit_scheduled',
+  'proposal_in_progress', 'quote_sent', 'future_follow_up',
+]
+
 interface ActionDef {
   label: string
   action: string
@@ -29,40 +37,42 @@ interface ActionDef {
   disabledLabel?: string
   /** If true, only admin/frontdesk can see this action — sales reps cannot */
   adminOnly?: boolean
+  /** If true, this action is gated by the 5-step contact requirement */
+  contactGated?: boolean
 }
 
 const STAGE_ACTIONS: Partial<Record<LeadStage, ActionDef[]>> = {
   new_lead: [
     { label: 'Mark Qualifying', action: 'move', variant: 'primary', targetStage: 'qualifying', adminOnly: true },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
-    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true, contactGated: true },
+    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true, contactGated: true },
   ],
   qualifying: [
     { label: 'Mark Qualified', action: 'move', variant: 'primary', targetStage: 'qualified', adminOnly: true },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true, contactGated: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
-    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true },
+    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true, contactGated: true },
   ],
   qualified: [
     { label: '📅 Schedule Visit', action: 'schedule_visit', variant: 'primary', adminOnly: true },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true, contactGated: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
-    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true },
+    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true, contactGated: true },
   ],
   site_visit_scheduled: [
     { label: '📄 Build Quote', action: 'create_quote', variant: 'primary' },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true, contactGated: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
-    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true },
+    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true, contactGated: true },
   ],
   proposal_in_progress: [
     { label: '📄 Build & Send Quote', action: 'create_quote', variant: 'success' },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true, contactGated: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
   ],
   quote_sent: [
     { label: 'Mark Signed (Manual)', action: 'agreement', variant: 'success', modal: 'agreement', adminOnly: true },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true, contactGated: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
   ],
   agreement_signed: [
@@ -76,9 +86,9 @@ const STAGE_ACTIONS: Partial<Record<LeadStage, ActionDef[]>> = {
   ],
   future_follow_up: [
     { label: 'Reopen as Qualifying', action: 'reopen_followup', variant: 'primary', modal: 'confirm_reopen', adminOnly: true },
-    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true },
+    { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true, contactGated: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
-    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true },
+    { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true, contactGated: true },
   ],
 }
 
@@ -97,9 +107,11 @@ interface Props {
   qualifyingComplete?: boolean
   onScheduleVisit?: () => void
   siteVisitComplete?: boolean
+  /** Number of call attempts logged for this lead — gates Lost/DND buttons */
+  callAttemptCount?: number
 }
 
-export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingComplete, onScheduleVisit, siteVisitComplete }: Props) {
+export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingComplete, onScheduleVisit, siteVisitComplete, callAttemptCount = 0 }: Props) {
   const { user, profile, role } = useAuth()
   const [activeModal, setActiveModal] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
@@ -113,6 +125,11 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
   const actions = isSalesRep
     ? allActions.filter(a => !a.adminOnly)
     : allActions
+
+  // Contact gate: is this stage gated, and are we below the threshold?
+  const isGatedStage = CONTACT_GATED_STAGES.includes(lead.stage)
+  const attemptsRemaining = Math.max(0, REQUIRED_CONTACT_ATTEMPTS - callAttemptCount)
+  const contactGateActive = isGatedStage && attemptsRemaining > 0
 
   if (!user) return null
 
@@ -129,6 +146,12 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
 
   async function handleAction(actionDef: ActionDef) {
     setError('')
+
+    // Block contact-gated actions when gate is active
+    if (actionDef.contactGated && contactGateActive) {
+      setError(`Log ${attemptsRemaining} more call attempt${attemptsRemaining !== 1 ? 's' : ''} before marking this lead as ${actionDef.action === 'lost' ? 'Lost' : 'DND'}.`)
+      return
+    }
 
     if (actionDef.action === 'create_quote') {
       if (lead.stage === 'site_visit_scheduled' && !siteVisitComplete) {
@@ -238,23 +261,60 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
         </div>
       )}
 
+      {/* ── Contact Gate Step Counter ────────────────────────────── */}
+      {contactGateActive && !isSalesRep && (
+        <div className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ backgroundColor: 'rgba(34,211,238,0.08)', border: '1px solid rgba(34,211,238,0.25)' }}>
+          <div className="flex items-center gap-1.5">
+            {Array.from({ length: REQUIRED_CONTACT_ATTEMPTS }).map((_, i) => (
+              <div
+                key={i}
+                style={{
+                  width: 8, height: 8, borderRadius: '50%',
+                  backgroundColor: i < callAttemptCount ? '#22d3ee' : 'rgba(100,116,139,0.3)',
+                  transition: 'background-color 0.2s',
+                }}
+              />
+            ))}
+          </div>
+          <div>
+            <span className="text-xs font-bold" style={{ color: '#22d3ee' }}>
+              📞 STEP {Math.min(callAttemptCount + 1, REQUIRED_CONTACT_ATTEMPTS)} OF {REQUIRED_CONTACT_ATTEMPTS}
+            </span>
+            <span className="text-xs ml-2" style={{ color: '#94a3b8' }}>
+              {attemptsRemaining} more call{attemptsRemaining !== 1 ? 's' : ''} before Lost/DND unlocks
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Gate complete indicator */}
+      {isGatedStage && !contactGateActive && callAttemptCount > 0 && !isSalesRep && (
+        <div className="flex items-center gap-2 rounded-lg px-3 py-1.5" style={{ backgroundColor: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)' }}>
+          <span className="text-xs font-semibold" style={{ color: '#4ade80' }}>
+            ✓ {callAttemptCount} call{callAttemptCount !== 1 ? 's' : ''} logged — all actions unlocked
+          </span>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-1.5">
         {actions.map((actionDef) => {
           const isDisabled = actionDef.disabled?.(lead)
+          const isContactLocked = actionDef.contactGated && contactGateActive
           const vs = VARIANT_STYLES[actionDef.variant] || VARIANT_STYLES.secondary
           return (
             <button
               key={actionDef.action + (actionDef.targetStage || '')}
-              onClick={() => !isDisabled && handleAction(actionDef)}
-              disabled={!!pendingAction || isDisabled}
+              onClick={() => !isDisabled && !isContactLocked && handleAction(actionDef)}
+              disabled={!!pendingAction || isDisabled || isContactLocked}
+              title={isContactLocked ? `Log ${attemptsRemaining} more call attempt${attemptsRemaining !== 1 ? 's' : ''} to unlock` : undefined}
               style={{
-                backgroundColor: isDisabled ? 'rgba(74,222,128,0.1)' : vs.bg,
-                color: isDisabled ? 'rgba(74,222,128,0.6)' : vs.color,
-                border: `1px solid ${isDisabled ? 'rgba(74,222,128,0.2)' : vs.border}`,
+                backgroundColor: isDisabled ? 'rgba(74,222,128,0.1)' : isContactLocked ? 'rgba(100,116,139,0.08)' : vs.bg,
+                color: isDisabled ? 'rgba(74,222,128,0.6)' : isContactLocked ? 'rgba(100,116,139,0.5)' : vs.color,
+                border: `1px solid ${isDisabled ? 'rgba(74,222,128,0.2)' : isContactLocked ? 'rgba(100,116,139,0.2)' : vs.border}`,
               }}
-              className={`text-xs px-2.5 py-1.5 rounded-lg font-medium transition-colors ${pendingAction ? 'opacity-50 cursor-not-allowed' : ''}`}
+              className={`text-xs px-2.5 py-1.5 rounded-lg font-medium transition-colors ${pendingAction || isContactLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              {isDisabled ? actionDef.disabledLabel : actionDef.label}
+              {isContactLocked ? `🔒 ${actionDef.label}` : isDisabled ? actionDef.disabledLabel : actionDef.label}
             </button>
           )
         })}
