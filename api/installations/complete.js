@@ -233,16 +233,20 @@ module.exports = async function handler(req, res) {
         .is('job_id', null);
     }
 
-    // ── 5c. Set billing_day on active contract ────────────────────────
+    // ── 5c. Set billing_day + retail_price_snapshot on active contract ─
+    // GAP 3: retail_price_snapshot = catalog retail price (for buyout calculation)
     if (customerId) {
       const billingDay = new Date().getDate();
       try {
         await supabase
           .from('contracts')
-          .update({ billing_day: billingDay })
+          .update({
+            billing_day: billingDay,
+            retail_price_snapshot: product?.retail_price ? parseFloat(product.retail_price) : null,
+          })
           .eq('customer_id', customerId)
           .eq('status', 'active');
-      } catch(e) { console.error('[BEST-EFFORT] billing_day update:', e.message); }
+      } catch(e) { console.error('[BEST-EFFORT] billing_day + retail_price update:', e.message); }
     }
 
     // ── 5d. Move lead to 'won' ────────────────────────────────────────
@@ -266,7 +270,16 @@ module.exports = async function handler(req, res) {
     //       That FK points to the product_catalog table (NOT products).
     //       Writing a products.id value causes FK constraint violation → silent rollback.
     //       name_snapshot, sku_snapshot, retail_price_snapshot are plain columns — safe to write.
+    //
+    // GAP 3 FIX: retail_price_snapshot logic
+    //   - Rental: always use product.retail_price (catalog price) — needed for buyout calculation
+    //   - Purchase: use quotedUnitPrice (what customer paid) → fallback to catalog price
     let installedSystemId = null;
+
+    // Compute the correct retail_price_snapshot based on ownership type
+    const retailPriceForSnapshot = ownershipType === 'rented'
+      ? (product?.retail_price ? parseFloat(product.retail_price) : null)
+      : (quotedUnitPrice || (product?.retail_price ? parseFloat(product.retail_price) : null));
 
     if (customerId) {
       const today = new Date().toISOString().split('T')[0];
@@ -294,7 +307,6 @@ module.exports = async function handler(req, res) {
         installedSystemId = existingRow.id;
         // UPDATE path — correct ownership and product snapshots on re-run
         // NOTE: product_catalog_id intentionally NOT written here (FK mismatch)
-        // retail_price_snapshot = quoted price (what customer pays), not catalog price
         const { error: updateSysErr } = await supabase
           .from('installed_systems')
           .update({
@@ -303,7 +315,7 @@ module.exports = async function handler(req, res) {
             monthly_amount_snapshot: monthlyAmount,
             name_snapshot:           product?.name || nameMap[job.system_type] || job.system_type?.replace(/_/g, ' ') || 'Installed System',
             sku_snapshot:            product?.sku || null,
-            retail_price_snapshot:   quotedUnitPrice || product?.retail_price || null,
+            retail_price_snapshot:   retailPriceForSnapshot,
           })
           .eq('id', existingRow.id);
 
@@ -314,14 +326,14 @@ module.exports = async function handler(req, res) {
             `[COMPLETE][S6] UPDATED installed_system ${existingRow.id}:`,
             `ownership=${ownershipType} (was ${existingRow.ownership_type}),`,
             `product=${product?.name || 'none'},`,
-            `source=${ownershipSource}`
+            `source=${ownershipSource},`,
+            `retail_price_snapshot=${retailPriceForSnapshot}`
           );
         }
 
       } else {
         // INSERT path — create new installed_systems row
         // NOTE: product_catalog_id intentionally NOT written here (FK mismatch)
-        // retail_price_snapshot = quoted price (what customer pays), not catalog price
         const { data: sysRecord, error: sysError } = await supabase
           .from('installed_systems')
           .insert({
@@ -331,7 +343,7 @@ module.exports = async function handler(req, res) {
             sku_snapshot:            product?.sku || null,
             ownership_type:          ownershipType,
             install_date:            today,
-            retail_price_snapshot:   quotedUnitPrice || product?.retail_price || null,
+            retail_price_snapshot:   retailPriceForSnapshot,
             install_fee_snapshot:    installFee || null,
             monthly_amount_snapshot: monthlyAmount,
             is_active:               true,
@@ -342,7 +354,7 @@ module.exports = async function handler(req, res) {
 
         if (!sysError && sysRecord) {
           installedSystemId = sysRecord.id;
-          console.log(`[COMPLETE][S6] INSERTED installed_system ${sysRecord.id}: ownership=${ownershipType}, product=${product?.name || 'fallback'}`);
+          console.log(`[COMPLETE][S6] INSERTED installed_system ${sysRecord.id}: ownership=${ownershipType}, product=${product?.name || 'fallback'}, retail_price_snapshot=${retailPriceForSnapshot}`);
         } else {
           console.error('[COMPLETE][S6] INSERT installed_systems FAILED:', sysError?.message);
         }
