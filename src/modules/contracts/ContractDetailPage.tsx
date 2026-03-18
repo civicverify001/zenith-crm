@@ -142,11 +142,22 @@ function BuyoutCalculatorCard({ contract, payments }: { contract: RealContract; 
   if (contract.type !== 'rental') return null
 
   const retailPrice = contract.retail_price_snapshot
-  const succeededPayments = payments.filter(p => p.status === 'succeeded')
-  const totalPaid = succeededPayments.reduce((sum, p) => sum + Number(p.amount), 0)
-  const paymentCount = succeededPayments.length
-  const creditFromPayments = totalPaid * 0.5
-  const buyoutAmount = retailPrice ? Math.max(0, retailPrice - creditFromPayments) : null
+
+  // Split payments by type for correct credit calculation
+  const rentalPayments = payments.filter(p =>
+    p.status === 'succeeded' &&
+    ['first_month', 'rental_payment', 'autopay', 'manual_charge'].includes(p.type)
+  )
+  const installFeePayments = payments.filter(p =>
+    p.status === 'succeeded' && p.type === 'install_fee'
+  )
+
+  const totalRental = rentalPayments.reduce((sum, p) => sum + Number(p.amount), 0)
+  const totalInstall = installFeePayments.reduce((sum, p) => sum + Number(p.amount), 0)
+  const rentalCredit = totalRental * 0.5   // 50% of rental payments
+  const installCredit = totalInstall       // 100% of install fee
+  const totalCredit = rentalCredit + installCredit
+  const buyoutAmount = retailPrice ? Math.max(0, retailPrice - totalCredit) : null
 
   return (
     <Card style={{ border: '1px solid #0ea5e933' }}>
@@ -159,24 +170,35 @@ function BuyoutCalculatorCard({ contract, payments }: { contract: RealContract; 
         </p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+
           {/* Retail price */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 13, color: '#94a3b8' }}>Retail Price (catalog)</span>
             <span style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>{fmt(retailPrice)}</span>
           </div>
 
-          {/* Total paid */}
+          {/* Rental payments at 50% */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, color: '#94a3b8' }}>Total Payments Made</span>
+            <span style={{ fontSize: 13, color: '#94a3b8' }}>
+              Rental Payments ({rentalPayments.length}) × 50%
+            </span>
             <span style={{ fontSize: 14, fontWeight: 500, color: '#22c55e' }}>
-              {fmt(totalPaid)} <span style={{ fontSize: 11, color: '#64748b' }}>({paymentCount} payments)</span>
+              – {fmt(rentalCredit)}
             </span>
           </div>
 
-          {/* 50% credit */}
+          {/* Install fee at 100% */}
+          {totalInstall > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 13, color: '#94a3b8' }}>Install Fee × 100%</span>
+              <span style={{ fontSize: 14, fontWeight: 500, color: '#22c55e' }}>– {fmt(installCredit)}</span>
+            </div>
+          )}
+
+          {/* Total credit */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, color: '#94a3b8' }}>50% Payment Credit</span>
-            <span style={{ fontSize: 14, fontWeight: 500, color: '#f59e0b' }}>– {fmt(creditFromPayments)}</span>
+            <span style={{ fontSize: 13, color: '#94a3b8' }}>Total Credit Applied</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: '#f59e0b' }}>– {fmt(totalCredit)}</span>
           </div>
 
           {/* Divider */}
@@ -191,7 +213,7 @@ function BuyoutCalculatorCard({ contract, payments }: { contract: RealContract; 
           {/* Formula explanation */}
           <div style={{ background: '#0ea5e90a', border: '1px solid #0ea5e922', borderRadius: 8, padding: '10px 12px', marginTop: 4 }}>
             <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
-              Formula: Retail Price – (50% × Total Payments) = Buyout Amount
+              Formula: Retail Price – (50% × Rental Payments) – (100% × Install Fee) = Buyout Amount
             </p>
           </div>
         </div>
@@ -199,7 +221,6 @@ function BuyoutCalculatorCard({ contract, payments }: { contract: RealContract; 
     </Card>
   )
 }
-
 // ─── Main Page ─────────────────────────────────────────────────
 
 export default function ContractDetailPage() {
