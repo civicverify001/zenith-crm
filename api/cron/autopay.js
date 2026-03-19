@@ -3,12 +3,11 @@
 // Section 1: Charges rental contracts on their billing_day
 // Section 2: Charges service plans where next_billing_date <= today
 //            + Creates fulfillment_requests for tech_visit plans (Phase 3.5)
+// Section 3: Retries payment_failed plans when new card on file
 //
-// Add to vercel.json:
 // {
 //   "crons": [{ "path": "/api/cron/autopay", "schedule": "0 11 * * *" }]
 // }
-// (11 UTC = 6 AM EST)
 
 import { createClient } from '@supabase/supabase-js'
 import Stripe from 'stripe'
@@ -19,6 +18,9 @@ const supabase = createClient(
 )
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-12-18.acacia' })
+
+const OPENPHONE_KEY = process.env.OPENPHONE_API_KEY || ''
+const OPENPHONE_NUM = process.env.OPENPHONE_NUMBER  || '+14633005100'
 
 // ─── Resend email helper ──────────────────────────────────────────
 async function sendEmail({ to, subject, html, customer_id, email_type, document_id = null }) {
@@ -41,10 +43,7 @@ async function sendEmail({ to, subject, html, customer_id, email_type, document_
     const sent = res.ok
 
     await supabase.from('email_log').insert({
-      customer_id,
-      email_type,
-      to_address: to,
-      subject,
+      customer_id, email_type, to_address: to, subject,
       status: sent ? 'sent' : 'failed',
       external_id: data?.id || null,
       document_id,
@@ -57,10 +56,32 @@ async function sendEmail({ to, subject, html, customer_id, email_type, document_
     console.error('sendEmail error:', e.message)
     await supabase.from('email_log').insert({
       customer_id, email_type, to_address: to, subject,
-      status: 'failed', created_at: now,
+      status: 'failed', created_at: new Date().toISOString(),
     }).then(() => {}).catch(() => {})
     return false
   }
+}
+
+// ─── OpenPhone SMS helper — fire-and-forget ───────────────────────
+async function sendSms(to, message, customerId) {
+  if (!OPENPHONE_KEY || !to) return
+  try {
+    const digits = to.replace(/\D/g, '')
+    const e164   = digits.length === 10 ? `+1${digits}` : `+${digits}`
+    const resp   = await fetch('https://api.openphone.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': OPENPHONE_KEY },
+      body: JSON.stringify({ content: message, from: OPENPHONE_NUM, to: [e164] }),
+    })
+    const data = await resp.json()
+    await supabase.from('communications_log').insert({
+      entity_type: 'customer', entity_id: customerId, customer_id: customerId,
+      direction: 'outbound', channel: 'sms', body: message,
+      status: resp.ok ? 'sent' : 'failed',
+      external_id: data?.data?.id || null,
+      created_at: new Date().toISOString(),
+    }).then(() => {}).catch(() => {})
+  } catch (e) { console.error('[autopay] sendSms error:', e.message) }
 }
 
 // ─── Email templates ──────────────────────────────────────────────
@@ -258,27 +279,29 @@ export default async function handler(req, res) {
             actor_type: 'system', metadata: { amount: contract.monthly_amount, payment_intent: paymentIntent?.id },
           })
 
-          // ── SEND: Payment receipt to customer ────────────────
+          // ── EMAIL: Payment receipt ────────────────────────────
           if (customer.email) {
             const nextBillingDate = new Date()
             nextBillingDate.setMonth(nextBillingDate.getMonth() + 1)
             const nextStr = nextBillingDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-
             await sendEmail({
               to: customer.email,
               subject: `Payment received — $${contract.monthly_amount.toFixed(2)} — Zenith Pure Solutions`,
               html: paymentReceiptHtml({
-                customerName: customer.full_name,
-                amount: contract.monthly_amount,
-                description,
-                contractNumber: contract.contract_number,
-                nextDate: nextStr,
-                cardLast4: paymentMethod.last_four,
-                isServicePlan: false,
+                customerName: customer.full_name, amount: contract.monthly_amount,
+                description, contractNumber: contract.contract_number,
+                nextDate: nextStr, cardLast4: paymentMethod.last_four, isServicePlan: false,
               }),
-              customer_id: customer.id,
-              email_type: 'payment_receipt',
+              customer_id: customer.id, email_type: 'payment_receipt',
             })
+          }
+
+          // ── SMS: Payment receipt (fire-and-forget) ────────────
+          if (customer.phone) {
+            const firstName = (customer.full_name || 'there').split(' ')[0]
+            await sendSms(customer.phone,
+              `Hi ${firstName}, your $${contract.monthly_amount.toFixed(2)} rental payment was received. Thank you! — Zenith Pure Solutions`,
+              customer.id)
           }
 
         } else {
@@ -286,7 +309,7 @@ export default async function handler(req, res) {
           await supabase.from('follow_up_tasks').insert({
             entity_type: 'customer', entity_id: customer.id,
             title: `Failed payment — ${customer.full_name}`,
-            description: `Autopay failed for contract ${contract.contract_number || ''}. Amount: $${contract.monthly_amount}. Reason: ${results.errors[results.errors.length - 1]?.reason || 'unknown'}. Contact customer to update payment method.`,
+            description: `Autopay failed for contract ${contract.contract_number || ''}. Amount: $${contract.monthly_amount}. Reason: ${results.errors[results.errors.length - 1]?.reason || 'unknown'}.`,
             due_date: today, status: 'pending', priority: 'urgent',
           })
           await supabase.from('document_audit_log').insert({
@@ -294,23 +317,26 @@ export default async function handler(req, res) {
             actor_type: 'system', metadata: { amount: contract.monthly_amount, reason: results.errors[results.errors.length - 1]?.reason },
           })
 
-          // ── SEND: Failed payment notice to customer ───────────
+          // ── EMAIL: Failed payment notice ──────────────────────
           if (customer.email) {
             await sendEmail({
               to: customer.email,
               subject: `Payment failed — action required — Zenith Pure Solutions`,
               html: paymentFailedHtml({
-                customerName: customer.full_name,
-                amount: contract.monthly_amount,
-                description,
-                contractNumber: contract.contract_number,
-                attemptCount: 1,
-                isFinal: false,
-                isServicePlan: false,
+                customerName: customer.full_name, amount: contract.monthly_amount,
+                description, contractNumber: contract.contract_number,
+                attemptCount: 1, isFinal: false, isServicePlan: false,
               }),
-              customer_id: customer.id,
-              email_type: 'payment_failed',
+              customer_id: customer.id, email_type: 'payment_failed',
             })
+          }
+
+          // ── SMS: Failed payment notice (fire-and-forget) ──────
+          if (customer.phone) {
+            const firstName = (customer.full_name || 'there').split(' ')[0]
+            await sendSms(customer.phone,
+              `Hi ${firstName}, your autopay of $${contract.monthly_amount.toFixed(2)} failed. Please call us at (317) 690-4172 to update your payment method. — Zenith Pure Solutions`,
+              customer.id)
           }
         }
 
@@ -344,8 +370,9 @@ export default async function handler(req, res) {
       for (const plan of duePlans) {
         results.plans_processed++
         try {
+          // Added phone to customer select for SMS
           const { data: customer } = await supabase
-            .from('customers').select('id, full_name, email, stripe_customer_id')
+            .from('customers').select('id, full_name, email, phone, stripe_customer_id')
             .eq('id', plan.customer_id).single()
 
           if (!customer || !customer.stripe_customer_id) {
@@ -390,7 +417,6 @@ export default async function handler(req, res) {
             results.plans_errors.push({ plan_id: plan.id, customer_name: customer.full_name, reason: stripeErr.message, stripe_code: stripeErr.code })
           }
 
-          // Insert payment_transactions and capture the ID for fulfillment linking
           const { data: txRecord } = await supabase.from('payment_transactions').insert({
             customer_id: customer.id, payment_method_id: paymentMethod.id,
             amount: plan.price, status: chargeSucceeded ? 'succeeded' : 'failed',
@@ -420,13 +446,7 @@ export default async function handler(req, res) {
             // ══════════════════════════════════════════════════
             // PHASE 3.5: Create fulfillment request for tech visit plans
             // ══════════════════════════════════════════════════
-            // After successful charge, if this plan's fulfillment_type is
-            // tech_visit or maintenance_visit, create a fulfillment_requests
-            // row so front desk knows to schedule the service visit.
-            // Shipment-type plans are handled by api/cron/fulfillment.js.
-            // ══════════════════════════════════════════════════
             const fulfillmentType = planFulfillmentMap[plan.plan_id]
-
             if (fulfillmentType === 'tech_visit' || fulfillmentType === 'maintenance_visit') {
               try {
                 const { error: frError } = await supabase
@@ -440,28 +460,21 @@ export default async function handler(req, res) {
                     due_date: today,
                     notes: `Auto-created by autopay after successful ${planName} charge`,
                   })
-
                 if (frError) {
-                  // Partial unique index catches duplicates — log but don't fail
                   if (frError.code === '23505') {
-                    console.log(`[autopay] Fulfillment request already exists for plan ${plan.id} on ${today} — skipping`)
+                    console.log(`[autopay] Fulfillment request already exists for plan ${plan.id} — skipping`)
                   } else {
                     console.error(`[autopay] Failed to create fulfillment request for plan ${plan.id}:`, frError.message)
                   }
                 } else {
                   results.fulfillment_created++
-                  console.log(`[autopay] Created fulfillment request for plan ${plan.id} (${fulfillmentType})`)
                 }
               } catch (frErr) {
-                // Non-blocking — charge already succeeded
                 console.error('[autopay] Fulfillment request error:', frErr.message)
               }
             }
-            // ══════════════════════════════════════════════════
-            // END PHASE 3.5 PATCH
-            // ══════════════════════════════════════════════════
 
-            // ── SEND: Service plan receipt ────────────────────
+            // ── EMAIL: Service plan receipt ───────────────────
             if (customer.email) {
               const nextStr = isOneTime ? null : (nextDate
                 ? new Date(nextDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
@@ -470,17 +483,20 @@ export default async function handler(req, res) {
                 to: customer.email,
                 subject: `Payment received — ${planName} — Zenith Pure Solutions`,
                 html: paymentReceiptHtml({
-                  customerName: customer.full_name,
-                  amount: plan.price,
-                  description,
-                  contractNumber: planName,
-                  nextDate: nextStr,
-                  cardLast4: paymentMethod.last_four,
-                  isServicePlan: true,
+                  customerName: customer.full_name, amount: plan.price,
+                  description, contractNumber: planName,
+                  nextDate: nextStr, cardLast4: paymentMethod.last_four, isServicePlan: true,
                 }),
-                customer_id: customer.id,
-                email_type: 'payment_receipt',
+                customer_id: customer.id, email_type: 'payment_receipt',
               })
+            }
+
+            // ── SMS: Service plan receipt (fire-and-forget) ───
+            if (customer.phone) {
+              const firstName = (customer.full_name || 'there').split(' ')[0]
+              await sendSms(customer.phone,
+                `Hi ${firstName}, your $${plan.price.toFixed(2)} ${planName} payment was received. Thank you! — Zenith Pure Solutions`,
+                customer.id)
             }
 
           } else {
@@ -505,23 +521,27 @@ export default async function handler(req, res) {
               actor_id: null, metadata: { plan_id: plan.id, amount: plan.price, failed_count: newFailCount, escalated: shouldEscalate },
             }).then(() => {}).catch(() => {})
 
-            // ── SEND: Service plan failure notice ─────────────
+            // ── EMAIL: Service plan failure notice ────────────
             if (customer.email) {
               await sendEmail({
                 to: customer.email,
                 subject: `Payment failed — ${planName} — action required — Zenith Pure Solutions`,
                 html: paymentFailedHtml({
-                  customerName: customer.full_name,
-                  amount: plan.price,
-                  description,
-                  contractNumber: planName,
-                  attemptCount: newFailCount,
-                  isFinal: shouldEscalate,
-                  isServicePlan: true,
+                  customerName: customer.full_name, amount: plan.price,
+                  description, contractNumber: planName,
+                  attemptCount: newFailCount, isFinal: shouldEscalate, isServicePlan: true,
                 }),
-                customer_id: customer.id,
-                email_type: 'payment_failed',
+                customer_id: customer.id, email_type: 'payment_failed',
               })
+            }
+
+            // ── SMS: Service plan failure (fire-and-forget) ───
+            if (customer.phone) {
+              const firstName = (customer.full_name || 'there').split(' ')[0]
+              const msg = shouldEscalate
+                ? `Hi ${firstName}, your ${planName} payment failed after 3 attempts. Your plan is paused. Please call us at (317) 690-4172. — Zenith Pure Solutions`
+                : `Hi ${firstName}, your ${planName} payment of $${plan.price.toFixed(2)} failed. Please call us at (317) 690-4172 to update your card. — Zenith Pure Solutions`
+              await sendSms(customer.phone, msg, customer.id)
             }
           }
 
@@ -531,118 +551,114 @@ export default async function handler(req, res) {
         }
       }
     }
-// ══════════════════════════════════════════════════════════
-// SECTION 3: RETRY PAYMENT_FAILED PLANS
-// Retries plans suspended after 3 failures when a new
-// payment method is on file. Reactivates on success.
-// ══════════════════════════════════════════════════════════
 
-const { data: failedPlans } = await supabase
-  .from('customer_service_plans')
-  .select('id, customer_id, plan_id, billing_cycle, price, next_billing_date, failed_billing_count')
-  .eq('status', 'payment_failed')
+    // ══════════════════════════════════════════════════════════
+    // SECTION 3: RETRY PAYMENT_FAILED PLANS
+    // ══════════════════════════════════════════════════════════
 
-if (failedPlans && failedPlans.length > 0) {
-  for (const plan of failedPlans) {
-    try {
-      const { data: customer } = await supabase
-        .from('customers').select('id, full_name, email, stripe_customer_id')
-        .eq('id', plan.customer_id).single()
+    const { data: failedPlans } = await supabase
+      .from('customer_service_plans')
+      .select('id, customer_id, plan_id, billing_cycle, price, next_billing_date, failed_billing_count')
+      .eq('status', 'payment_failed')
 
-      if (!customer?.stripe_customer_id) continue
+    if (failedPlans && failedPlans.length > 0) {
+      const planIds = [...new Set(failedPlans.map(p => p.plan_id))]
+      const { data: retryTemplates } = await supabase.from('service_plans').select('id, name').in('id', planIds)
+      const retryNameMap = {}
+      if (retryTemplates) for (const t of retryTemplates) retryNameMap[t.id] = t.name
 
-      // Only retry if a valid payment method is on file
-      const { data: paymentMethod } = await supabase
-        .from('payment_methods').select('id, external_id, last_four')
-        .eq('customer_id', plan.customer_id).eq('is_default', true).eq('status', 'active').single()
+      for (const plan of failedPlans) {
+        try {
+          const { data: customer } = await supabase
+            .from('customers').select('id, full_name, email, phone, stripe_customer_id')
+            .eq('id', plan.customer_id).single()
 
-      if (!paymentMethod) continue // no card — skip, wait for admin to add one
+          if (!customer?.stripe_customer_id) continue
 
-      const planName = planNameMap[plan.plan_id] || 'Service Plan'
-      const amountCents = Math.round(plan.price * 100)
-      const description = `${planName} — retry charge`
+          const { data: paymentMethod } = await supabase
+            .from('payment_methods').select('id, external_id, last_four')
+            .eq('customer_id', plan.customer_id).eq('is_default', true).eq('status', 'active').single()
 
-      let chargeSucceeded = false
-      let paymentIntent = null
+          if (!paymentMethod) continue
 
-      try {
-        paymentIntent = await stripe.paymentIntents.create({
-          amount: amountCents, currency: 'usd',
-          customer: customer.stripe_customer_id,
-          payment_method: paymentMethod.external_id,
-          off_session: true, confirm: true, description,
-          metadata: { service_plan_id: plan.id, customer_id: customer.id, type: 'service_plan_retry' },
-        })
-        chargeSucceeded = paymentIntent.status === 'succeeded'
-      } catch (stripeErr) {
-        chargeSucceeded = false
-      }
+          const planName = retryNameMap[plan.plan_id] || 'Service Plan'
+          const amountCents = Math.round(plan.price * 100)
+          const description = `${planName} — retry charge`
+          let chargeSucceeded = false
+          let paymentIntent = null
 
-      await supabase.from('payment_transactions').insert({
-        customer_id: customer.id, payment_method_id: paymentMethod.id,
-        amount: plan.price, status: chargeSucceeded ? 'succeeded' : 'failed',
-        type: 'service_plan_retry', external_id: paymentIntent?.id || null, description,
-        attempted_at: new Date().toISOString(),
-        completed_at: chargeSucceeded ? new Date().toISOString() : null,
-      })
+          try {
+            paymentIntent = await stripe.paymentIntents.create({
+              amount: amountCents, currency: 'usd',
+              customer: customer.stripe_customer_id,
+              payment_method: paymentMethod.external_id,
+              off_session: true, confirm: true, description,
+              metadata: { service_plan_id: plan.id, customer_id: customer.id, type: 'service_plan_retry' },
+            })
+            chargeSucceeded = paymentIntent.status === 'succeeded'
+          } catch (stripeErr) {
+            chargeSucceeded = false
+          }
 
-      if (chargeSucceeded) {
-        // Reactivate plan + advance billing date
-        const nextDate = advanceBillingDate(today, plan.billing_cycle)
-        await supabase.from('customer_service_plans').update({
-          status: 'active',
-          failed_billing_count: 0,
-          last_billed_at: new Date().toISOString(),
-          next_billing_date: nextDate,
-        }).eq('id', plan.id)
-
-        await supabase.from('customer_activity_log').insert({
-          customer_id: plan.customer_id, event_type: 'service_plan_retry_succeeded',
-          title: `Payment retry succeeded: ${planName} — $${plan.price} — plan reactivated`,
-          actor_id: null, metadata: { plan_id: plan.id, amount: plan.price },
-        }).then(() => {}).catch(() => {})
-
-        if (customer.email) {
-          await sendEmail({
-            to: customer.email,
-            subject: `Payment received — ${planName} — Zenith Pure Solutions`,
-            html: paymentReceiptHtml({
-              customerName: customer.full_name,
-              amount: plan.price,
-              description: `${planName} — account reactivated`,
-              contractNumber: planName,
-              nextDate: nextDate ? new Date(nextDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : null,
-              cardLast4: paymentMethod.last_four,
-              isServicePlan: true,
-            }),
-            customer_id: customer.id,
-            email_type: 'payment_receipt',
+          await supabase.from('payment_transactions').insert({
+            customer_id: customer.id, payment_method_id: paymentMethod.id,
+            amount: plan.price, status: chargeSucceeded ? 'succeeded' : 'failed',
+            type: 'service_plan_retry', external_id: paymentIntent?.id || null, description,
+            attempted_at: new Date().toISOString(),
+            completed_at: chargeSucceeded ? new Date().toISOString() : null,
           })
+
+          if (chargeSucceeded) {
+            const nextDate = advanceBillingDate(today, plan.billing_cycle)
+            await supabase.from('customer_service_plans').update({
+              status: 'active', failed_billing_count: 0,
+              last_billed_at: new Date().toISOString(), next_billing_date: nextDate,
+            }).eq('id', plan.id)
+
+            await supabase.from('customer_activity_log').insert({
+              customer_id: plan.customer_id, event_type: 'service_plan_retry_succeeded',
+              title: `Payment retry succeeded: ${planName} — $${plan.price} — plan reactivated`,
+              actor_id: null, metadata: { plan_id: plan.id, amount: plan.price },
+            }).then(() => {}).catch(() => {})
+
+            if (customer.email) {
+              await sendEmail({
+                to: customer.email,
+                subject: `Payment received — ${planName} — Zenith Pure Solutions`,
+                html: paymentReceiptHtml({
+                  customerName: customer.full_name, amount: plan.price,
+                  description: `${planName} — account reactivated`, contractNumber: planName,
+                  nextDate: nextDate ? new Date(nextDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : null,
+                  cardLast4: paymentMethod.last_four, isServicePlan: true,
+                }),
+                customer_id: customer.id, email_type: 'payment_receipt',
+              })
+            }
+
+            if (customer.phone) {
+              const firstName = (customer.full_name || 'there').split(' ')[0]
+              await sendSms(customer.phone,
+                `Hi ${firstName}, your ${planName} payment was successful and your plan is reactivated! Thank you. — Zenith Pure Solutions`,
+                customer.id)
+            }
+
+            results.plans_succeeded++
+          } else {
+            await supabase.from('customer_activity_log').insert({
+              customer_id: plan.customer_id, event_type: 'service_plan_retry_failed',
+              title: `Payment retry failed: ${planName} — manual action required`,
+              actor_id: null, metadata: { plan_id: plan.id },
+            }).then(() => {}).catch(() => {})
+            results.plans_failed++
+          }
+
+        } catch (err) {
+          console.error('[autopay] Section 3 retry error:', err.message)
         }
-
-        results.plans_succeeded++
-
-      } else {
-        // Still failing — keep payment_failed, notify admin
-        await supabase.from('customer_activity_log').insert({
-          customer_id: plan.customer_id, event_type: 'service_plan_retry_failed',
-          title: `Payment retry failed: ${planName} — manual action required`,
-          actor_id: null, metadata: { plan_id: plan.id },
-        }).then(() => {}).catch(() => {})
-
-        results.plans_failed++
       }
-
-    } catch (err) {
-      console.error('[autopay] Section 3 retry error:', err.message)
     }
-  }
-}
 
-// ══════════════════════════════════════════════════════════
-// END SECTION 3
-// ══════════════════════════════════════════════════════════
-    // ── Internal summary log ──────────────────────────────────
+    // ── Internal summary log ──────────────────────────────────────
     const totalProcessed = results.processed + results.plans_processed
     if (totalProcessed > 0) {
       const subject = [
