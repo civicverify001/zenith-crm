@@ -77,17 +77,16 @@ export default async function handler(req, res) {
     }
 
     const phoneNumbers = await phoneNumbersRes.json()
-    const ourNumber = (phoneNumbers.data || []).find(pn =>
-      pn.formattedNumber === OPENPHONE_NUMBER ||
-      pn.number === OPENPHONE_NUMBER ||
-      pn.formattedNumber?.replace(/\D/g, '') === OPENPHONE_NUMBER.replace(/\D/g, '')
-    )
+    const opDigits = OPENPHONE_NUMBER.replace(/\D/g, '')
+    const ourNumber = (phoneNumbers.data || []).find(pn => {
+      const pnDigits = (pn.formattedNumber || pn.number || pn.phoneNumber || '').replace(/\D/g, '')
+      return pnDigits === opDigits || pnDigits.endsWith(opDigits) || opDigits.endsWith(pnDigits)
+    })
 
     if (!ourNumber) {
-      console.error('[send-sms] Phone number not found in OpenPhone account:', OPENPHONE_NUMBER)
+      console.error('[send-sms] Phone number not found. Looking for:', opDigits, 'Available:', JSON.stringify((phoneNumbers.data || []).map((p: any) => ({ id: p.id, num: p.formattedNumber || p.number || p.phoneNumber }))))
       return res.status(500).json({ error: 'OpenPhone number not found in account' })
     }
-
     // Send the message
     const sendRes = await fetch('https://api.openphone.com/v1/messages', {
       method: 'POST',
