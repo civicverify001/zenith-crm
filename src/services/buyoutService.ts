@@ -33,7 +33,9 @@ export async function calculateBuyout(contractId: string, calculatedBy: string):
     .eq('status', 'succeeded')
 
   const allTxs = txs || []
-  const rentalTxs  = allTxs.filter((t: any) => t.type === 'autopay' || t.type === 'rental')
+  const rentalTxs = allTxs.filter((t: any) => 
+  t.type === 'autopay' || t.type === 'rental' || t.type === 'first_month' || t.type === 'rental_payment'
+)
   const installTxs = allTxs.filter((t: any) => t.type === 'install_fee')
 
   const totalPaid        = rentalTxs.reduce((sum: number, t: any) => sum + Number(t.amount), 0)
