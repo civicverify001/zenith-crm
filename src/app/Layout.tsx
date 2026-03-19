@@ -27,6 +27,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/quotes',        label: 'Quotes',       icon: '📋', hex: '#38bdf8', group: 'Sales',      soon: false, roles: ['admin','frontdesk','salesrep'] },
   { path: '/services',      label: 'Contracts',    icon: '📝', hex: '#818cf8', group: 'Sales',      soon: false, roles: ['admin','frontdesk'] },
   { path: '/invoices',      label: 'Invoices',     icon: '🧾', hex: '#34d399', group: 'Sales',      soon: false, roles: ['admin','frontdesk'] },
+  { path: '/invoice/new',   label: 'Quick Invoice', icon: '⚡', hex: '#fbbf24', group: 'Sales',      soon: false, roles: ['admin','frontdesk'] },
   // Operations
   { path: '/dispatch',      label: 'Dispatch',     icon: '📅', hex: '#a78bfa', group: 'Ops',        soon: false, roles: ['admin','frontdesk'] },
   { path: '/installations', label: 'Installs',     icon: '🔧', hex: '#fb923c', group: 'Ops',        soon: false, roles: ['admin','technician'] },
