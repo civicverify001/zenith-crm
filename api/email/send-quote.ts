@@ -6,6 +6,8 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 const RESEND_KEY = process.env.RESEND_API_KEY!
 const DOMAIN     = process.env.RESEND_DOMAIN || 'zenithpuresolutions.com'
 const APP_URL    = process.env.VITE_APP_URL  || 'https://zenith-crm-ten.vercel.app'
+const OPENPHONE_KEY = process.env.OPENPHONE_API_KEY || ''
+const OPENPHONE_NUM = process.env.OPENPHONE_NUMBER  || '+14633005100'
 
 const fmt     = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
 const fmtDate = (s: string | null) => s ? new Date(s).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—'
@@ -17,6 +19,28 @@ async function sendViaResend(to: string, subject: string, html: string, fromEmai
     body: JSON.stringify({ from: `${fromName} <${fromEmail}>`, reply_to: fromEmail, to: [to], subject, html }),
   })
   if (!r.ok) throw new Error(`Resend ${r.status}: ${await r.text()}`)
+}
+
+// ── SMS: fire-and-forget via OpenPhone ────────────────────────────
+async function sendSms(to: string, message: string, customerId: string) {
+  if (!OPENPHONE_KEY || !to) return
+  try {
+    const digits = to.replace(/\D/g, '')
+    const e164   = digits.length === 10 ? `+1${digits}` : `+${digits}`
+    const resp   = await fetch('https://api.openphone.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': OPENPHONE_KEY },
+      body: JSON.stringify({ content: message, from: OPENPHONE_NUM, to: [e164] }),
+    })
+    const data = await resp.json()
+    await supabase.from('communications_log').insert({
+      entity_type: 'customer', entity_id: customerId, customer_id: customerId,
+      direction: 'outbound', channel: 'sms', body: message,
+      status: resp.ok ? 'sent' : 'failed',
+      external_id: data?.data?.id || null,
+      created_at: new Date().toISOString(),
+    })
+  } catch (e: any) { console.error('[send-quote] sendSms error:', e.message) }
 }
 
 function quoteHtml(quote: any, customer: any, items: any[], senderName: string) {
@@ -155,8 +179,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from('quotes').select('*').eq('id', quoteId).single()
     if (!quote) return res.status(404).json({ error: 'Quote not found' })
 
+    // Added phone to customer select for SMS
     const { data: customer } = await supabase
-      .from('customers').select('full_name, email').eq('id', quote.customer_id).single()
+      .from('customers').select('full_name, email, phone').eq('id', quote.customer_id).single()
     if (!customer?.email) return res.status(400).json({ error: 'Customer has no email' })
 
     // FIX: read from document_line_items first (authoritative), fall back to quote_line_items
@@ -208,6 +233,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       sent_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
+
+    // ── SMS: Quote sent notification (fire-and-forget) ────────────
+    try {
+      if (customer.phone) {
+        const firstName  = (customer.full_name || 'there').split(' ')[0]
+        const publicToken = updates.public_token || quote.public_token || updates.accept_token || quote.accept_token
+        const quoteUrl   = `${APP_URL}/q/${publicToken}`
+        await sendSms(
+          customer.phone,
+          `Hi ${firstName}, your quote from Zenith Pure Solutions is ready! Review it here: ${quoteUrl}`,
+          quote.customer_id,
+        )
+      }
+    } catch (_) { /* fire-and-forget */ }
 
     // ── GAP 14: Auto-create follow-up 2 days after quote sent ────
     try {
