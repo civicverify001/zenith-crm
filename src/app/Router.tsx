@@ -15,6 +15,7 @@ import { MySchedulePage } from '../modules/schedule/MySchedulePage'
 import { ConnectCalendarPage } from '../modules/schedule/ConnectCalendarPage'
 import ShippingPage from '../modules/shipping/ShippingPage'
 import { FulfillmentPage } from '../modules/fulfillment/FulfillmentPage'
+import CommunicationsPage from '../modules/communications/CommunicationsPage'
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
@@ -201,6 +202,8 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
 
         {/* Fulfillment Queue */}
         <Route path="/fulfillment" element={guard('/fulfillment', <FulfillmentPage />)} />
+        {/* Communications / SMS */}
+        <Route path="/communications" element={guard('/communications', <CommunicationsPage />)} />
 
         {/* Accounting */}
         <Route path="/accounting" element={guard('/accounting', <AccountingPage />)} />
