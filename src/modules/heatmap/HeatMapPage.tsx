@@ -103,12 +103,13 @@ export default function HeatMapPage() {
       try {
         const { data } = await supabase
           .from('customers')
-          .select('id, full_name, phone, service_address, lifecycle_status')
+          .select('id, full_name, phone, address, service_address, lifecycle_status')
           .not('service_address', 'is', null)
           .limit(400)
         for (const c of data || []) {
-          if (c.service_address) {
-            all.push({ id: c.id, name: c.full_name, address: c.service_address, type: 'customer', lifecycle: c.lifecycle_status, phone: c.phone })
+          const addr = c.service_address || c.address
+if (addr) {
+  all.push({ id: c.id, name: c.full_name, address: addr, ...
           }
         }
       } catch { /* skip */ }
