@@ -531,7 +531,117 @@ export default async function handler(req, res) {
         }
       }
     }
+// ══════════════════════════════════════════════════════════
+// SECTION 3: RETRY PAYMENT_FAILED PLANS
+// Retries plans suspended after 3 failures when a new
+// payment method is on file. Reactivates on success.
+// ══════════════════════════════════════════════════════════
 
+const { data: failedPlans } = await supabase
+  .from('customer_service_plans')
+  .select('id, customer_id, plan_id, billing_cycle, price, next_billing_date, failed_billing_count')
+  .eq('status', 'payment_failed')
+
+if (failedPlans && failedPlans.length > 0) {
+  for (const plan of failedPlans) {
+    try {
+      const { data: customer } = await supabase
+        .from('customers').select('id, full_name, email, stripe_customer_id')
+        .eq('id', plan.customer_id).single()
+
+      if (!customer?.stripe_customer_id) continue
+
+      // Only retry if a valid payment method is on file
+      const { data: paymentMethod } = await supabase
+        .from('payment_methods').select('id, external_id, last_four')
+        .eq('customer_id', plan.customer_id).eq('is_default', true).eq('status', 'active').single()
+
+      if (!paymentMethod) continue // no card — skip, wait for admin to add one
+
+      const planName = planNameMap[plan.plan_id] || 'Service Plan'
+      const amountCents = Math.round(plan.price * 100)
+      const description = `${planName} — retry charge`
+
+      let chargeSucceeded = false
+      let paymentIntent = null
+
+      try {
+        paymentIntent = await stripe.paymentIntents.create({
+          amount: amountCents, currency: 'usd',
+          customer: customer.stripe_customer_id,
+          payment_method: paymentMethod.external_id,
+          off_session: true, confirm: true, description,
+          metadata: { service_plan_id: plan.id, customer_id: customer.id, type: 'service_plan_retry' },
+        })
+        chargeSucceeded = paymentIntent.status === 'succeeded'
+      } catch (stripeErr) {
+        chargeSucceeded = false
+      }
+
+      await supabase.from('payment_transactions').insert({
+        customer_id: customer.id, payment_method_id: paymentMethod.id,
+        amount: plan.price, status: chargeSucceeded ? 'succeeded' : 'failed',
+        type: 'service_plan_retry', external_id: paymentIntent?.id || null, description,
+        attempted_at: new Date().toISOString(),
+        completed_at: chargeSucceeded ? new Date().toISOString() : null,
+      })
+
+      if (chargeSucceeded) {
+        // Reactivate plan + advance billing date
+        const nextDate = advanceBillingDate(today, plan.billing_cycle)
+        await supabase.from('customer_service_plans').update({
+          status: 'active',
+          failed_billing_count: 0,
+          last_billed_at: new Date().toISOString(),
+          next_billing_date: nextDate,
+        }).eq('id', plan.id)
+
+        await supabase.from('customer_activity_log').insert({
+          customer_id: plan.customer_id, event_type: 'service_plan_retry_succeeded',
+          title: `Payment retry succeeded: ${planName} — $${plan.price} — plan reactivated`,
+          actor_id: null, metadata: { plan_id: plan.id, amount: plan.price },
+        }).then(() => {}).catch(() => {})
+
+        if (customer.email) {
+          await sendEmail({
+            to: customer.email,
+            subject: `Payment received — ${planName} — Zenith Pure Solutions`,
+            html: paymentReceiptHtml({
+              customerName: customer.full_name,
+              amount: plan.price,
+              description: `${planName} — account reactivated`,
+              contractNumber: planName,
+              nextDate: nextDate ? new Date(nextDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : null,
+              cardLast4: paymentMethod.last_four,
+              isServicePlan: true,
+            }),
+            customer_id: customer.id,
+            email_type: 'payment_receipt',
+          })
+        }
+
+        results.plans_succeeded++
+
+      } else {
+        // Still failing — keep payment_failed, notify admin
+        await supabase.from('customer_activity_log').insert({
+          customer_id: plan.customer_id, event_type: 'service_plan_retry_failed',
+          title: `Payment retry failed: ${planName} — manual action required`,
+          actor_id: null, metadata: { plan_id: plan.id },
+        }).then(() => {}).catch(() => {})
+
+        results.plans_failed++
+      }
+
+    } catch (err) {
+      console.error('[autopay] Section 3 retry error:', err.message)
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// END SECTION 3
+// ══════════════════════════════════════════════════════════
     // ── Internal summary log ──────────────────────────────────
     const totalProcessed = results.processed + results.plans_processed
     if (totalProcessed > 0) {
