@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { CUSTOMER_KEYS } from '../useCustomers'
 import { calculateBuyout, executeBuyout } from '../../../services/buyoutService'
 import { RecordPaymentModal } from '../modals/RecordPaymentModal'
+import { ExecuteBuyoutModal } from '../modals/ExecuteBuyoutModal'
 
 interface Props { customerId: string }
 
@@ -45,6 +46,7 @@ function ContractCard({ contract, customerId }: { contract: any; customerId: str
   const [paymentModal, setPaymentModal] = useState(false)
   const [calculating, setCalculating] = useState(false)
   const [executing, setExecuting] = useState(false)
+  const [showExecuteModal, setShowExecuteModal] = useState(false)
   const [error, setError] = useState('')
 
   const isActive = contract.status === 'active'
@@ -79,21 +81,6 @@ function ContractCard({ contract, customerId }: { contract: any; customerId: str
       setCalculating(false)
     }
   }
-
-  async function handleExecute() {
-    if (!user || !latestBuyout) return
-    setExecuting(true)
-    setError('')
-    try {
-      await executeBuyout(latestBuyout.id, { actor_id: user.id, actor_name: profile?.full_name })
-      invalidateAll()
-    } catch (e: any) {
-      setError(e.message)
-    } finally {
-      setExecuting(false)
-    }
-  }
-
   return (
     <div className="bg-card border border-border rounded-xl p-4">
       {/* Contract header */}
@@ -143,14 +130,12 @@ function ContractCard({ contract, customerId }: { contract: any; customerId: str
             {calculating ? 'Calculating...' : '🧮 Calculate Buyout'}
           </button>
           {hasUnexecuted && (
-            <button onClick={handleExecute} disabled={executing}
-              className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
+            <button onClick={() => setShowExecuteModal(true)}
+              className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors"
               style={{ backgroundColor: 'rgba(168,85,247,0.12)', color: '#c084fc', border: '1px solid rgba(168,85,247,0.25)' }}>
-              {executing ? 'Executing...' : '🏠 Execute Buyout'}
-            </button>
-          )}
-        </div>
-      )}
+              🏠 Execute Buyout
+           </button>
+        )}
 
       {error && (
         <div className="mb-3 text-xs rounded-lg px-3 py-2" style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
@@ -208,6 +193,15 @@ function ContractCard({ contract, customerId }: { contract: any; customerId: str
       )}
 
       {/* Payment modal */}
+          {showExecuteModal && (
+  <ExecuteBuyoutModal
+    contract={contract}
+    customerId={customerId}
+    calculation={latestBuyout}
+    onClose={() => setShowExecuteModal(false)}
+    onInvoiceGenerated={invalidateAll}
+  />
+)}
       {paymentModal && (
         <RecordPaymentModal
           contract={contract}
