@@ -66,6 +66,10 @@ export function CustomerDetailPage() {
   }, [customerId])
 
   const [activeTab, setActiveTab] = useState<CustTab>('overview')
+  const [showSMS, setShowSMS] = useState(false)
+  const [smsBody, setSmsBody] = useState('')
+  const [smsSending, setSmsSending] = useState(false)
+  const [smsResult, setSmsResult] = useState<'sent' | 'error' | null>(null)
 
   if (isLoading) return <div className="flex items-center justify-center h-full"><div className="text-muted text-sm">Loading customer...</div></div>
   if (error || !customer) {
@@ -150,8 +154,14 @@ export function CustomerDetailPage() {
             {customer.phone}{customer.email && ` · ${customer.email}`}
           </div>
         </div>
-        <div className={`stage-badge border ${LIFECYCLE_COLORS[customer.lifecycle_status as keyof typeof LIFECYCLE_COLORS] || ''}`}>
-          {LIFECYCLE_LABELS[customer.lifecycle_status as keyof typeof LIFECYCLE_LABELS] || customer.lifecycle_status}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button onClick={() => { setShowSMS(true); setSmsResult(null); setSmsBody('') }}
+            style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(6,182,212,0.3)', background: 'rgba(6,182,212,0.1)', color: '#06b6d4', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+            💬 Send Text
+          </button>
+          <div className={`stage-badge border ${LIFECYCLE_COLORS[customer.lifecycle_status as keyof typeof LIFECYCLE_COLORS] || ''}`}>
+            {LIFECYCLE_LABELS[customer.lifecycle_status as keyof typeof LIFECYCLE_LABELS] || customer.lifecycle_status}
+          </div>
         </div>
       </div>
 
