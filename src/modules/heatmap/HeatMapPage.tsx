@@ -1,6 +1,6 @@
 // src/modules/heatmap/HeatMapPage.tsx
 // Gap 21 — Location Heat Map
-// Plots leads (yellow) + customers (green) + lost leads (red) on Google Maps
+// Plots leads, customers, installs, site visits on Google Maps
 // Admin only
 
 import { useState, useEffect, useRef } from 'react'
@@ -13,12 +13,21 @@ interface MapPoint {
   id: string
   name: string
   address: string
-  type: 'lead' | 'customer' | 'lost'
+  type: 'lead' | 'customer' | 'lost' | 'install_complete' | 'install_pending' | 'site_visit'
   stage?: string
   lifecycle?: string
   phone?: string
   lat?: number
   lng?: number
+}
+
+const TYPE_CONFIG: Record<MapPoint['type'], { color: string; label: string; emoji: string }> = {
+  lead:             { color: '#fbbf24', label: 'Active Lead',       emoji: '🔵' },
+  customer:         { color: '#4ade80', label: 'Customer',          emoji: '✅' },
+  lost:             { color: '#f87171', label: 'Lost / DND',        emoji: '❌' },
+  install_complete: { color: '#a78bfa', label: 'Completed Install', emoji: '🔧' },
+  install_pending:  { color: '#fb923c', label: 'Install Pending',   emoji: '⏳' },
+  site_visit:       { color: '#38bdf8', label: 'Site Visit',        emoji: '📅' },
 }
 
 async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
@@ -64,9 +73,12 @@ export default function HeatMapPage() {
   const [mapReady,  setMapReady]  = useState(false)
   const [mapError,  setMapError]  = useState<string | null>(null)
 
-  const [showLeads,     setShowLeads]     = useState(true)
-  const [showCustomers, setShowCustomers] = useState(true)
-  const [showLost,      setShowLost]      = useState(false)
+  const [showLeads,           setShowLeads]           = useState(true)
+  const [showCustomers,       setShowCustomers]       = useState(true)
+  const [showLost,            setShowLost]            = useState(false)
+  const [showInstallComplete, setShowInstallComplete] = useState(true)
+  const [showInstallPending,  setShowInstallPending]  = useState(true)
+  const [showSiteVisits,      setShowSiteVisits]      = useState(true)
 
   // ── Fetch data ──────────────────────────────────────────────────
   useEffect(() => {
@@ -74,6 +86,7 @@ export default function HeatMapPage() {
       setLoading(true)
       const all: MapPoint[] = []
 
+      // Active leads
       try {
         const { data } = await supabase
           .from('leads')
@@ -87,6 +100,7 @@ export default function HeatMapPage() {
         }
       } catch { /* skip */ }
 
+      // Lost leads
       try {
         const { data } = await supabase
           .from('leads')
@@ -100,6 +114,7 @@ export default function HeatMapPage() {
         }
       } catch { /* skip */ }
 
+      // Customers
       try {
         const { data } = await supabase
           .from('customers')
@@ -115,6 +130,72 @@ export default function HeatMapPage() {
               type: 'customer',
               lifecycle: c.lifecycle_status,
               phone: c.phone,
+            })
+          }
+        }
+      } catch { /* skip */ }
+
+      // Completed installs
+      try {
+        const { data } = await supabase
+          .from('jobs')
+          .select('id, customer_name_snapshot, service_address_snapshot, status')
+          .eq('status', 'complete')
+          .not('service_address_snapshot', 'is', null)
+          .limit(300)
+        for (const j of data || []) {
+          if (j.service_address_snapshot) {
+            all.push({
+              id: j.id,
+              name: j.customer_name_snapshot || 'Completed Install',
+              address: j.service_address_snapshot,
+              type: 'install_complete',
+              stage: 'complete',
+            })
+          }
+        }
+      } catch { /* skip */ }
+
+      // Pending installs (ready_to_schedule, scheduled, in_progress)
+      try {
+        const { data } = await supabase
+          .from('jobs')
+          .select('id, customer_name_snapshot, service_address_snapshot, status')
+          .in('status', ['ready_to_schedule', 'scheduled', 'in_progress'])
+          .not('service_address_snapshot', 'is', null)
+          .limit(200)
+        for (const j of data || []) {
+          if (j.service_address_snapshot) {
+            all.push({
+              id: j.id,
+              name: j.customer_name_snapshot || 'Pending Install',
+              address: j.service_address_snapshot,
+              type: 'install_pending',
+              stage: j.status,
+            })
+          }
+        }
+      } catch { /* skip */ }
+
+      // Scheduled site visits — join to leads for address
+      try {
+        const { data } = await supabase
+          .from('site_visits')
+          .select('id, lead_id, visit_date, leads(full_name, phone, address, city, state, zip_code)')
+          .eq('status', 'scheduled')
+          .limit(200)
+        for (const v of data || []) {
+          const lead = (v as any).leads
+          if (!lead) continue
+          const addr = [lead.address, lead.city, lead.state, lead.zip_code].filter(Boolean).join(', ')
+          if (addr) {
+            all.push({
+              id: v.id,
+              name: lead.full_name || 'Site Visit',
+              address: addr,
+              type: 'site_visit',
+              stage: v.visit_date ? `Visit: ${new Date(v.visit_date).toLocaleDateString()}` : 'Scheduled',
+              phone: lead.phone,
             })
           }
         }
@@ -190,16 +271,23 @@ export default function HeatMapPage() {
     for (const m of markersR.current) m.setMap(null)
     markersR.current = []
 
+    const filterMap: Record<MapPoint['type'], boolean> = {
+      lead:             showLeads,
+      customer:         showCustomers,
+      lost:             showLost,
+      install_complete: showInstallComplete,
+      install_pending:  showInstallPending,
+      site_visit:       showSiteVisits,
+    }
+
     const visible = points.filter(p => {
       if (!p.lat || !p.lng) return false
-      if (p.type === 'lead'     && !showLeads)     return false
-      if (p.type === 'customer' && !showCustomers) return false
-      if (p.type === 'lost'     && !showLost)      return false
-      return true
+      return filterMap[p.type]
     })
 
     for (const pt of visible) {
-      const color = pt.type === 'customer' ? '#4ade80' : pt.type === 'lost' ? '#f87171' : '#fbbf24'
+      const cfg   = TYPE_CONFIG[pt.type]
+      const color = cfg.color
 
       const marker = new G.Marker({
         position: { lat: pt.lat!, lng: pt.lng! },
@@ -216,14 +304,8 @@ export default function HeatMapPage() {
       })
 
       marker.addListener('click', () => {
-        const typeLabel =
-          pt.type === 'customer' ? '✅ Customer' :
-          pt.type === 'lost'     ? '❌ Lost/DND' : '🔵 Active Lead'
         const stageStr = pt.stage
-          ? `<div style="color:#94a3b8;font-size:11px;margin-top:2px;">Stage: ${pt.stage.replace(/_/g,' ')}</div>`
-          : ''
-        const lifecycleStr = pt.lifecycle
-          ? `<div style="color:#94a3b8;font-size:11px;margin-top:2px;">Status: ${pt.lifecycle.replace(/_/g,' ')}</div>`
+          ? `<div style="color:#94a3b8;font-size:11px;margin-top:2px;">${pt.stage.replace(/_/g,' ')}</div>`
           : ''
         const phoneStr = pt.phone
           ? `<div style="margin-top:6px;"><a href="tel:${pt.phone}" style="color:#0d7ea3;font-size:12px;">${pt.phone}</a></div>`
@@ -231,8 +313,8 @@ export default function HeatMapPage() {
         infoWin.current.setContent(`
           <div style="background:#162232;border:1px solid #1e3a4f;border-radius:10px;padding:12px 14px;min-width:180px;font-family:Arial,sans-serif;">
             <div style="font-weight:700;font-size:13px;color:#e2e8f0;margin-bottom:4px;">${pt.name}</div>
-            <div style="font-size:11px;font-weight:700;color:${color};">${typeLabel}</div>
-            ${stageStr}${lifecycleStr}
+            <div style="font-size:11px;font-weight:700;color:${color};">${cfg.emoji} ${cfg.label}</div>
+            ${stageStr}
             <div style="font-size:11px;color:#475569;margin-top:6px;line-height:1.4;">${pt.address}</div>
             ${phoneStr}
           </div>
@@ -242,21 +324,32 @@ export default function HeatMapPage() {
 
       markersR.current.push(marker)
     }
-  }, [points, showLeads, showCustomers, showLost, mapReady])
+  }, [points, showLeads, showCustomers, showLost, showInstallComplete, showInstallPending, showSiteVisits, mapReady])
 
-  const plotted       = points.filter(p => p.lat && p.lng)
-  const leadCount     = plotted.filter(p => p.type === 'lead').length
-  const customerCount = plotted.filter(p => p.type === 'customer').length
-  const lostCount     = plotted.filter(p => p.type === 'lost').length
+  // ── Stats ───────────────────────────────────────────────────────
+  const plotted = points.filter(p => p.lat && p.lng)
+  const counts  = Object.fromEntries(
+    (Object.keys(TYPE_CONFIG) as MapPoint['type'][]).map(t => [t, plotted.filter(p => p.type === t).length])
+  )
+
+  const FILTER_TOGGLES: { type: MapPoint['type']; show: boolean; set: (v: boolean) => void }[] = [
+    { type: 'lead',             show: showLeads,           set: setShowLeads },
+    { type: 'customer',         show: showCustomers,       set: setShowCustomers },
+    { type: 'install_complete', show: showInstallComplete, set: setShowInstallComplete },
+    { type: 'install_pending',  show: showInstallPending,  set: setShowInstallPending },
+    { type: 'site_visit',       show: showSiteVisits,      set: setShowSiteVisits },
+    { type: 'lost',             show: showLost,            set: setShowLost },
+  ]
 
   return (
     <div style={{ minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
 
+      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0', margin: 0 }}>Location Map</h1>
           <p style={{ fontSize: 13, color: '#475569', marginTop: 4, marginBottom: 0 }}>
-            Leads, customers, and lost contacts plotted across Indianapolis
+            Leads, customers, installs, and site visits across Indianapolis
           </p>
         </div>
         {geocoding && (
@@ -269,28 +362,29 @@ export default function HeatMapPage() {
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-        {[
-          { label: `🔵 Active Leads (${leadCount})`,  active: showLeads,     toggle: () => setShowLeads(v => !v),     color: '#fbbf24' },
-          { label: `✅ Customers (${customerCount})`,  active: showCustomers, toggle: () => setShowCustomers(v => !v), color: '#4ade80' },
-          { label: `❌ Lost / DND (${lostCount})`,     active: showLost,      toggle: () => setShowLost(v => !v),      color: '#f87171' },
-        ].map(f => (
-          <button key={f.label} onClick={f.toggle}
-            style={{
-              padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-              border: `1px solid ${f.active ? f.color + '50' : 'rgba(255,255,255,0.06)'}`,
-              background: f.active ? `${f.color}18` : 'rgba(255,255,255,0.03)',
-              color: f.active ? f.color : '#64748b',
-              transition: 'all 0.15s',
-            }}>
-            {f.label}
-          </button>
-        ))}
+      {/* Filter toggles */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+        {FILTER_TOGGLES.map(f => {
+          const cfg = TYPE_CONFIG[f.type]
+          return (
+            <button key={f.type} onClick={() => f.set(!f.show)}
+              style={{
+                padding: '7px 14px', borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                border: `1px solid ${f.show ? cfg.color + '50' : 'rgba(255,255,255,0.06)'}`,
+                background: f.show ? `${cfg.color}18` : 'rgba(255,255,255,0.03)',
+                color: f.show ? cfg.color : '#64748b',
+                transition: 'all 0.15s',
+              }}>
+              {cfg.emoji} {cfg.label} ({counts[f.type] || 0})
+            </button>
+          )
+        })}
         <div style={{ marginLeft: 'auto', fontSize: 12, color: '#334155' }}>
-          {plotted.length} of {total} addresses plotted
+          {plotted.length} of {total} plotted
         </div>
       </div>
 
+      {/* Map */}
       <div style={{ flex: 1, minHeight: 560, borderRadius: 16, overflow: 'hidden', border: '1px solid #1e3a4f', position: 'relative', background: '#162232' }}>
         {mapError && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
@@ -312,18 +406,15 @@ export default function HeatMapPage() {
         <div ref={mapDivRef} style={{ width: '100%', height: '100%', minHeight: 560 }} />
       </div>
 
-      <div style={{ display: 'flex', gap: 20, marginTop: 12, flexWrap: 'wrap' }}>
-        {[
-          { color: '#fbbf24', label: 'Active Lead' },
-          { color: '#4ade80', label: 'Customer' },
-          { color: '#f87171', label: 'Lost / DND' },
-        ].map(l => (
-          <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ width: 10, height: 10, borderRadius: '50%', background: l.color, boxShadow: `0 0 6px ${l.color}60` }} />
-            <span style={{ fontSize: 12, color: '#64748b' }}>{l.label}</span>
+      {/* Legend */}
+      <div style={{ display: 'flex', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
+        {(Object.entries(TYPE_CONFIG) as [MapPoint['type'], typeof TYPE_CONFIG[MapPoint['type']]][]).map(([type, cfg]) => (
+          <div key={type} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{ width: 10, height: 10, borderRadius: '50%', background: cfg.color, boxShadow: `0 0 6px ${cfg.color}60` }} />
+            <span style={{ fontSize: 11, color: '#64748b' }}>{cfg.label}</span>
           </div>
         ))}
-        <span style={{ fontSize: 12, color: '#334155', marginLeft: 'auto' }}>Click any pin for details</span>
+        <span style={{ fontSize: 11, color: '#334155', marginLeft: 'auto' }}>Click any pin for details</span>
       </div>
     </div>
   )
