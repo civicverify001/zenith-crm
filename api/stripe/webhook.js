@@ -350,7 +350,21 @@ if (sessionMeta.invoice_type === 'buyout') {
         })
       }
     }
-
+    // ── GAP 14: Auto-create follow-up after agreement signed ─────
+    if (quote_type === 'rental' && customer_id && custName) {
+      try {
+        const followUpDate = new Date(Date.now() + 24 * 60 * 60 * 1000) // +1 day
+        await supabase.from('follow_up_tasks').insert({
+          entity_type: 'customer',
+          entity_id: customer_id,
+          title: `Post-signing: schedule install for ${custName}`,
+          description: `${custName} signed rental agreement${contractNumber ? ' (' + contractNumber + ')' : ''}. Schedule installation.`,
+          due_date: followUpDate.toISOString().split('T')[0],
+          status: 'pending',
+          priority: 'high',
+        })
+      } catch (_) { /* fire-and-forget */ }
+    }
     // ── 7. Inventory commitment ──────────────────────────────────
     if (quote_id && customer_id) {
       try {
@@ -588,6 +602,22 @@ async function handleBuyoutPayment(supabase, session) {
     }).then(() => {}).catch(() => {})
 
     console.log('[BUYOUT] ✓ Complete:', { contract_id, systems_converted: systemIds.length })
+
+    // ── GAP 14: Auto-create follow-up after buyout completion ────
+    try {
+      const followUpDate = new Date(Date.now() + 24 * 60 * 60 * 1000)
+      await supabase.from('follow_up_tasks').insert({
+        entity_type: 'customer',
+        entity_id: customer_id,
+        title: `Buyout complete — confirm transition`,
+        description: `Equipment buyout paid ($${amountDollars.toFixed(2)}). Confirm ownership transferred, update service plans if needed.`,
+        due_date: followUpDate.toISOString().split('T')[0],
+        status: 'pending',
+        priority: 'normal',
+      })
+    } catch (_) { /* fire-and-forget */ }
+
+    // 9. Send paid confirmation email (fire and forget)
 
     // 9. Send paid confirmation email (fire and forget)
 try {
