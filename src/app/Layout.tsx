@@ -33,6 +33,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/shipping',      label: 'Shipping',     icon: '🚚', hex: '#06b6d4', group: 'Ops',        soon: false, roles: ['admin','frontdesk'] },
   { path: '/fulfillment',   label: 'Fulfillment',  icon: '🔔', hex: '#fbbf24', group: 'Ops',        soon: false, roles: ['admin','frontdesk','technician'] },
   { path: '/inventory',     label: 'Inventory',    icon: '📦', hex: '#2dd4bf', group: 'Ops',        soon: false, roles: ['admin'] },
+  { path: '/communications', label: 'Messages',    icon: '💬', hex: '#06b6d4', group: 'Ops',        soon: false, roles: ['admin','frontdesk','salesrep'] },
   // Finance & Reports
   { path: '/accounting',    label: 'Accounting',   icon: '💰', hex: '#facc15', group: 'Finance',    soon: false, roles: ['admin'] },
   { path: '/reports',       label: 'Reports',      icon: '📈', hex: '#38bdf8', group: 'Finance',    soon: false, roles: ['admin'] },
