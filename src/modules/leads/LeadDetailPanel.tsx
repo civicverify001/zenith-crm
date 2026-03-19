@@ -59,6 +59,11 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   const [callNotes, setCallNotes] = useState('')
   const [deleting, setDeleting] = useState(false)
 
+  // SMS modal state
+  const [showSmsModal, setShowSmsModal] = useState(false)
+  const [smsMessage, setSmsMessage] = useState('')
+  const [smsSending, setSmsSending] = useState(false)
+
   const [showQuoteBuilder, setShowQuoteBuilder] = useState(false)
   const [pendingCustomerId, setPendingCustomerId] = useState<string | null>(null)
   const [quoteLink, setQuoteLink] = useState<string | null>(null)
@@ -160,7 +165,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   function handleWaterTestSaved(test: WaterTest) {
     setShowWaterTestForm(false)
     setEditingWaterTest(null)
-    // Refresh the list
     fetchByLead(lead.id).then(tests => setWaterTests(tests))
   }
 
@@ -174,6 +178,31 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
     const { deleteWaterTest } = await import('../../services/waterTestService')
     await deleteWaterTest(test.id)
     fetchByLead(lead.id).then(tests => setWaterTests(tests))
+  }
+
+  // ── Send Text to lead ────────────────────────────────────────────
+  async function handleSendLeadSms() {
+    if (!smsMessage.trim() || !lead.phone) return
+    setSmsSending(true)
+    try {
+      // Log to communications_log directly (fire-and-forget via OpenPhone)
+      await fetch('/api/openphone/send-sms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: lead.phone,
+          message: smsMessage.trim(),
+          entity_type: 'lead',
+          entity_id: lead.id,
+        }),
+      })
+      setShowSmsModal(false)
+      setSmsMessage('')
+    } catch (e) {
+      console.error('Send SMS error:', e)
+    } finally {
+      setSmsSending(false)
+    }
   }
 
   // ── Delete lead (admin only) ─────────────────────────────────
@@ -305,7 +334,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {/* Delete — admin only */}
               {isAdmin && (
                 <button
                   onClick={handleDeleteLead}
@@ -327,6 +355,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
               <div className={`stage-badge border ${LEAD_STAGE_COLORS[lead.stage]}`}>
                 {LEAD_STAGE_LABELS[lead.stage]}
               </div>
+
               {/* Log Call — hidden for sales reps */}
               {!isSalesRep && (
                 <button
@@ -334,6 +363,24 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                   className="text-xs px-2.5 py-1 bg-green/10 text-green border border-green/30 rounded-lg hover:bg-green/20 transition-colors"
                 >
                   📞 Log Call
+                </button>
+              )}
+
+              {/* Send Text — available to all roles */}
+              {lead.phone && (
+                <button
+                  onClick={() => {
+                    setSmsMessage(`Hi ${lead.full_name.split(' ')[0]}, `)
+                    setShowSmsModal(true)
+                  }}
+                  className="text-xs px-2.5 py-1 rounded-lg border transition-colors"
+                  style={{
+                    background: 'rgba(34,197,94,0.1)',
+                    color: '#22c55e',
+                    borderColor: 'rgba(34,197,94,0.3)',
+                  }}
+                >
+                  💬 Send Text
                 </button>
               )}
             </div>
@@ -408,7 +455,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                 {/* ── Water Test Section ──────────────────────────────── */}
                 {showWaterTests && waterTestsLoaded && (
                   <div>
-                    {/* Header with add button */}
                     <div style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       marginBottom: 10,
@@ -438,7 +484,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                       )}
                     </div>
 
-                    {/* Water test form */}
                     {showWaterTestForm && (
                       <div style={{ marginBottom: 12 }}>
                         <WaterTestForm
@@ -451,14 +496,12 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                       </div>
                     )}
 
-                    {/* Recommendation summary (from latest initial test) */}
                     {!showWaterTestForm && waterTests.length > 0 && (
                       <div style={{ marginBottom: 12 }}>
                         <RecommendationSummary tests={waterTests} />
                       </div>
                     )}
 
-                    {/* Test history */}
                     {!showWaterTestForm && waterTests.length > 0 && (
                       <WaterTestHistory
                         tests={waterTests}
@@ -467,7 +510,6 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                       />
                     )}
 
-                    {/* Empty state */}
                     {!showWaterTestForm && waterTests.length === 0 && (
                       <div style={{
                         background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14,
@@ -642,6 +684,44 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                     className="flex-1 py-2 bg-green hover:bg-emerald-400 disabled:opacity-50 text-white font-semibold rounded-lg text-sm transition-colors"
                   >
                     {callPending ? 'Saving...' : 'Log Call'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Send Text modal */}
+          {showSmsModal && (
+            <div className="absolute inset-0 bg-black/60 flex items-center justify-center p-4 z-20">
+              <div className="bg-card border border-border rounded-2xl w-full max-w-sm p-5 shadow-2xl">
+                <h3 className="font-bold text-white mb-1">Send Text</h3>
+                <p className="text-xs text-muted mb-4">To: {lead.phone}</p>
+                <div>
+                  <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Message</label>
+                  <textarea
+                    value={smsMessage}
+                    onChange={e => setSmsMessage(e.target.value)}
+                    placeholder="Type your message..."
+                    rows={4}
+                    autoFocus
+                    className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-muted focus:outline-none focus:border-accent resize-none"
+                  />
+                  <div className="text-right text-xs text-muted mt-1">{smsMessage.length} chars</div>
+                </div>
+                <div className="flex gap-3 mt-4">
+                  <button
+                    onClick={() => { setShowSmsModal(false); setSmsMessage('') }}
+                    className="flex-1 py-2 text-sm text-muted hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSendLeadSms}
+                    disabled={smsSending || !smsMessage.trim()}
+                    className="flex-1 py-2 font-semibold rounded-lg text-sm transition-colors disabled:opacity-50"
+                    style={{ background: '#22c55e', color: '#fff' }}
+                  >
+                    {smsSending ? 'Sending…' : 'Send Text 💬'}
                   </button>
                 </div>
               </div>
