@@ -272,6 +272,58 @@ export function CustomerDetailPage() {
         {activeTab === 'activity'       && <CustomerActivityTab customerId={customer.id} />}
         {activeTab === 'documents'      && <CustomerDocumentsTab customerId={customer.id} />}
       </div>
+
+      {/* ─── Send SMS Modal ──────────────────────────────── */}
+      {showSMS && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
+          <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 16, width: '100%', maxWidth: 460, overflow: 'hidden' }}>
+            <div style={{ padding: '18px 24px', borderBottom: '1px solid #1e3a4f', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ color: '#e2e8f0', fontWeight: 800, fontSize: 16 }}>Send Text to {customer.full_name}</div>
+                <div style={{ color: '#475569', fontSize: 12, marginTop: 2 }}>To: {customer.phone} · From: (463) 300-5100</div>
+              </div>
+              <button onClick={() => setShowSMS(false)} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 20, cursor: 'pointer' }}>×</button>
+            </div>
+            <div style={{ padding: '18px 24px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                {[
+                  { label: 'Appointment', msg: `Hi ${customer.full_name}, this is Zenith Pure Solutions. Just a reminder about your upcoming appointment. Reply to confirm or call (317) 690-4172.` },
+                  { label: 'Follow-Up', msg: `Hi ${customer.full_name}, this is Zenith Pure Solutions. We wanted to check in — how is your water system working? Any questions? Call (317) 690-4172.` },
+                  { label: 'Payment', msg: `Hi ${customer.full_name}, this is Zenith Pure Solutions. We noticed a payment is due on your account. Please call (317) 690-4172 or reply for assistance.` },
+                ].map(t => (
+                  <button key={t.label} onClick={() => setSmsBody(t.msg)}
+                    style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid #1e3a4f', background: '#162232', color: '#94a3b8', cursor: 'pointer' }}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <textarea value={smsBody} onChange={e => setSmsBody(e.target.value)} placeholder="Type your message…" rows={4}
+                style={{ width: '100%', background: '#162232', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '10px 14px', fontSize: 14, outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit' }} />
+              <div style={{ fontSize: 11, color: '#334155', marginTop: 4 }}>{smsBody.length} chars · {Math.ceil(smsBody.length / 160) || 0} segment{Math.ceil(smsBody.length / 160) !== 1 ? 's' : ''}</div>
+              {smsResult === 'sent' && <div style={{ marginTop: 10, padding: '8px 14px', borderRadius: 8, background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.25)', color: '#4ade80', fontSize: 13 }}>Message sent!</div>}
+              {smsResult === 'error' && <div style={{ marginTop: 10, padding: '8px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', fontSize: 13 }}>Failed to send. Check console.</div>}
+            </div>
+            <div style={{ padding: '14px 24px', borderTop: '1px solid #1e3a4f', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowSMS(false)} style={{ padding: '8px 16px', fontSize: 13, color: '#64748b', background: 'none', border: 'none', cursor: 'pointer' }}>Cancel</button>
+              <button disabled={smsSending || !smsBody.trim() || smsResult === 'sent'} onClick={async () => {
+                setSmsSending(true); setSmsResult(null)
+                try {
+                  const res = await fetch('/api/openphone/send-sms', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ to: customer.phone, body: smsBody, entity_type: 'customer', entity_id: customer.id }),
+                  })
+                  setSmsResult(res.ok ? 'sent' : 'error')
+                  if (res.ok) setTimeout(() => setShowSMS(false), 1500)
+                } catch { setSmsResult('error') }
+                setSmsSending(false)
+              }}
+                style={{ padding: '9px 22px', borderRadius: 8, border: 'none', background: (!smsBody.trim() || smsResult === 'sent') ? '#334155' : '#06b6d4', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', opacity: smsSending ? 0.5 : 1 }}>
+                {smsSending ? 'Sending…' : smsResult === 'sent' ? 'Sent!' : 'Send SMS'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
