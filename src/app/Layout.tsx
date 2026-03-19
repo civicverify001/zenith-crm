@@ -42,6 +42,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/products',      label: 'Products',     icon: '🏷️', hex: '#fbbf24', group: 'Admin',      soon: false, roles: ['admin'] },
   { path: '/admin/terms',   label: 'Settings',     icon: '⚙️', hex: '#8b5cf6', group: 'Admin',      soon: false, roles: ['admin'] },
   { path: '/admin/users',   label: 'Team',         icon: '👤', hex: '#f87171', group: 'Admin',      soon: false, roles: ['admin'] },
+  { path: '/heatmap',       label: 'Heat Map',      icon: '🗺️', hex: '#34d399', group: 'Admin',      soon: false, roles: ['admin'] },
   { path: '/marketing',     label: 'Marketing',    icon: '📊', hex: '#fb7185', group: 'Soon',       soon: true,  roles: ['admin'] },
 ]
 
