@@ -3,7 +3,7 @@ import { useRentalContracts, useRentalPayments, useBuyoutCalculations } from '..
 import { useAuth } from '../../../hooks/useAuth'
 import { useQueryClient } from '@tanstack/react-query'
 import { CUSTOMER_KEYS } from '../useCustomers'
-import { calculateBuyout, executeBuyout } from '../../../services/buyoutService'
+import { calculateBuyout } from '../../../services/buyoutService'
 import { RecordPaymentModal } from '../modals/RecordPaymentModal'
 import { ExecuteBuyoutModal } from '../modals/ExecuteBuyoutModal'
 
@@ -17,8 +17,8 @@ function formatDate(d: string | null) {
 function fmt(n: number) { return `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2 })}` }
 
 const RISK_STYLES: Record<string, { color: string; label: string }> = {
-  at_risk: { color: '#fbbf24', label: 'At Risk' },
-  delinquent: { color: '#f87171', label: 'Delinquent' },
+  at_risk:             { color: '#fbbf24', label: 'At Risk' },
+  delinquent:          { color: '#f87171', label: 'Delinquent' },
   termination_pending: { color: '#f87171', label: 'Termination Pending' },
 }
 
@@ -38,15 +38,14 @@ export function RentalBuyoutTab({ customerId }: Props) {
 }
 
 function ContractCard({ contract, customerId }: { contract: any; customerId: string }) {
-  const { user, profile } = useAuth()
+  const { user } = useAuth()
   const qc = useQueryClient()
   const { data: payments } = useRentalPayments(contract.id)
   const { data: buyouts } = useBuyoutCalculations(contract.id)
   const [showPayments, setShowPayments] = useState(false)
   const [paymentModal, setPaymentModal] = useState(false)
-  const [calculating, setCalculating] = useState(false)
-  const [executing, setExecuting] = useState(false)
   const [showExecuteModal, setShowExecuteModal] = useState(false)
+  const [calculating, setCalculating] = useState(false)
   const [error, setError] = useState('')
 
   const isActive = contract.status === 'active'
@@ -81,8 +80,10 @@ function ContractCard({ contract, customerId }: { contract: any; customerId: str
       setCalculating(false)
     }
   }
+
   return (
     <div className="bg-card border border-border rounded-xl p-4">
+
       {/* Contract header */}
       <div className="flex items-center justify-between mb-3">
         <div>
@@ -107,65 +108,94 @@ function ContractCard({ contract, customerId }: { contract: any; customerId: str
 
       {/* Contract details */}
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs mb-3">
-        <Field label="Monthly" value={fmt(contract.monthly_amount || 0)} />
+        <Field label="Monthly"       value={fmt(contract.monthly_amount || 0)} />
         <Field label="Payments Made" value={String(contract.payments_made || 0)} />
-        <Field label="Total Paid" value={fmt(contract.total_paid || 0)} />
-        <Field label="Install Fees" value={fmt(contract.total_install_fees || 0)} />
-        <Field label="Start Date" value={formatDate(contract.start_date)} />
-        <Field label="End Date" value={formatDate(contract.end_date)} />
-        {contract.last_payment_date && <Field label="Last Payment" value={formatDate(contract.last_payment_date)} />}
+        <Field label="Total Paid"    value={fmt(contract.total_paid || 0)} />
+        <Field label="Install Fees"  value={fmt(contract.total_install_fees || 0)} />
+        <Field label="Start Date"    value={formatDate(contract.start_date)} />
+        <Field label="End Date"      value={formatDate(contract.end_date)} />
+        {contract.last_payment_date && (
+          <Field label="Last Payment" value={formatDate(contract.last_payment_date)} />
+        )}
       </div>
 
-      {/* Action buttons for active contracts */}
+      {/* Action buttons */}
       {isActive && (
         <div className="flex flex-wrap gap-2 mb-3">
-          <button onClick={() => setPaymentModal(true)}
+          <button
+            onClick={() => setPaymentModal(true)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors"
             style={{ backgroundColor: 'rgba(34,197,94,0.12)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.25)' }}>
             💳 Record Payment
           </button>
-          <button onClick={handleCalculate} disabled={calculating}
+
+          <button
+            onClick={handleCalculate}
+            disabled={calculating}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
             style={{ backgroundColor: 'rgba(56,189,248,0.12)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.25)' }}>
             {calculating ? 'Calculating...' : '🧮 Calculate Buyout'}
           </button>
+
           {hasUnexecuted && (
-            <button onClick={() => setShowExecuteModal(true)}
+            <button
+              onClick={() => setShowExecuteModal(true)}
               className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors"
               style={{ backgroundColor: 'rgba(168,85,247,0.12)', color: '#c084fc', border: '1px solid rgba(168,85,247,0.25)' }}>
               🏠 Execute Buyout
-           </button>
-        )}
+            </button>
+          )}
+        </div>
+      )}
 
       {error && (
-        <div className="mb-3 text-xs rounded-lg px-3 py-2" style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
+        <div className="mb-3 text-xs rounded-lg px-3 py-2" style={{
+          color: '#f87171', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
+        }}>
           {error}
         </div>
       )}
 
       {/* Buyout status */}
       {contract.buyout_completed ? (
-        <div className="rounded-lg p-3 mb-3" style={{ backgroundColor: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)' }}>
+        <div className="rounded-lg p-3 mb-3" style={{
+          backgroundColor: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)',
+        }}>
           <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: '#4ade80' }}>Buyout Complete</div>
           <div className="text-xs text-muted">Completed {formatDate(contract.buyout_date)}</div>
         </div>
       ) : latestBuyout ? (
-        <div className="rounded-lg p-3 mb-3" style={{ backgroundColor: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)' }}>
+        <div className="rounded-lg p-3 mb-3" style={{
+          backgroundColor: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)',
+        }}>
           <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: '#38bdf8' }}>
-            {latestBuyout.was_executed ? 'Buyout Executed' : 'Latest Buyout Calculation'}
+            {latestBuyout.was_executed ? 'Buyout Invoice Sent' : 'Latest Buyout Calculation'}
           </div>
           <div className="text-xs space-y-0.5">
-            <div className="text-slate-300">Buyout price: <span className="font-semibold text-white">{fmt(latestBuyout.buyout_price)}</span></div>
-            <div className="text-muted">Retail: {fmt(latestBuyout.current_retail_total)} — Credit: {fmt(latestBuyout.applied_rental_credit || latestBuyout.rental_credit_applied || 0)}</div>
+            <div className="text-slate-300">
+              Buyout price: <span className="font-semibold text-white">{fmt(latestBuyout.buyout_price)}</span>
+            </div>
+            <div className="text-muted">
+              Retail: {fmt(latestBuyout.current_retail_total)} — Credit: {fmt(latestBuyout.applied_rental_credit || latestBuyout.rental_credit_applied || 0)}
+            </div>
             <div className="text-muted">Install reimb: {fmt(latestBuyout.install_reimbursement || 0)}</div>
             <div className="text-muted">Calculated {formatDate(latestBuyout.calculated_at)}</div>
             {!latestBuyout.was_executed && (
-              <div className="text-xs mt-1" style={{ color: '#fbbf24' }}>⏳ Not yet executed — click "Execute Buyout" above</div>
+              <div className="text-xs mt-1" style={{ color: '#fbbf24' }}>
+                ⏳ Click "Execute Buyout" above to generate invoice &amp; payment link
+              </div>
+            )}
+            {latestBuyout.was_executed && (
+              <div className="text-xs mt-1" style={{ color: '#4ade80' }}>
+                ✓ Invoice generated — awaiting customer payment
+              </div>
             )}
           </div>
         </div>
       ) : isActive ? (
-        <div className="rounded-lg p-3 mb-3" style={{ backgroundColor: 'rgba(148,163,184,0.06)', border: '1px solid rgba(148,163,184,0.15)' }}>
+        <div className="rounded-lg p-3 mb-3" style={{
+          backgroundColor: 'rgba(148,163,184,0.06)', border: '1px solid rgba(148,163,184,0.15)',
+        }}>
           <div className="text-xs text-muted">No buyout calculation yet. Click "Calculate Buyout" to see the price.</div>
         </div>
       ) : null}
@@ -173,7 +203,10 @@ function ContractCard({ contract, customerId }: { contract: any; customerId: str
       {/* Payment history */}
       {(payments || []).length > 0 && (
         <div>
-          <button onClick={() => setShowPayments(!showPayments)} className="text-xs hover:underline" style={{ color: '#38bdf8' }}>
+          <button
+            onClick={() => setShowPayments(!showPayments)}
+            className="text-xs hover:underline"
+            style={{ color: '#38bdf8' }}>
             {showPayments ? 'Hide' : 'Show'} payment history ({(payments || []).length})
           </button>
           {showPayments && (
@@ -192,16 +225,18 @@ function ContractCard({ contract, customerId }: { contract: any; customerId: str
         </div>
       )}
 
-      {/* Payment modal */}
-          {showExecuteModal && (
-  <ExecuteBuyoutModal
-    contract={contract}
-    customerId={customerId}
-    calculation={latestBuyout}
-    onClose={() => setShowExecuteModal(false)}
-    onInvoiceGenerated={invalidateAll}
-  />
-)}
+      {/* Execute Buyout Modal */}
+      {showExecuteModal && (
+        <ExecuteBuyoutModal
+          contract={contract}
+          customerId={customerId}
+          calculation={latestBuyout}
+          onClose={() => setShowExecuteModal(false)}
+          onInvoiceGenerated={invalidateAll}
+        />
+      )}
+
+      {/* Record Payment Modal */}
       {paymentModal && (
         <RecordPaymentModal
           contract={contract}
@@ -210,6 +245,7 @@ function ContractCard({ contract, customerId }: { contract: any; customerId: str
           onCompleted={() => { setPaymentModal(false); invalidateAll() }}
         />
       )}
+
     </div>
   )
 }
