@@ -115,6 +115,20 @@ module.exports = async function handler(req, res) {
       return res.status(500).json({ error: 'Failed to create lead', detail: insertError.message })
     }
 
+    // ── GAP 14: Auto-create follow-up task for new lead ──────────
+    try {
+      const followUpDate = new Date(Date.now() + 2 * 60 * 60 * 1000) // +2 hours
+      await supabase.from('follow_up_tasks').insert({
+        entity_type: 'lead',
+        entity_id: lead.id,
+        title: `Contact new lead: ${fullName}`,
+        description: `New lead from ${leadData.source || 'unknown source'}. Phone: ${cleanPhone}${email ? '. Email: ' + email : ''}`,
+        due_date: followUpDate.toISOString().split('T')[0],
+        status: 'pending',
+        priority: 'high',
+      })
+    } catch (e) { /* fire-and-forget */ }
+
     const response = {
       success: true,
       lead_id: lead.id,
