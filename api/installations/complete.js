@@ -17,6 +17,32 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// ── SMS: fire-and-forget via OpenPhone ────────────────────────────
+const OPENPHONE_KEY     = process.env.OPENPHONE_API_KEY || ''
+const OPENPHONE_NUM     = process.env.OPENPHONE_NUMBER  || '+14633005100'
+const GOOGLE_REVIEW_URL = process.env.GOOGLE_REVIEW_URL || ''
+
+async function sendSms(to, message, customerId) {
+  if (!OPENPHONE_KEY || !to) return
+  try {
+    const digits = to.replace(/\D/g, '')
+    const e164   = digits.length === 10 ? `+1${digits}` : `+${digits}`
+    const resp   = await fetch('https://api.openphone.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': OPENPHONE_KEY },
+      body: JSON.stringify({ content: message, from: OPENPHONE_NUM, to: [e164] }),
+    })
+    const data = await resp.json()
+    await supabase.from('communications_log').insert({
+      entity_type: 'customer', entity_id: customerId, customer_id: customerId,
+      direction: 'outbound', channel: 'sms', body: message,
+      status: resp.ok ? 'sent' : 'failed',
+      external_id: data?.data?.id || null,
+      created_at: new Date().toISOString(),
+    })
+  } catch (e) { console.error('[complete] sendSms error:', e.message) }
+}
+
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -154,9 +180,8 @@ module.exports = async function handler(req, res) {
     console.log('[COMPLETE][S3] Ownership resolved: type=' + ownershipType + ', source=' + ownershipSource + ', installFee=' + installFee + ', acceptedQuote=' + (acceptedQuote?.id || 'none') + ', fallbackQuoteId=' + (fallbackQuoteId || 'none'));
 
     // ── 4. Get product info — from quote line items ─────────────────
-    // Uses acceptedQuote.id first, then fallbackQuoteId from agreement/contract
     let product = null;
-    let quotedUnitPrice = null; // The price on the quote line item (what customer actually pays)
+    let quotedUnitPrice = null;
     const quoteIdForLookup = acceptedQuote?.id || fallbackQuoteId;
 
     console.log('[COMPLETE][S4] Starting product lookup. acceptedQuote:', acceptedQuote?.id || 'none', 'fallbackQuoteId:', fallbackQuoteId || 'none', 'using:', quoteIdForLookup || 'NONE');
@@ -173,7 +198,6 @@ module.exports = async function handler(req, res) {
 
       console.log('[COMPLETE][S4] document_line_items query result:', JSON.stringify(productLineItem), 'error:', pliErr?.message || 'none');
 
-      // Always capture the quoted unit price from the line item
       if (productLineItem?.unit_price) {
         quotedUnitPrice = parseFloat(productLineItem.unit_price);
       }
@@ -189,7 +213,6 @@ module.exports = async function handler(req, res) {
         console.log('[COMPLETE][S4] Products table result:', JSON.stringify(prod), 'error:', prodErr?.message || 'none');
         product = prod;
       } else if (productLineItem) {
-        // Line item exists but no product_id — use description as name, sku from line item
         console.log('[COMPLETE][S4] Line item found but no product_id — using description:', productLineItem.description?.substring(0, 60));
         product = {
           id: null,
@@ -234,7 +257,6 @@ module.exports = async function handler(req, res) {
     }
 
     // ── 5c. Set billing_day + retail_price_snapshot on active contract ─
-    // GAP 3: retail_price_snapshot = catalog retail price (for buyout calculation)
     if (customerId) {
       const billingDay = new Date().getDate();
       try {
@@ -266,17 +288,8 @@ module.exports = async function handler(req, res) {
     }
 
     // ── 6. Installed systems — idempotent upsert ──────────────────────
-    // FIX: Removed product_catalog_id from both INSERT and UPDATE paths.
-    //       That FK points to the product_catalog table (NOT products).
-    //       Writing a products.id value causes FK constraint violation → silent rollback.
-    //       name_snapshot, sku_snapshot, retail_price_snapshot are plain columns — safe to write.
-    //
-    // GAP 3 FIX: retail_price_snapshot logic
-    //   - Rental: always use product.retail_price (catalog price) — needed for buyout calculation
-    //   - Purchase: use quotedUnitPrice (what customer paid) → fallback to catalog price
     let installedSystemId = null;
 
-    // Compute the correct retail_price_snapshot based on ownership type
     const retailPriceForSnapshot = ownershipType === 'rented'
       ? (product?.retail_price ? parseFloat(product.retail_price) : null)
       : (quotedUnitPrice || (product?.retail_price ? parseFloat(product.retail_price) : null));
@@ -305,8 +318,6 @@ module.exports = async function handler(req, res) {
 
       if (existingRow) {
         installedSystemId = existingRow.id;
-        // UPDATE path — correct ownership and product snapshots on re-run
-        // NOTE: product_catalog_id intentionally NOT written here (FK mismatch)
         const { error: updateSysErr } = await supabase
           .from('installed_systems')
           .update({
@@ -332,8 +343,6 @@ module.exports = async function handler(req, res) {
         }
 
       } else {
-        // INSERT path — create new installed_systems row
-        // NOTE: product_catalog_id intentionally NOT written here (FK mismatch)
         const { data: sysRecord, error: sysError } = await supabase
           .from('installed_systems')
           .insert({
@@ -413,19 +422,12 @@ module.exports = async function handler(req, res) {
     }
 
     // ── 7b. SERVICE PLAN ACTIVATION ───────────────────────────────────
-    // Two sources:
-    //   A) Quote-origin: document_line_items with item_type = 'service_plan'
-    //      FIX: Match by description FIRST (primary), then price (fallback).
-    //           Custom quote prices don't match template prices — description is reliable.
-    //   B) Auto-enroll: service_plans templates where auto_activate_on_install = true
-
     const activatedPlans = [];
 
     if (customerId && installedSystemId && !alreadyComplete) {
       const todayDate = new Date().toISOString().split('T')[0];
       const nowISO = new Date().toISOString();
 
-      // Check if customer has a payment method on file
       const { data: pmCheck } = await supabase
         .from('payment_methods')
         .select('id')
@@ -439,7 +441,6 @@ module.exports = async function handler(req, res) {
       console.log('[COMPLETE][S7b] Starting service plan activation. customerId:', customerId, 'hasCard:', hasCard, 'acceptedQuote:', acceptedQuote?.id || 'none');
 
       // ── A) Quote-origin service plans ──────────────────────────────
-      // Uses acceptedQuote.id first, then fallbackQuoteId from agreement/contract
       const planQuoteId = acceptedQuote?.id || fallbackQuoteId;
       if (planQuoteId) {
         try {
@@ -452,7 +453,6 @@ module.exports = async function handler(req, res) {
           console.log('[COMPLETE][S7b-A] Plan line items found:', planItems?.length || 0, 'error:', planItemsErr?.message || 'none');
 
           if (planItems && planItems.length > 0) {
-            // Fetch all active service plan templates to match against
             const { data: allTemplates } = await supabase
               .from('service_plans')
               .select('id, name, billing_cycle, price, fulfillment_type, fulfillment_interval_months')
@@ -469,40 +469,23 @@ module.exports = async function handler(req, res) {
               console.log('[COMPLETE][S7b-A] Matching line item: desc="' + item.description + '", price=' + itemPrice);
 
               if (allTemplates && allTemplates.length > 0) {
-                // ── STRATEGY 1 (PRIMARY): Description-based matching ──
-                // Check if template name appears in the line item description (case-insensitive)
-                // OR if the line item description appears in the template name
-                // Normalize both sides: strip special chars, compare substrings
                 for (const t of allTemplates) {
                   const tName = (t.name || '').toLowerCase().trim();
-
-                  // Direct containment: item desc contains template name
                   if (tName.length >= 3 && itemDesc.includes(tName)) {
-                    matchedTemplate = t;
-                    matchMethod = 'desc_contains_template_name';
-                    break;
+                    matchedTemplate = t; matchMethod = 'desc_contains_template_name'; break;
                   }
-                  // Reverse: template name contains the main part of item desc
-                  // Strip anything after — or - (often "Plan Name — $X.XX/mo")
                   const itemDescMain = itemDesc.split(/[—\-–]/)[0].trim();
                   if (itemDescMain.length >= 3 && tName.includes(itemDescMain)) {
-                    matchedTemplate = t;
-                    matchMethod = 'template_name_contains_desc';
-                    break;
+                    matchedTemplate = t; matchMethod = 'template_name_contains_desc'; break;
                   }
-                  // Word overlap: if 2+ significant words match (ignoring common words)
                   const commonWords = new Set(['plan', 'service', 'monthly', 'annual', 'the', 'a', 'for', 'and', 'or', 'per', 'mo']);
                   const tWords = tName.split(/\s+/).filter(w => w.length > 2 && !commonWords.has(w));
                   const dWords = itemDescMain.split(/\s+/).filter(w => w.length > 2 && !commonWords.has(w));
                   const overlap = tWords.filter(w => dWords.some(dw => dw.includes(w) || w.includes(dw)));
                   if (overlap.length >= 2) {
-                    matchedTemplate = t;
-                    matchMethod = 'word_overlap(' + overlap.join(',') + ')';
-                    break;
+                    matchedTemplate = t; matchMethod = 'word_overlap(' + overlap.join(',') + ')'; break;
                   }
                 }
-
-                // ── STRATEGY 2 (FALLBACK): Exact price match ──
                 if (!matchedTemplate) {
                   matchedTemplate = allTemplates.find(t => parseFloat(t.price) === itemPrice);
                   if (matchedTemplate) matchMethod = 'exact_price';
@@ -510,7 +493,7 @@ module.exports = async function handler(req, res) {
               }
 
               if (!matchedTemplate) {
-                console.log(`[COMPLETE][S7b-A] ⚠ NO MATCH for plan line item: price=${itemPrice}, desc="${item.description}". Available templates: ${(allTemplates || []).map(t => `"${t.name}" @$${t.price}`).join(', ')}`);
+                console.log(`[COMPLETE][S7b-A] ⚠ NO MATCH for plan line item: price=${itemPrice}, desc="${item.description}".`);
                 continue;
               }
 
@@ -521,7 +504,6 @@ module.exports = async function handler(req, res) {
               const billingCycle = matchedTemplate.billing_cycle || 'monthly';
               const initialStatus = hasCard ? 'active' : 'pending_payment_method';
 
-              // Calculate next fulfillment date
               let nextFulfillment = null;
               if (matchedTemplate.fulfillment_type === 'tech_visit' || matchedTemplate.fulfillment_type === 'shipment') {
                 if (matchedTemplate.fulfillment_interval_months) {
@@ -555,20 +537,16 @@ module.exports = async function handler(req, res) {
 
                 if (planInsertErr) {
                   if (planInsertErr.code === '23505') {
-                    console.log(`[COMPLETE][S7b-A] Plan already exists for template ${templateId}, skipping (duplicate)`);
+                    console.log(`[COMPLETE][S7b-A] Plan already exists for template ${templateId}, skipping`);
                   } else {
                     console.error('[COMPLETE][S7b-A] Plan insert FAILED:', planInsertErr.message);
                   }
                 } else if (newPlan) {
-                  console.log(`[COMPLETE][S7b-A] ✓ Plan activated: id=${newPlan.id}, template="${matchedTemplate.name}", status=${initialStatus}, price=$${planPrice}`);
+                  console.log(`[COMPLETE][S7b-A] ✓ Plan activated: id=${newPlan.id}`);
                   activatedPlans.push({ id: newPlan.id, source: 'quote', template_id: templateId, status: initialStatus, name: matchedTemplate.name });
                 }
               } catch (insertErr) {
-                if (insertErr.code === '23505') {
-                  console.log(`[COMPLETE][S7b-A] Service plan already exists for template ${templateId}, skipping`);
-                } else {
-                  console.error('[COMPLETE][S7b-A] quote service plan insert error:', insertErr.message);
-                }
+                if (insertErr.code !== '23505') console.error('[COMPLETE][S7b-A] plan insert error:', insertErr.message);
               }
             }
           }
@@ -589,19 +567,11 @@ module.exports = async function handler(req, res) {
 
         if (autoTemplates && autoTemplates.length > 0) {
           const systemCategory = job.system_type || product?.category || 'unknown';
-          console.log('[COMPLETE][S7b-B] System category for matching:', systemCategory);
 
           for (const tmpl of autoTemplates) {
             const cats = Array.isArray(tmpl.applies_to_categories) ? tmpl.applies_to_categories : [];
-            if (cats.length > 0 && !cats.includes(systemCategory)) {
-              console.log(`[COMPLETE][S7b-B] Skipping "${tmpl.name}" — category mismatch (needs: ${cats.join(',')}, got: ${systemCategory})`);
-              continue;
-            }
-
-            if (activatedPlans.some(ap => ap.template_id === tmpl.id)) {
-              console.log(`[COMPLETE][S7b-B] Skipping "${tmpl.name}" — already activated via quote`);
-              continue;
-            }
+            if (cats.length > 0 && !cats.includes(systemCategory)) continue;
+            if (activatedPlans.some(ap => ap.template_id === tmpl.id)) continue;
 
             const initialStatus = hasCard ? 'active' : 'pending_payment_method';
             const planPrice = parseFloat(tmpl.price) || 0;
@@ -638,21 +608,12 @@ module.exports = async function handler(req, res) {
                 .single();
 
               if (autoInsertErr) {
-                if (autoInsertErr.code === '23505') {
-                  console.log(`[COMPLETE][S7b-B] Auto-enroll plan already exists for template ${tmpl.id}, skipping`);
-                } else {
-                  console.error(`[COMPLETE][S7b-B] Auto-enroll insert FAILED for "${tmpl.name}":`, autoInsertErr.message);
-                }
+                if (autoInsertErr.code !== '23505') console.error(`[COMPLETE][S7b-B] Auto-enroll FAILED for "${tmpl.name}":`, autoInsertErr.message);
               } else if (newPlan) {
-                console.log(`[COMPLETE][S7b-B] ✓ Auto-enrolled: id=${newPlan.id}, template="${tmpl.name}", status=${initialStatus}`);
                 activatedPlans.push({ id: newPlan.id, source: 'auto_install', template_id: tmpl.id, status: initialStatus, name: tmpl.name });
               }
             } catch (insertErr) {
-              if (insertErr.code === '23505') {
-                console.log(`[COMPLETE][S7b-B] Auto-enroll plan already exists for template ${tmpl.id}, skipping`);
-              } else {
-                console.error('[COMPLETE][S7b-B] auto-enroll plan insert error:', insertErr.message);
-              }
+              if (insertErr.code !== '23505') console.error('[COMPLETE][S7b-B] auto-enroll error:', insertErr.message);
             }
           }
         }
@@ -660,7 +621,7 @@ module.exports = async function handler(req, res) {
         console.error('[COMPLETE][S7b-B] auto-enroll template lookup error:', e.message);
       }
 
-      console.log('[COMPLETE][S7b] Plan activation complete. Total activated:', activatedPlans.length, activatedPlans.map(p => p.name).join(', '));
+      console.log('[COMPLETE][S7b] Plan activation complete. Total activated:', activatedPlans.length);
 
       // ── Activity logs for activated plans ──────────────────────────
       for (const ap of activatedPlans) {
@@ -669,14 +630,8 @@ module.exports = async function handler(req, res) {
             customer_id: customerId,
             event_type:  ap.status === 'active' ? 'service_plan_activated' : 'service_plan_added',
             title:       `Service plan ${ap.status === 'active' ? 'activated' : 'added (card required)'}: ${ap.name || 'from quote'}`,
-            actor_id:    null,
-            actor_name:  'System',
-            metadata: {
-              plan_id:     ap.id,
-              template_id: ap.template_id,
-              source:      ap.source,
-              status:      ap.status,
-            },
+            actor_id:    null, actor_name: 'System',
+            metadata: { plan_id: ap.id, template_id: ap.template_id, source: ap.source, status: ap.status },
           });
         } catch (e) { /* best effort */ }
       }
@@ -690,18 +645,13 @@ module.exports = async function handler(req, res) {
           event_type: 'job_completed',
           title: 'Job marked complete',
           metadata: {
-            completed_by:        completed_by || null,
-            install_fee:         installFee,
-            installed_system_id: installedSystemId,
-            customer_id:         customerId,
-            ownership_type:      ownershipType,
-            ownership_source:    ownershipSource,
-            product_name:        product?.name || null,
-            product_sku:         product?.sku || null,
+            completed_by, install_fee: installFee,
+            installed_system_id: installedSystemId, customer_id: customerId,
+            ownership_type: ownershipType, ownership_source: ownershipSource,
+            product_name: product?.name || null, product_sku: product?.sku || null,
             service_plans_activated: activatedPlans.length,
           },
-          actor_id:   completed_by || 'system',
-          actor_name: null,
+          actor_id: completed_by || 'system', actor_name: null,
         });
       } catch(e) { console.error('[BEST-EFFORT] job_activity_log:', e.message); }
 
@@ -710,119 +660,107 @@ module.exports = async function handler(req, res) {
         try {
           await supabase.from('customer_activity_log').insert({
             customer_id: customerId,
-            event_type:  'system_installed',
-            title:       `System installed: ${product?.name || job.system_type || 'System'}`,
-            actor_id:    null,
-            actor_name:  'Zenith Installer',
+            event_type: 'system_installed',
+            title: `System installed: ${product?.name || job.system_type || 'System'}`,
+            actor_id: null, actor_name: 'Zenith Installer',
             metadata: {
-              job_id,
-              installed_system_id: installedSystemId,
-              install_fee:         installFee,
-              ownership_type:      ownershipType,
-              ownership_source:    ownershipSource,
-              system_type:         job.system_type || null,
-              product_name:        product?.name || null,
-              product_sku:         product?.sku || null,
+              job_id, installed_system_id: installedSystemId, install_fee: installFee,
+              ownership_type: ownershipType, ownership_source: ownershipSource,
+              system_type: job.system_type || null,
+              product_name: product?.name || null, product_sku: product?.sku || null,
               service_plans_activated: activatedPlans.length,
             },
           });
         } catch(e) { console.error('[BEST-EFFORT] customer_activity_log:', e.message); }
       }
     }
-// ── GAP 14: Auto-create post-install follow-up ───────────────
+
+    // ── GAP 14: Auto-create post-install follow-up ───────────────
     if (customerId && !alreadyComplete) {
       try {
-        const followUpDate = new Date(Date.now() + 24 * 60 * 60 * 1000) // +1 day
+        const followUpDate = new Date(Date.now() + 24 * 60 * 60 * 1000)
         const customerNameForFU = product?.name
           ? `${job.customer_name_snapshot || 'Customer'} (${product.name})`
           : (job.customer_name_snapshot || 'Customer')
         await supabase.from('follow_up_tasks').insert({
-          entity_type: 'customer',
-          entity_id: customerId,
+          entity_type: 'customer', entity_id: customerId,
           title: `Post-install check-in: ${customerNameForFU}`,
           description: `Installation completed. Follow up to ensure satisfaction, answer questions, and confirm system is working properly.`,
           due_date: followUpDate.toISOString().split('T')[0],
-          status: 'pending',
-          priority: 'normal',
+          status: 'pending', priority: 'normal',
         })
       } catch (_) { /* fire-and-forget */ }
     }
+
+    // ── SMS: Install complete + Google review (fire-and-forget) ──────
+    if (customerId && !alreadyComplete) {
+      try {
+        const { data: smsCustomer } = await supabase
+          .from('customers').select('phone, full_name').eq('id', customerId).maybeSingle()
+        if (smsCustomer?.phone) {
+          const firstName = (smsCustomer.full_name || 'there').split(' ')[0]
+          const msg = GOOGLE_REVIEW_URL
+            ? `Hi ${firstName}, your water system installation is complete! Welcome to the Zenith family 💧 We'd love a quick Google review: ${GOOGLE_REVIEW_URL}`
+            : `Hi ${firstName}, your water system installation is complete! Welcome to the Zenith family 💧 — Zenith Pure Solutions`
+          await sendSms(smsCustomer.phone, msg, customerId)
+        }
+      } catch (_) { /* fire-and-forget */ }
+    }
+
     // ── 9. Skip charge if no customer or no fee ───────────────────────
     if (!customerId || installFee <= 0) {
       return res.status(200).json({
-        success:              true,
-        job_completed:        true,
-        installed_system_id:  installedSystemId,
-        ownership_type:       ownershipType,
-        ownership_source:     ownershipSource,
-        charge_status:        installFee <= 0 ? 'no_fee' : 'no_customer',
-        install_fee:          installFee,
-        service_plans:        activatedPlans,
+        success: true, job_completed: true,
+        installed_system_id: installedSystemId,
+        ownership_type: ownershipType, ownership_source: ownershipSource,
+        charge_status: installFee <= 0 ? 'no_fee' : 'no_customer',
+        install_fee: installFee, service_plans: activatedPlans,
       });
     }
 
     // ── 10. Double-charge guard ───────────────────────────────────────
     const { data: existingCharge } = await supabase
-      .from('payment_transactions')
-      .select('id')
-      .eq('customer_id', customerId)
-      .eq('type', 'install_fee')
-      .eq('status', 'succeeded')
-      .maybeSingle();
+      .from('payment_transactions').select('id')
+      .eq('customer_id', customerId).eq('type', 'install_fee').eq('status', 'succeeded').maybeSingle();
 
     if (existingCharge) {
       return res.status(200).json({
-        success:             true,
-        job_completed:       true,
+        success: true, job_completed: true,
         installed_system_id: installedSystemId,
-        ownership_type:      ownershipType,
-        ownership_source:    ownershipSource,
-        charge_status:       'already_charged',
-        charge_details:      { reason: 'Install fee already charged for this customer' },
-        service_plans:       activatedPlans,
+        ownership_type: ownershipType, ownership_source: ownershipSource,
+        charge_status: 'already_charged',
+        charge_details: { reason: 'Install fee already charged for this customer' },
+        service_plans: activatedPlans,
       });
     }
 
     const { data: customer } = await supabase
-      .from('customers')
-      .select('id, stripe_customer_id, full_name, email')
-      .eq('id', customerId)
-      .single();
+      .from('customers').select('id, stripe_customer_id, full_name, email')
+      .eq('id', customerId).single();
 
     if (!customer?.stripe_customer_id) {
       return res.status(200).json({
-        success:             true,
-        job_completed:       true,
+        success: true, job_completed: true,
         installed_system_id: installedSystemId,
-        ownership_type:      ownershipType,
-        ownership_source:    ownershipSource,
-        charge_status:       'skipped',
-        charge_details:      { reason: 'No Stripe customer ID' },
-        install_fee:         installFee,
-        service_plans:       activatedPlans,
+        ownership_type: ownershipType, ownership_source: ownershipSource,
+        charge_status: 'skipped',
+        charge_details: { reason: 'No Stripe customer ID' },
+        install_fee: installFee, service_plans: activatedPlans,
       });
     }
 
     const { data: paymentMethod } = await supabase
-      .from('payment_methods')
-      .select('id, external_id, last_four')
-      .eq('customer_id', customerId)
-      .eq('is_default', true)
-      .eq('status', 'active')
-      .limit(1)
-      .maybeSingle();
+      .from('payment_methods').select('id, external_id, last_four')
+      .eq('customer_id', customerId).eq('is_default', true).eq('status', 'active').limit(1).maybeSingle();
 
     if (!paymentMethod?.external_id) {
       return res.status(200).json({
-        success:             true,
-        job_completed:       true,
+        success: true, job_completed: true,
         installed_system_id: installedSystemId,
-        ownership_type:      ownershipType,
-        ownership_source:    ownershipSource,
-        charge_status:       'skipped',
-        charge_details:      { reason: 'No payment method on file' },
-        install_fee:         installFee,
-        service_plans:       activatedPlans,
+        ownership_type: ownershipType, ownership_source: ownershipSource,
+        charge_status: 'skipped',
+        charge_details: { reason: 'No payment method on file' },
+        install_fee: installFee, service_plans: activatedPlans,
       });
     }
 
@@ -830,58 +768,45 @@ module.exports = async function handler(req, res) {
     let chargeResult = {};
     try {
       const paymentIntent = await stripe.paymentIntents.create({
-        amount:         Math.round(installFee * 100),
-        currency:       'usd',
-        customer:       customer.stripe_customer_id,
+        amount: Math.round(installFee * 100), currency: 'usd',
+        customer: customer.stripe_customer_id,
         payment_method: paymentMethod.external_id,
-        off_session:    true,
-        confirm:        true,
-        description:    `Install fee — Job ${job_id}`,
-        metadata:       { job_id, customer_id: customerId, type: 'install_fee' },
+        off_session: true, confirm: true,
+        description: `Install fee — Job ${job_id}`,
+        metadata: { job_id, customer_id: customerId, type: 'install_fee' },
       });
 
       await supabase.from('payment_transactions').insert({
-        customer_id:       customerId,
-        payment_method_id: paymentMethod.id,
-        amount:            installFee,
-        status:            paymentIntent.status === 'succeeded' ? 'succeeded' : 'pending',
-        type:              'install_fee',
-        external_id:       paymentIntent.id,
-        description:       `Installation fee — ${customer.full_name || 'Customer'}`,
-        attempted_at:      new Date().toISOString(),
-        completed_at:      paymentIntent.status === 'succeeded' ? new Date().toISOString() : null,
+        customer_id: customerId, payment_method_id: paymentMethod.id,
+        amount: installFee,
+        status: paymentIntent.status === 'succeeded' ? 'succeeded' : 'pending',
+        type: 'install_fee', external_id: paymentIntent.id,
+        description: `Installation fee — ${customer.full_name || 'Customer'}`,
+        attempted_at: new Date().toISOString(),
+        completed_at: paymentIntent.status === 'succeeded' ? new Date().toISOString() : null,
       });
 
       chargeResult = {
-        status:            paymentIntent.status === 'succeeded' ? 'charged' : 'pending',
-        amount:            installFee,
-        payment_intent_id: paymentIntent.id,
-        last_four:         paymentMethod.last_four,
+        status: paymentIntent.status === 'succeeded' ? 'charged' : 'pending',
+        amount: installFee, payment_intent_id: paymentIntent.id,
+        last_four: paymentMethod.last_four,
       };
     } catch (stripeErr) {
       await supabase.from('payment_transactions').insert({
-        customer_id:       customerId,
-        payment_method_id: paymentMethod.id,
-        amount:            installFee,
-        status:            'failed',
-        type:              'install_fee',
-        description:       `Installation fee FAILED — ${customer.full_name || 'Customer'}`,
-        attempted_at:      new Date().toISOString(),
-        failure_reason:    stripeErr.message,
+        customer_id: customerId, payment_method_id: paymentMethod.id,
+        amount: installFee, status: 'failed', type: 'install_fee',
+        description: `Installation fee FAILED — ${customer.full_name || 'Customer'}`,
+        attempted_at: new Date().toISOString(), failure_reason: stripeErr.message,
       });
-
       chargeResult = { status: 'failed', error: stripeErr.message, amount: installFee };
     }
 
     return res.status(200).json({
-      success:             true,
-      job_completed:       true,
+      success: true, job_completed: true,
       installed_system_id: installedSystemId,
-      ownership_type:      ownershipType,
-      ownership_source:    ownershipSource,
-      charge_status:       chargeResult.status,
-      charge_details:      chargeResult,
-      service_plans:       activatedPlans,
+      ownership_type: ownershipType, ownership_source: ownershipSource,
+      charge_status: chargeResult.status, charge_details: chargeResult,
+      service_plans: activatedPlans,
     });
 
   } catch (err) {
