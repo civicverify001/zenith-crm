@@ -16,6 +16,8 @@ import { ConnectCalendarPage } from '../modules/schedule/ConnectCalendarPage'
 import ShippingPage from '../modules/shipping/ShippingPage'
 import { FulfillmentPage } from '../modules/fulfillment/FulfillmentPage'
 import CommunicationsPage from '../modules/communications/CommunicationsPage'
+import QuickInvoicePage from '../modules/invoices/QuickInvoicePage'
+import InvoiceThankYouPage from '../modules/invoices/InvoiceThankYouPage'
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
@@ -131,6 +133,7 @@ export function AppRouter() {
       {/* Public routes — no auth required */}
       <Route path="/q/:token" element={<QuoteReviewPage />} />
       <Route path="/terms" element={<PublicTermsPage />} />
+      <Route path="/invoice/thank-you" element={<InvoiceThankYouPage />} />
 
       {/* Everything else requires auth */}
       <Route path="/*" element={
@@ -192,6 +195,7 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
 
         {/* Invoices */}
         <Route path="/invoices" element={guard('/invoices', <InvoicesPage />)} />
+        <Route path="/invoice/new" element={guard('/invoices', <QuickInvoicePage />)} />
 
         {/* Contracts */}
         <Route path="/services" element={guard('/services', <ContractsPage />)} />
@@ -202,6 +206,7 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
 
         {/* Fulfillment Queue */}
         <Route path="/fulfillment" element={guard('/fulfillment', <FulfillmentPage />)} />
+
         {/* Communications / SMS */}
         <Route path="/communications" element={guard('/communications', <CommunicationsPage />)} />
 
