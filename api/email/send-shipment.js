@@ -1,15 +1,39 @@
 // ============================================================
-// ZENITH CRM OS — SHIPMENT NOTIFICATION EMAIL
+// ZENITH CRM OS — SHIPMENT NOTIFICATION EMAIL + SMS
 // api/email/send-shipment.js
-// Sends email when a shipment is marked as shipped
+// Sends email + SMS when a shipment is marked as shipped
 // ============================================================
 
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const FROM_EMAIL = 'info@zenithpuresolutions.com';
+const RESEND_API_KEY  = process.env.RESEND_API_KEY;
+const OPENPHONE_KEY   = process.env.OPENPHONE_API_KEY || '';
+const OPENPHONE_NUM   = process.env.OPENPHONE_NUMBER  || '+14633005100';
+const FROM_EMAIL      = 'info@zenithpuresolutions.com';
+
+// ── SMS: fire-and-forget via OpenPhone ────────────────────────────
+async function sendSms(supabase, to, message, customerId) {
+  if (!OPENPHONE_KEY || !to) return
+  try {
+    const digits = to.replace(/\D/g, '')
+    const e164   = digits.length === 10 ? `+1${digits}` : `+${digits}`
+    const resp   = await fetch('https://api.openphone.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': OPENPHONE_KEY },
+      body: JSON.stringify({ content: message, from: OPENPHONE_NUM, to: [e164] }),
+    })
+    const data = await resp.json()
+    await supabase.from('communications_log').insert({
+      entity_type: 'customer', entity_id: customerId, customer_id: customerId,
+      direction: 'outbound', channel: 'sms', body: message,
+      status: resp.ok ? 'sent' : 'failed',
+      external_id: data?.data?.id || null,
+      created_at: new Date().toISOString(),
+    })
+  } catch (e) { console.error('[send-shipment] sendSms error:', e.message) }
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -35,9 +59,11 @@ export default async function handler(req, res) {
     }
 
     const customerEmail = shipment.customers?.email;
-    if (!customerEmail) {
-      console.log(`[send-shipment] No email for customer on shipment ${shipment_id} — skipping`);
-      return res.status(200).json({ success: true, skipped: true, reason: 'No customer email' });
+    const customerPhone = shipment.customers?.phone;
+
+    if (!customerEmail && !customerPhone) {
+      console.log(`[send-shipment] No contact info for customer on shipment ${shipment_id} — skipping`);
+      return res.status(200).json({ success: true, skipped: true, reason: 'No customer contact info' });
     }
 
     // 2. Fetch brand settings
@@ -158,49 +184,67 @@ export default async function handler(req, res) {
 </body>
 </html>`;
 
-    // 5. Send via Resend
-    const emailRes = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-      },
-      body: JSON.stringify({
-        from: `${companyName} <${FROM_EMAIL}>`,
-        to: customerEmail,
-        subject,
-        html,
-      }),
-    });
-
-    const emailData = await emailRes.json();
-
-    // 6. Log to email_log
-    try {
-      await supabase.from('email_log').insert({
-        customer_id: shipment.customer_id,
-        email_type: 'shipment_shipped',
-        to_address: customerEmail,
-        subject,
-        template_used: 'shipment_shipped',
-        status: emailRes.ok ? 'sent' : 'failed',
-        external_id: emailData.id || null,
-        sent_at: emailRes.ok ? new Date().toISOString() : null,
+    // 5. Send email via Resend (if customer has email)
+    let emailSent = false;
+    if (customerEmail) {
+      const emailRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${RESEND_API_KEY}`,
+        },
+        body: JSON.stringify({
+          from: `${companyName} <${FROM_EMAIL}>`,
+          to: customerEmail,
+          subject,
+          html,
+        }),
       });
-    } catch (logErr) {
-      console.error('[send-shipment] email_log error:', logErr);
+
+      const emailData = await emailRes.json();
+      emailSent = emailRes.ok;
+
+      // 6. Log email to email_log
+      try {
+        await supabase.from('email_log').insert({
+          customer_id: shipment.customer_id,
+          email_type: 'shipment_shipped',
+          to_address: customerEmail,
+          subject,
+          template_used: 'shipment_shipped',
+          status: emailRes.ok ? 'sent' : 'failed',
+          external_id: emailData.id || null,
+          sent_at: emailRes.ok ? new Date().toISOString() : null,
+        });
+      } catch (logErr) {
+        console.error('[send-shipment] email_log error:', logErr);
+      }
+
+      if (!emailRes.ok) {
+        console.error('[send-shipment] Resend error:', emailData);
+      } else {
+        console.log(`[send-shipment] Email sent to ${customerEmail} for shipment ${shipment_id}`);
+      }
     }
 
-    if (!emailRes.ok) {
-      console.error('[send-shipment] Resend error:', emailData);
-      return res.status(500).json({ error: 'Failed to send email', detail: emailData });
+    // 7. SMS: Shipment notification (fire-and-forget)
+    if (customerPhone) {
+      const firstName  = (customerName).split(' ')[0]
+      const smsMsg     = trackingNumber
+        ? `Hi ${firstName}, your ${productName} has shipped via ${carrier}! Tracking: ${trackingNumber}${trackingUrl ? ` — ${trackingUrl}` : ''} — Zenith Pure Solutions`
+        : `Hi ${firstName}, your ${productName} has shipped via ${carrier} and is on its way! — Zenith Pure Solutions`
+      await sendSms(supabase, customerPhone, smsMsg, shipment.customer_id)
+      console.log(`[send-shipment] SMS sent to ${customerPhone} for shipment ${shipment_id}`)
     }
 
-    console.log(`[send-shipment] Shipped notification sent to ${customerEmail} for shipment ${shipment_id}`);
-    return res.status(200).json({ success: true, email_id: emailData.id });
+    return res.status(200).json({
+      success: true,
+      email_sent: emailSent,
+      sms_sent: !!customerPhone,
+    });
 
   } catch (err) {
     console.error('[send-shipment] error:', err);
-    return res.status(500).json({ error: 'Failed to send shipment email', detail: err.message });
+    return res.status(500).json({ error: 'Failed to send shipment notification', detail: err.message });
   }
 }
