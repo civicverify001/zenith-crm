@@ -1092,6 +1092,26 @@ function ReceivingTab() {
       }
     }
     await supabase.from('purchase_orders').update({ status: 'received', received_at: new Date().toISOString() }).eq('id', selected.id)
+
+    // ── GAP 19b: Check if any waiting_for_stock jobs can now be unblocked ──
+    try {
+      const { data: waitingJobs } = await supabase
+        .from('jobs')
+        .select('id')
+        .eq('status', 'waiting_for_stock')
+      if (waitingJobs && waitingJobs.length > 0) {
+        let unblocked = 0
+        for (const wj of waitingJobs) {
+          const { data: result } = await supabase.rpc('rpc_recheck_waiting_job', { p_job_id: wj.id })
+          if (result === 'ready') unblocked++
+        }
+        if (unblocked > 0) {
+          console.log(`[Receiving] Unblocked ${unblocked} job(s) from waiting_for_stock → ready_to_schedule`)
+        }
+      }
+    } catch (e) { console.error('[Receiving] Recheck waiting jobs error:', e) }
+
+    setSaving(false); setDone(true); load()
     setSaving(false); setDone(true); load()
   }
 
