@@ -1112,7 +1112,6 @@ function ReceivingTab() {
     } catch (e) { console.error('[Receiving] Recheck waiting jobs error:', e) }
 
     setSaving(false); setDone(true); load()
-    setSaving(false); setDone(true); load()
   }
 
   if (loading) return <div style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>Loading…</div>
