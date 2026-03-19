@@ -729,7 +729,24 @@ module.exports = async function handler(req, res) {
         } catch(e) { console.error('[BEST-EFFORT] customer_activity_log:', e.message); }
       }
     }
-
+// ── GAP 14: Auto-create post-install follow-up ───────────────
+    if (customerId && !alreadyComplete) {
+      try {
+        const followUpDate = new Date(Date.now() + 24 * 60 * 60 * 1000) // +1 day
+        const customerNameForFU = product?.name
+          ? `${job.customer_name_snapshot || 'Customer'} (${product.name})`
+          : (job.customer_name_snapshot || 'Customer')
+        await supabase.from('follow_up_tasks').insert({
+          entity_type: 'customer',
+          entity_id: customerId,
+          title: `Post-install check-in: ${customerNameForFU}`,
+          description: `Installation completed. Follow up to ensure satisfaction, answer questions, and confirm system is working properly.`,
+          due_date: followUpDate.toISOString().split('T')[0],
+          status: 'pending',
+          priority: 'normal',
+        })
+      } catch (_) { /* fire-and-forget */ }
+    }
     // ── 9. Skip charge if no customer or no fee ───────────────────────
     if (!customerId || installFee <= 0) {
       return res.status(200).json({
