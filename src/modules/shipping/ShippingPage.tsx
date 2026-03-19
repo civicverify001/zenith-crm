@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../hooks/useAuth'
 import { usePermissions } from '../../hooks/usePermissions'
 import {
@@ -24,6 +24,10 @@ import { supabase } from '../../lib/supabase'
 
 // ============================================================
 // SHIPPING PAGE — Full manual + cron shipment management
+// Gap 16 fixes:
+//   1. Email fires on inline Ship button (table row)
+//   2. Tracking number warning before marking shipped
+//   3. FedEx env check with clear error message
 // ============================================================
 
 const TABS = [
@@ -56,7 +60,6 @@ export default function ShippingPage() {
     queryFn: getShipmentCounts,
   })
 
-  // Access check — after all hooks
   if (!can('shipping', 'view')) {
     return (
       <div style={{ padding: 40, color: '#e2e8f0', textAlign: 'center' }}>
@@ -66,7 +69,6 @@ export default function ShippingPage() {
     )
   }
 
-  // Filter by search
   const filtered = shipments.filter(s => {
     if (!search) return true
     const q = search.toLowerCase()
@@ -77,6 +79,11 @@ export default function ShippingPage() {
       s.ship_to_city?.toLowerCase().includes(q)
     )
   })
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['shipments'] })
+    queryClient.invalidateQueries({ queryKey: ['shipment_counts'] })
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -236,7 +243,8 @@ export default function ShippingPage() {
                     <StatusBadge status={s.status} />
                   </td>
                   <td style={tdStyle}>
-                    <ShipmentActions shipment={s} />
+                    {/* GAP 16 FIX 1: inline Ship button now fires email */}
+                    <ShipmentActions shipment={s} onUpdated={invalidate} />
                   </td>
                 </tr>
               ))}
@@ -251,8 +259,7 @@ export default function ShippingPage() {
           onClose={() => setShowCreateDrawer(false)}
           onCreated={() => {
             setShowCreateDrawer(false)
-            queryClient.invalidateQueries({ queryKey: ['shipments'] })
-            queryClient.invalidateQueries({ queryKey: ['shipment_counts'] })
+            invalidate()
           }}
           userId={user?.id}
         />
@@ -265,8 +272,7 @@ export default function ShippingPage() {
           onClose={() => setSelectedShipment(null)}
           onUpdated={() => {
             setSelectedShipment(null)
-            queryClient.invalidateQueries({ queryKey: ['shipments'] })
-            queryClient.invalidateQueries({ queryKey: ['shipment_counts'] })
+            invalidate()
           }}
         />
       )}
@@ -292,36 +298,50 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 // ============================================================
-// SHIPMENT ACTIONS (inline buttons per row)
+// SHIPMENT ACTIONS — GAP 16 FIX 1: email fires on inline Ship
 // ============================================================
-function ShipmentActions({ shipment }: { shipment: Shipment }) {
+function ShipmentActions({ shipment, onUpdated }: { shipment: Shipment; onUpdated: () => void }) {
   const { can } = usePermissions()
-  const queryClient = useQueryClient()
-
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['shipments'] })
-    queryClient.invalidateQueries({ queryKey: ['shipment_counts'] })
-  }
 
   const handleMarkShipped = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!confirm('Mark this shipment as shipped? This will advance the service plan fulfillment dates.')) return
+
+    // GAP 16 FIX 2: warn if no tracking number
+    if (!shipment.tracking_number) {
+      const proceed = confirm(
+        'No tracking number on this shipment. Mark as shipped anyway?\n\n' +
+        'Tip: Open the shipment to add a tracking number first.'
+      )
+      if (!proceed) return
+    } else {
+      if (!confirm('Mark this shipment as shipped? This will advance the service plan fulfillment dates.')) return
+    }
+
     const result = await markShipped(shipment.id)
-    if (result.success) invalidate()
-    else alert(result.error || 'Failed to mark shipped')
+    if (result.success) {
+      // GAP 16 FIX 1: fire email on inline Ship button (was missing before)
+      fetch('/api/email/send-shipment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shipment_id: shipment.id }),
+      }).catch(() => {})
+      onUpdated()
+    } else {
+      alert(result.error || 'Failed to mark shipped')
+    }
   }
 
   const handleMarkDelivered = async (e: React.MouseEvent) => {
     e.stopPropagation()
     await markDelivered(shipment.id)
-    invalidate()
+    onUpdated()
   }
 
   const handleCancel = async (e: React.MouseEvent) => {
     e.stopPropagation()
     if (!confirm('Cancel this shipment?')) return
     await cancelShipment(shipment.id)
-    invalidate()
+    onUpdated()
   }
 
   const btnStyle = (color: string): React.CSSProperties => ({
@@ -368,13 +388,9 @@ function CreateShipmentDrawer({ onClose, onCreated, userId }: {
   const [customers, setCustomers] = useState<{ id: string; name: string }[]>([])
   const [products, setProducts] = useState<{ id: string; name: string }[]>([])
 
-  // Load customers + products
   useEffect(() => {
     supabase.from('customers').select('id, full_name').order('full_name').then(({ data }) => {
-      setCustomers((data || []).map(c => ({
-        id: c.id,
-        name: c.full_name || '',
-      })))
+      setCustomers((data || []).map(c => ({ id: c.id, name: c.full_name || '' })))
     })
     supabase.from('products').select('id, name').eq('is_active', true).order('name').then(({ data }) => {
       setProducts(data || [])
@@ -485,6 +501,11 @@ function CreateShipmentDrawer({ onClose, onCreated, userId }: {
                 </span>
               )}
             </div>
+            {!customerId && (
+              <div style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic', marginBottom: 8 }}>
+                Select a customer above to auto-fill address
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <input
                 placeholder="Name"
@@ -553,6 +574,7 @@ function CreateShipmentDrawer({ onClose, onCreated, userId }: {
 
 // ============================================================
 // SHIPMENT DETAIL DRAWER
+// GAP 16 FIX 2: tracking warning + FIX 3: FedEx env check
 // ============================================================
 function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
   shipment: Shipment
@@ -563,6 +585,7 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
   const [tracking, setTracking] = useState(shipment.tracking_number || '')
   const [labelUrl, setLabelUrl] = useState(shipment.label_url || '')
   const [saving, setSaving] = useState(false)
+  const [fedexError, setFedexError] = useState('')
 
   const handleSaveTracking = async () => {
     setSaving(true)
@@ -578,8 +601,10 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
     }
   }
 
+  // GAP 16 FIX 3: FedEx env check — clear error message instead of generic failure
   const handleGenerateFedExLabel = async () => {
     if (!confirm('Generate a FedEx shipping label for this shipment?')) return
+    setFedexError('')
     setSaving(true)
     try {
       const res = await fetch('/api/shipping/create-label', {
@@ -589,13 +614,21 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
       })
       const data = await res.json()
       if (!res.ok || !data.success) {
-        alert(data.error || 'Failed to create FedEx label')
+        // GAP 16 FIX 3: detect credential/env errors specifically
+        const errMsg = data.error || ''
+        if (errMsg.toLowerCase().includes('api_key') || errMsg.toLowerCase().includes('unauthorized') || errMsg.toLowerCase().includes('credential') || errMsg.toLowerCase().includes('401')) {
+          setFedexError('FedEx API credentials not configured. Check FEDEX_API_KEY, FEDEX_SECRET_KEY, and FEDEX_ACCOUNT_NUMBER in Vercel environment variables.')
+        } else if (!shipment.ship_to_address) {
+          setFedexError('Cannot generate label — shipping address is missing on this shipment.')
+        } else {
+          setFedexError(errMsg || 'Failed to create FedEx label. Check Vercel logs for details.')
+        }
       } else {
         if (data.label_url) window.open(data.label_url, '_blank')
         onUpdated()
       }
     } catch (err) {
-      alert('Error generating FedEx label')
+      setFedexError('Network error generating FedEx label. Check your internet connection.')
     } finally {
       setSaving(false)
     }
@@ -628,9 +661,17 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
     try {
       switch (action) {
         case 'ship': {
+          // GAP 16 FIX 2: warn if no tracking number before shipping
+          if (!shipment.tracking_number && !tracking) {
+            const proceed = confirm(
+              'No tracking number set. Mark as shipped anyway?\n\n' +
+              'Tip: Add a tracking number above first so the customer email includes it.'
+            )
+            if (!proceed) { setSaving(false); return }
+          }
           const result = await markShipped(shipment.id)
           if (!result.success) { alert(result.error || 'Failed'); break }
-          // Fire-and-forget: send shipment notification email
+          // Fire shipment email (fire-and-forget)
           fetch('/api/email/send-shipment', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -656,8 +697,6 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
     }
   }
 
-  const config = SHIPMENT_STATUS_CONFIG[shipment.status]
-
   return (
     <div style={overlayStyle} onClick={onClose}>
       <div style={drawerStyle} onClick={e => e.stopPropagation()}>
@@ -672,7 +711,6 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto', flex: 1 }}>
-          {/* Info cards */}
           <InfoCard label="Customer" value={shipment.customer_name || '—'} />
           <InfoCard label="Product" value={shipment.product_name || '—'} />
           <InfoCard label="Type" value={SHIPMENT_TYPE_LABELS[shipment.type] || shipment.type} />
@@ -723,6 +761,17 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
             </div>
           )}
 
+          {/* FedEx error banner — GAP 16 FIX 3 */}
+          {fedexError && (
+            <div style={{
+              padding: '10px 14px', borderRadius: 10, fontSize: 12,
+              background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+              color: '#f87171',
+            }}>
+              ⚠️ {fedexError}
+            </div>
+          )}
+
           {/* Tracking input */}
           {can('shipping', 'add_tracking') && ['pending', 'label_created'].includes(shipment.status) && (
             <div style={{
@@ -734,7 +783,7 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <input
-                  placeholder="Tracking Number"
+                  placeholder="Tracking Number (e.g. 794644774783)"
                   value={tracking}
                   onChange={e => setTracking(e.target.value)}
                   style={inputStyle}
