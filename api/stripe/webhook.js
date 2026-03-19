@@ -589,6 +589,24 @@ async function handleBuyoutPayment(supabase, session) {
 
     console.log('[BUYOUT] ✓ Complete:', { contract_id, systems_converted: systemIds.length })
 
+    // 9. Send paid confirmation email (fire and forget)
+try {
+  await fetch(`${process.env.VITE_APP_URL}/api/email/send-buyout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      invoiceId:      invoice_id,
+      senderName:     'Zenith Pure Solutions',
+      paymentLinkUrl: null, // already paid — no link needed
+      systemName:     null, // will load from DB
+      warrantyDetails: null,
+      isPaidConfirmation: true,
+    }),
+  })
+} catch (emailErr) {
+  console.error('[BUYOUT] Confirmation email failed (non-blocking):', emailErr.message)
+}
+
   } catch (err) {
     console.error('[BUYOUT] Error:', err.message)
   }
