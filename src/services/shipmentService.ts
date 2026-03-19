@@ -101,10 +101,10 @@ export async function resolveShippingAddress(customerId: string): Promise<{
 } | null> {
   try {
     const { data: customer, error } = await supabase
-      .from('customers')
-      .select('full_name, address, city, state, zip, service_address, service_city, service_state, service_zip')
-      .eq('id', customerId)
-      .single();
+  .from('customers')
+  .select('full_name, address, city, state, zip')
+  .eq('id', customerId)
+  .single();
 
     if (error || !customer) return null;
 
