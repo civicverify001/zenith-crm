@@ -110,18 +110,6 @@ export async function resolveShippingAddress(customerId: string): Promise<{
 
     const fullName = customer.full_name || '';
 
-    // Priority 1: Service address (all fields must be non-null)
-    if (customer.service_address && customer.service_city && customer.service_state && customer.service_zip) {
-      return {
-        name: fullName,
-        address: customer.service_address,
-        city: customer.service_city,
-        state: customer.service_state,
-        zip: customer.service_zip,
-        source: 'service_address',
-      };
-    }
-
     // Priority 2: Primary address
     if (customer.address && customer.city && customer.state && customer.zip) {
       return {
