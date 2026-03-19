@@ -104,12 +104,18 @@ export default function HeatMapPage() {
         const { data } = await supabase
           .from('customers')
           .select('id, full_name, phone, address, service_address, lifecycle_status')
-          .not('service_address', 'is', null)
           .limit(400)
         for (const c of data || []) {
           const addr = c.service_address || c.address
-if (addr) {
-  all.push({ id: c.id, name: c.full_name, address: addr, ...
+          if (addr) {
+            all.push({
+              id: c.id,
+              name: c.full_name,
+              address: addr,
+              type: 'customer',
+              lifecycle: c.lifecycle_status,
+              phone: c.phone,
+            })
           }
         }
       } catch { /* skip */ }
@@ -135,7 +141,6 @@ if (addr) {
         if (coords) updated[i] = { ...updated[i], ...coords }
         done++
         setProgress(done)
-        // Small delay every 10 to avoid rate limit
         if (i % 10 === 9) await new Promise(r => setTimeout(r, 150))
       }
       setPoints([...updated])
@@ -182,7 +187,6 @@ if (addr) {
     const G = (window as any).google?.maps
     if (!G) return
 
-    // Clear old
     for (const m of markersR.current) m.setMap(null)
     markersR.current = []
 
@@ -240,7 +244,6 @@ if (addr) {
     }
   }, [points, showLeads, showCustomers, showLost, mapReady])
 
-  // ── Computed stats ──────────────────────────────────────────────
   const plotted       = points.filter(p => p.lat && p.lng)
   const leadCount     = plotted.filter(p => p.type === 'lead').length
   const customerCount = plotted.filter(p => p.type === 'customer').length
@@ -249,7 +252,6 @@ if (addr) {
   return (
     <div style={{ minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
 
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0', margin: 0 }}>Location Map</h1>
@@ -257,8 +259,6 @@ if (addr) {
             Leads, customers, and lost contacts plotted across Indianapolis
           </p>
         </div>
-
-        {/* Geocoding progress */}
         {geocoding && (
           <div style={{ background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.3)', borderRadius: 10, padding: '8px 16px', fontSize: 12, color: '#60a5fa' }}>
             Geocoding addresses… {progress}/{total}
@@ -269,14 +269,11 @@ if (addr) {
         )}
       </div>
 
-      {/* Stats + Filters */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-
-        {/* Filter toggles */}
         {[
-          { label: `🔵 Active Leads (${leadCount})`,   active: showLeads,     toggle: () => setShowLeads(v => !v),     color: '#fbbf24' },
-          { label: `✅ Customers (${customerCount})`,   active: showCustomers, toggle: () => setShowCustomers(v => !v), color: '#4ade80' },
-          { label: `❌ Lost / DND (${lostCount})`,      active: showLost,      toggle: () => setShowLost(v => !v),      color: '#f87171' },
+          { label: `🔵 Active Leads (${leadCount})`,  active: showLeads,     toggle: () => setShowLeads(v => !v),     color: '#fbbf24' },
+          { label: `✅ Customers (${customerCount})`,  active: showCustomers, toggle: () => setShowCustomers(v => !v), color: '#4ade80' },
+          { label: `❌ Lost / DND (${lostCount})`,     active: showLost,      toggle: () => setShowLost(v => !v),      color: '#f87171' },
         ].map(f => (
           <button key={f.label} onClick={f.toggle}
             style={{
@@ -289,15 +286,12 @@ if (addr) {
             {f.label}
           </button>
         ))}
-
         <div style={{ marginLeft: 'auto', fontSize: 12, color: '#334155' }}>
           {plotted.length} of {total} addresses plotted
         </div>
       </div>
 
-      {/* Map container */}
       <div style={{ flex: 1, minHeight: 560, borderRadius: 16, overflow: 'hidden', border: '1px solid #1e3a4f', position: 'relative', background: '#162232' }}>
-
         {mapError && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
             <div style={{ background: '#0f1923', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 14, padding: '24px 32px', textAlign: 'center', maxWidth: 400 }}>
@@ -307,7 +301,6 @@ if (addr) {
             </div>
           </div>
         )}
-
         {loading && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10, background: '#162232' }}>
             <div style={{ textAlign: 'center' }}>
@@ -316,11 +309,9 @@ if (addr) {
             </div>
           </div>
         )}
-
         <div ref={mapDivRef} style={{ width: '100%', height: '100%', minHeight: 560 }} />
       </div>
 
-      {/* Legend */}
       <div style={{ display: 'flex', gap: 20, marginTop: 12, flexWrap: 'wrap' }}>
         {[
           { color: '#fbbf24', label: 'Active Lead' },
