@@ -154,8 +154,15 @@ export default async function handler(req, res) {
   }
 
   if (event.type !== 'checkout.session.completed') {
-    return res.status(200).json({ received: true })
-  }
+  return res.status(200).json({ received: true })
+}
+
+// ── Buyout payment check — handle before regular checkout flow ──
+const sessionMeta = event.data.object.metadata || {}
+if (sessionMeta.invoice_type === 'buyout') {
+  await handleBuyoutPayment(supabase, event.data.object)
+  return res.status(200).json({ received: true })
+}
 
   const session = event.data.object
   const meta = session.metadata || {}
@@ -490,4 +497,99 @@ async function commitForFulfillmentWebhook(supa, jobId) {
   const finalStatus = anyShort ? 'short' : 'reserved'
   await supa.from('jobs').update({ inventory_status: finalStatus, inventory_checked_at: new Date().toISOString(), inventory_reservation_key: `${jobId}:fulfillment_committed` }).eq('id', jobId)
   return { status: finalStatus, results }
+}
+// ─── Buyout Payment Handler ───────────────────────────────────
+async function handleBuyoutPayment(supabase, session) {
+  const meta = session.metadata || {}
+  const { invoice_id, contract_id, customer_id, calculation_id, plans_to_cancel, plans_to_activate } = meta
+
+  if (!invoice_id || !contract_id || !customer_id) {
+    console.error('[BUYOUT] Missing metadata fields:', meta)
+    return
+  }
+
+  const now = new Date().toISOString()
+  const amountDollars = (session.amount_total || 0) / 100
+
+  try {
+    console.log('[BUYOUT] Processing buyout payment:', { invoice_id, contract_id, customer_id, amount: amountDollars })
+
+    // 1. Mark invoice paid
+    await supabase.from('invoices').update({
+      status: 'paid', amount_paid: amountDollars,
+      paid_at: now, paid_date: now.split('T')[0],
+      balance_due: 0, updated_at: now,
+    }).eq('id', invoice_id)
+
+    // 2. Mark calculation executed
+    if (calculation_id) {
+      await supabase.from('buyout_calculations').update({
+        was_executed: true, executed_at: now, executed_by: 'stripe_payment',
+      }).eq('id', calculation_id)
+    }
+
+    // 3. Complete the contract
+    await supabase.from('contracts').update({
+      status: 'completed', updated_at: now,
+    }).eq('id', contract_id)
+
+    // 4. Convert rented systems → purchased
+    const { data: systems } = await supabase
+      .from('installed_systems').select('id')
+      .eq('customer_id', customer_id)
+      .eq('ownership_type', 'rented').eq('is_active', true)
+
+    const systemIds = (systems || []).map(s => s.id)
+    if (systemIds.length > 0) {
+      await supabase.from('installed_systems')
+        .update({ ownership_type: 'purchased' }).in('id', systemIds)
+    }
+
+    // 5. Cancel plans marked for cancellation
+    const cancelIds = JSON.parse(plans_to_cancel || '[]')
+    if (cancelIds.length > 0) {
+      await supabase.from('customer_service_plans')
+        .update({ status: 'cancelled', cancelled_at: now }).in('id', cancelIds)
+    }
+
+    // 6. Activate new plans
+    const activatePlans = JSON.parse(plans_to_activate || '[]')
+    const today = now.split('T')[0]
+    for (const newPlan of activatePlans) {
+      if (!newPlan.plan_id) continue
+      try {
+        await supabase.from('customer_service_plans').insert({
+          customer_id, plan_id: newPlan.plan_id,
+          status: 'active', billing_cycle: newPlan.billing_cycle || 'monthly',
+          price: newPlan.price || 0, source: 'buyout',
+          start_date: today, billing_start_date: today,
+          next_billing_date: today, activated_at: now,
+        })
+      } catch (planErr) {
+        console.error('[BUYOUT] Plan activation failed:', planErr.message)
+      }
+    }
+
+    // 7. Log payment transaction
+    await supabase.from('payment_transactions').insert({
+      customer_id, amount: amountDollars, status: 'succeeded',
+      type: 'buyout_payment',
+      external_id: session.payment_intent || session.id,
+      description: 'Equipment buyout payment',
+      attempted_at: now, completed_at: now,
+    })
+
+    // 8. Activity log
+    await supabase.from('customer_activity_log').insert({
+      customer_id, event_type: 'buyout_completed',
+      title: `Equipment buyout completed — $${amountDollars.toFixed(2)} paid`,
+      actor_name: 'System (Stripe)',
+      metadata: { invoice_id, contract_id, calculation_id, amount: amountDollars, systems_converted: systemIds.length },
+    }).then(() => {}).catch(() => {})
+
+    console.log('[BUYOUT] ✓ Complete:', { contract_id, systems_converted: systemIds.length })
+
+  } catch (err) {
+    console.error('[BUYOUT] Error:', err.message)
+  }
 }
