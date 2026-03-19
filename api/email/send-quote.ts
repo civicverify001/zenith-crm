@@ -209,6 +209,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       created_at: new Date().toISOString(),
     })
 
+    // ── GAP 14: Auto-create follow-up 2 days after quote sent ────
+    try {
+      const followUpDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000) // +2 days
+      await supabase.from('follow_up_tasks').insert({
+        entity_type: 'customer',
+        entity_id: quote.customer_id,
+        title: `Follow up on quote: ${customer.full_name} — ${quote.quote_number}`,
+        description: `Quote ${quote.quote_number} was sent on ${new Date().toLocaleDateString()}. Follow up to check interest.`,
+        due_date: followUpDate.toISOString().split('T')[0],
+        status: 'pending',
+        priority: 'normal',
+      })
+    } catch (_) { /* fire-and-forget */ }
+
     return res.status(200).json({ ok: true, to: customer.email, from: fromEmail })
   } catch (err: any) {
     console.error(err)
