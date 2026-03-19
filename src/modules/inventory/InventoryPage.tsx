@@ -84,6 +84,22 @@ interface InventoryTx {
   products: { name: string; sku: string }
 }
 
+interface EquipmentReturn {
+  id: string
+  customer_id: string | null
+  product_id: string | null
+  serial_number: string | null
+  condition: 'good' | 'damaged' | 'needs_refurb'
+  refurb_status: 'none' | 'in_progress' | 'complete'
+  redeployable: boolean
+  restocked: boolean
+  notes: string | null
+  returned_at: string
+  created_at: string
+  customers?: { full_name: string } | null
+  products?: { name: string; sku: string } | null
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const CAT_LABELS: Record<string, string> = {
@@ -98,6 +114,18 @@ const TX_LABELS: Record<string, string> = {
   receive: '📦 Receive', reserve: '🔒 Reserve', unreserve: '🔓 Unreserve',
   fulfill: '✅ Fulfill', adjustment: '✏️ Adjust', adjust: '✏️ Adjust',
   return: '↩️ Return',
+}
+
+const CONDITION_LABELS: Record<string, [string, string]> = {
+  good:        ['rgba(74,222,128,0.12)',  '#4ade80'],
+  damaged:     ['rgba(248,113,113,0.12)', '#f87171'],
+  needs_refurb:['rgba(251,191,36,0.12)', '#fbbf24'],
+}
+
+const REFURB_LABELS: Record<string, [string, string]> = {
+  none:       ['rgba(100,116,139,0.12)', '#64748b'],
+  in_progress:['rgba(167,139,250,0.12)', '#a78bfa'],
+  complete:   ['rgba(74,222,128,0.12)',  '#4ade80'],
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -131,7 +159,7 @@ function Badge({ val, label }: { val: string; label?: string }) {
 }
 
 function StockBadge({ available, reorderPoint }: { available: number; reorderPoint: number }) {
-  if (available <= 0)          return <Badge val="out_of_stock" label="Out of Stock" />
+  if (available <= 0)            return <Badge val="out_of_stock" label="Out of Stock" />
   if (available <= reorderPoint) return <Badge val="low" label="Low" />
   return <Badge val="ok" label="OK" />
 }
@@ -397,7 +425,6 @@ function CreatePOModal({ allProducts, onClose, onDone }: {
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 20, cursor: 'pointer' }}>×</button>
         </div>
 
-        {/* Product search */}
         <div style={{ padding: '14px 24px', borderBottom: '1px solid #1e3a4f', position: 'relative' }}>
           <input
             value={search} onChange={e => setSearch(e.target.value)}
@@ -423,7 +450,6 @@ function CreatePOModal({ allProducts, onClose, onDone }: {
           )}
         </div>
 
-        {/* Line items */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {lines.length === 0 ? (
             <div style={{ textAlign: 'center', padding: 40, color: '#334155', fontSize: 13 }}>Search and add products above</div>
@@ -479,7 +505,6 @@ function CreatePOModal({ allProducts, onClose, onDone }: {
 function StockLevelsTab({ onSwitchToPO }: { onSwitchToPO: () => void }) {
   const { profile } = useAuth()
   const isAdmin = profile?.role === 'admin'
-  const isMobile = useIsMobile()
 
   const [merged, setMerged] = useState<MergedRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -568,10 +593,10 @@ function StockLevelsTab({ onSwitchToPO }: { onSwitchToPO: () => void }) {
   const zeroQtyTracked = tracked.filter(m => m.inv!.quantity_on_hand === 0)
 
   const FILTER_TABS = [
-    { id: 'all',       label: 'All Tracked',  count: tracked.length,    color: '#60a5fa' },
-    { id: 'low',       label: 'Low Stock',    count: lowRows.length,    color: '#fbbf24' },
-    { id: 'short',     label: 'Out of Stock', count: shortRows.length,  color: '#f87171' },
-    { id: 'untracked', label: 'Not Tracked',  count: untracked.length,  color: '#64748b' },
+    { id: 'all',       label: 'All Tracked',  count: tracked.length,   color: '#60a5fa' },
+    { id: 'low',       label: 'Low Stock',    count: lowRows.length,   color: '#fbbf24' },
+    { id: 'short',     label: 'Out of Stock', count: shortRows.length, color: '#f87171' },
+    { id: 'untracked', label: 'Not Tracked',  count: untracked.length, color: '#64748b' },
   ] as const
 
   const filtered = merged.filter(m => {
@@ -595,7 +620,6 @@ function StockLevelsTab({ onSwitchToPO }: { onSwitchToPO: () => void }) {
 
   return (
     <div>
-      {/* Filter tabs */}
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${FILTER_TABS.length}, 1fr)`, gap: 3, marginBottom: 16 }}>
         {FILTER_TABS.map(tab => {
           const isActive = activeFilter === tab.id
@@ -612,12 +636,11 @@ function StockLevelsTab({ onSwitchToPO }: { onSwitchToPO: () => void }) {
         })}
       </div>
 
-      {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
         {[
-          { label: 'Total On Hand',     value: tracked.reduce((s, m) => s + m.inv!.quantity_on_hand, 0),       color: '#60a5fa' },
-          { label: 'Reserved for Jobs', value: tracked.reduce((s, m) => s + m.inv!.quantity_reserved, 0),      color: '#a78bfa' },
-          { label: 'Available to Sell', value: tracked.reduce((s, m) => s + m.inv!.quantity_available, 0),     color: '#4ade80' },
+          { label: 'Total On Hand',     value: tracked.reduce((s, m) => s + m.inv!.quantity_on_hand, 0),        color: '#60a5fa' },
+          { label: 'Reserved for Jobs', value: tracked.reduce((s, m) => s + m.inv!.quantity_reserved, 0),       color: '#a78bfa' },
+          { label: 'Available to Sell', value: tracked.reduce((s, m) => s + m.inv!.quantity_available, 0),      color: '#4ade80' },
           { label: 'On Order',          value: tracked.reduce((s, m) => s + (m.inv!.quantity_on_order || 0), 0), color: '#fbbf24' },
         ].map(s => (
           <div key={s.label} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, padding: '10px 14px' }}>
@@ -627,7 +650,6 @@ function StockLevelsTab({ onSwitchToPO }: { onSwitchToPO: () => void }) {
         ))}
       </div>
 
-      {/* Toolbar */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search product, vendor, SKU…"
           style={{ flex: 1, minWidth: 180, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, color: '#e2e8f0', padding: '9px 14px', fontSize: 13, outline: 'none' }} />
@@ -645,7 +667,6 @@ function StockLevelsTab({ onSwitchToPO }: { onSwitchToPO: () => void }) {
         )}
       </div>
 
-      {/* Selection banner */}
       {selectedRows.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', marginBottom: 12, background: 'rgba(13,126,163,0.1)', border: '1px solid rgba(13,126,163,0.3)', borderRadius: 10 }}>
           <span style={{ fontSize: 13, color: '#38bdf8' }}>
@@ -662,24 +683,15 @@ function StockLevelsTab({ onSwitchToPO }: { onSwitchToPO: () => void }) {
         </div>
       )}
 
-      {/* Table */}
       <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
             <thead>
               <tr style={{ background: '#0f1923', borderBottom: '1px solid #1e3a4f' }}>
                 <th style={{ width: 36, padding: '10px 12px' }}></th>
-                <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Product</th>
-                <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>SKU</th>
-                <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Category</th>
-                <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Vendor</th>
-                <th style={{ textAlign: 'right', padding: '10px 14px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>On Hand</th>
-                <th style={{ textAlign: 'right', padding: '10px 14px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Reserved</th>
-                <th style={{ textAlign: 'right', padding: '10px 14px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Available</th>
-                <th style={{ textAlign: 'right', padding: '10px 14px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Reorder At</th>
-                {isAdmin && <th style={{ textAlign: 'right', padding: '10px 14px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Cost</th>}
-                <th style={{ textAlign: 'center', padding: '10px 14px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Status</th>
-                <th style={{ padding: '10px 14px' }}></th>
+                {['Product','SKU','Category','Vendor','On Hand','Reserved','Available','Reorder At', ...(isAdmin ? ['Cost'] : []),'Status',''].map((h, i) => (
+                  <th key={h+i} style={{ textAlign: ['On Hand','Reserved','Available','Reorder At','Cost'].includes(h) ? 'right' : h === 'Status' ? 'center' : 'left', padding: '10px 14px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -687,28 +699,19 @@ function StockLevelsTab({ onSwitchToPO }: { onSwitchToPO: () => void }) {
                 <tr><td colSpan={12} style={{ textAlign: 'center', padding: 60, color: '#64748b' }}>Loading inventory…</td></tr>
               ) : filtered.length === 0 ? (
                 <tr><td colSpan={12} style={{ textAlign: 'center', padding: 60, color: '#64748b' }}>No products found</td></tr>
-              ) : filtered.map((m, i) => (
+              ) : filtered.map(m => (
                 <tr key={m.product.id} style={{ borderBottom: '1px solid #0d1a26', background: selected.has(m.product.id) ? 'rgba(13,126,163,0.08)' : 'transparent' }}
                   onMouseEnter={e => { if (!selected.has(m.product.id)) (e.currentTarget as HTMLElement).style.background = 'rgba(96,165,250,0.04)' }}
                   onMouseLeave={e => { if (!selected.has(m.product.id)) (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
                   <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                    {m.inv && (
-                      <input type="checkbox" checked={selected.has(m.product.id)} onChange={() => toggleSelect(m.product.id)}
-                        style={{ accentColor: '#0d7ea3', width: 14, height: 14, cursor: 'pointer' }} />
-                    )}
+                    {m.inv && <input type="checkbox" checked={selected.has(m.product.id)} onChange={() => toggleSelect(m.product.id)} style={{ accentColor: '#0d7ea3', width: 14, height: 14, cursor: 'pointer' }} />}
                   </td>
-                  <td style={{ padding: '10px 14px' }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{m.product.name}</div>
-                  </td>
+                  <td style={{ padding: '10px 14px' }}><div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{m.product.name}</div></td>
                   <td style={{ padding: '10px 14px', fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>{m.product.sku}</td>
                   <td style={{ padding: '10px 14px', fontSize: 11, color: '#64748b' }}>{CAT_LABELS[m.product.category] || m.product.category}</td>
                   <td style={{ padding: '10px 14px' }}>
-                    {m.product.vendor_name && (
-                      <div style={{ fontSize: 12, fontWeight: 600, color: '#fbbf24' }}>{m.product.vendor_name}</div>
-                    )}
-                    {m.product.vendor_sku && (
-                      <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace', marginTop: 1 }}>{m.product.vendor_sku}</div>
-                    )}
+                    {m.product.vendor_name && <div style={{ fontSize: 12, fontWeight: 600, color: '#fbbf24' }}>{m.product.vendor_name}</div>}
+                    {m.product.vendor_sku && <div style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace', marginTop: 1 }}>{m.product.vendor_sku}</div>}
                     {!m.product.vendor_name && !m.product.vendor_sku && <span style={{ color: '#334155' }}>—</span>}
                   </td>
                   {m.inv ? (
@@ -718,19 +721,11 @@ function StockLevelsTab({ onSwitchToPO }: { onSwitchToPO: () => void }) {
                       <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 800, color: '#e2e8f0' }}>{m.inv.quantity_available}</td>
                       <td style={{ padding: '10px 14px', textAlign: 'right', color: '#64748b' }}>{m.inv.reorder_point}</td>
                       {isAdmin && <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 12, color: m.product.vendor_cost ? '#4ade80' : '#334155' }}>{fmt$(m.product.vendor_cost)}</td>}
-                      <td style={{ padding: '10px 14px', textAlign: 'center' }}>
-                        <StockBadge available={m.inv.quantity_available} reorderPoint={m.inv.reorder_point} />
-                      </td>
+                      <td style={{ padding: '10px 14px', textAlign: 'center' }}><StockBadge available={m.inv.quantity_available} reorderPoint={m.inv.reorder_point} /></td>
                       <td style={{ padding: '10px 14px', textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                          <button onClick={() => setAdjustModal(m)}
-                            style={{ fontSize: 11, padding: '4px 10px', borderRadius: 7, border: '1px solid rgba(96,165,250,0.3)', background: 'rgba(96,165,250,0.1)', color: '#60a5fa', cursor: 'pointer', fontWeight: 600 }}>
-                            Adjust
-                          </button>
-                          <button onClick={() => openQuickReorder([m])}
-                            style={{ fontSize: 11, padding: '4px 10px', borderRadius: 7, border: '1px solid rgba(13,126,163,0.3)', background: 'rgba(13,126,163,0.1)', color: '#0d7ea3', cursor: 'pointer', fontWeight: 600 }}>
-                            🛒 Reorder
-                          </button>
+                          <button onClick={() => setAdjustModal(m)} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 7, border: '1px solid rgba(96,165,250,0.3)', background: 'rgba(96,165,250,0.1)', color: '#60a5fa', cursor: 'pointer', fontWeight: 600 }}>Adjust</button>
+                          <button onClick={() => openQuickReorder([m])} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 7, border: '1px solid rgba(13,126,163,0.3)', background: 'rgba(13,126,163,0.1)', color: '#0d7ea3', cursor: 'pointer', fontWeight: 600 }}>🛒 Reorder</button>
                         </div>
                       </td>
                     </>
@@ -738,14 +733,9 @@ function StockLevelsTab({ onSwitchToPO }: { onSwitchToPO: () => void }) {
                     <>
                       {[0,1,2,3].map(k => <td key={k} style={{ padding: '10px 14px', textAlign: 'right', color: '#334155' }}>—</td>)}
                       {isAdmin && <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 12, color: m.product.vendor_cost ? '#4ade80' : '#334155' }}>{fmt$(m.product.vendor_cost)}</td>}
-                      <td style={{ padding: '10px 14px', textAlign: 'center' }}>
-                        <span style={{ fontSize: 11, color: '#334155', fontStyle: 'italic' }}>not tracked</span>
-                      </td>
+                      <td style={{ padding: '10px 14px', textAlign: 'center' }}><span style={{ fontSize: 11, color: '#334155', fontStyle: 'italic' }}>not tracked</span></td>
                       <td style={{ padding: '10px 14px', textAlign: 'right' }}>
-                        <button onClick={() => startTracking(m.product)}
-                          style={{ fontSize: 11, padding: '4px 10px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.1)', color: '#4ade80', cursor: 'pointer', fontWeight: 600 }}>
-                          + Track
-                        </button>
+                        <button onClick={() => startTracking(m.product)} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.1)', color: '#4ade80', cursor: 'pointer', fontWeight: 600 }}>+ Track</button>
                       </td>
                     </>
                   )}
@@ -756,15 +746,12 @@ function StockLevelsTab({ onSwitchToPO }: { onSwitchToPO: () => void }) {
         </div>
       </div>
 
-      {/* Adjust Modal */}
       {adjustModal?.inv && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
           <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 16, width: '100%', maxWidth: 360, padding: 24 }}>
             <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 17, marginBottom: 4 }}>Adjust Stock</div>
             <div style={{ color: '#64748b', fontSize: 13, marginBottom: 16 }}>
-              {adjustModal.product.name}
-              <span style={{ margin: '0 8px', color: '#334155' }}>·</span>
-              Available: <strong style={{ color: '#e2e8f0' }}>{adjustModal.inv.quantity_available}</strong>
+              {adjustModal.product.name}<span style={{ margin: '0 8px', color: '#334155' }}>·</span>Available: <strong style={{ color: '#e2e8f0' }}>{adjustModal.inv.quantity_available}</strong>
             </div>
             <label style={{ display: 'block', fontSize: 12, color: '#64748b', marginBottom: 6 }}>Quantity change (+ add · − remove)</label>
             <input type="number" value={adjustQty} onChange={e => setAdjustQty(e.target.value)} placeholder="e.g. 10 or -2"
@@ -783,13 +770,8 @@ function StockLevelsTab({ onSwitchToPO }: { onSwitchToPO: () => void }) {
         </div>
       )}
 
-      {/* Modals */}
-      {showOpeningStock && (
-        <OpeningStockModal rows={merged} onClose={() => setShowOpeningStock(false)} onDone={load} />
-      )}
-      {showReorderModal && (
-        <QuickReorderModal rows={reorderRows} onClose={() => setShowReorderModal(false)} onDone={load} onSwitchToPO={onSwitchToPO} />
-      )}
+      {showOpeningStock && <OpeningStockModal rows={merged} onClose={() => setShowOpeningStock(false)} onDone={load} />}
+      {showReorderModal && <QuickReorderModal rows={reorderRows} onClose={() => setShowReorderModal(false)} onDone={load} onSwitchToPO={onSwitchToPO} />}
     </div>
   )
 }
@@ -801,14 +783,12 @@ function ReorderTab() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('open')
   const [selected, setSelected] = useState<Set<string>>(new Set())
-
   const [productMap, setProductMap] = useState<Record<string, {name: string; sku: string}>>({})
 
   const load = useCallback(async () => {
     setLoading(true)
     const { data } = await supabase.from('reorder_requests').select('*').order('created_at', { ascending: false })
     setRows(data || [])
-    // Fetch product names
     const ids = [...new Set((data || []).map((r: any) => r.product_id).filter(Boolean))]
     if (ids.length) {
       const { data: prods } = await supabase.from('products').select('id, name, sku').in('id', ids)
@@ -902,7 +882,6 @@ function ReorderTab() {
   )
 }
 
-
 // ─── Print PO ─────────────────────────────────────────────────────────────────
 
 function printPO(po: PurchaseOrder, allProducts: Product[]) {
@@ -965,8 +944,7 @@ function PurchaseOrdersTab({ allProducts }: { allProducts: Product[] }) {
     try {
       const updates: Record<string, unknown> = { status }
       if (status === 'received') updates.received_at = new Date().toISOString()
-      const { error } = await supabase.from('purchase_orders').update(updates).eq('id', id)
-      if (error) console.error('PO status update error:', error)
+      await supabase.from('purchase_orders').update(updates).eq('id', id)
     } catch(e) { console.error(e) }
     load()
   }
@@ -1039,7 +1017,6 @@ function PurchaseOrdersTab({ allProducts }: { allProducts: Product[] }) {
             </div>
           ))}
       </div>
-
       {showCreate && <CreatePOModal allProducts={allProducts} onClose={() => setShowCreate(false)} onDone={load} />}
     </div>
   )
@@ -1054,14 +1031,12 @@ function ReceivingTab() {
   const [receiveQtys, setReceiveQtys] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [done, setDone] = useState(false)
-
   const [productMap, setProductMap] = useState<Record<string, {name: string; sku: string}>>({})
 
   const load = useCallback(async () => {
     setLoading(true)
     const { data } = await supabase.from('purchase_orders').select('*, purchase_order_items(id, product_id, quantity_ordered, unit_cost)').in('status', ['submitted', 'partial']).order('created_at', { ascending: false })
     setPos(data || [])
-    // Fetch product names for all items
     const ids = [...new Set((data || []).flatMap((po: any) => (po.purchase_order_items || []).map((i: any) => i.product_id)).filter(Boolean))]
     if (ids.length) {
       const { data: prods } = await supabase.from('products').select('id, name, sku').in('id', ids)
@@ -1093,20 +1068,11 @@ function ReceivingTab() {
     }
     await supabase.from('purchase_orders').update({ status: 'received', received_at: new Date().toISOString() }).eq('id', selected.id)
 
-    // ── GAP 19b: Check if any waiting_for_stock jobs can now be unblocked ──
     try {
-      const { data: waitingJobs } = await supabase
-        .from('jobs')
-        .select('id')
-        .eq('status', 'waiting_for_stock')
+      const { data: waitingJobs } = await supabase.from('jobs').select('id').eq('status', 'waiting_for_stock')
       if (waitingJobs && waitingJobs.length > 0) {
-        let unblocked = 0
         for (const wj of waitingJobs) {
-          const { data: result } = await supabase.rpc('rpc_recheck_waiting_job', { p_job_id: wj.id })
-          if (result === 'ready') unblocked++
-        }
-        if (unblocked > 0) {
-          console.log(`[Receiving] Unblocked ${unblocked} job(s) from waiting_for_stock → ready_to_schedule`)
+          await supabase.rpc('rpc_recheck_waiting_job', { p_job_id: wj.id })
         }
       }
     } catch (e) { console.error('[Receiving] Recheck waiting jobs error:', e) }
@@ -1189,7 +1155,6 @@ function TransactionsTab() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
-
   const [productMap, setProductMap] = useState<Record<string, {name: string; sku: string}>>({})
 
   useEffect(() => {
@@ -1261,6 +1226,300 @@ function TransactionsTab() {
   )
 }
 
+// ─── Equipment Returns Tab ────────────────────────────────────────────────────
+
+function ReturnsTab({ allProducts }: { allProducts: Product[] }) {
+  const [returns, setReturns] = useState<EquipmentReturn[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showForm, setShowForm] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [restocking, setRestocking] = useState<string | null>(null)
+  const [filterCondition, setFilterCondition] = useState('all')
+
+  // Form state
+  const [formProductId, setFormProductId] = useState('')
+  const [formCustomerSearch, setFormCustomerSearch] = useState('')
+  const [formCustomerId, setFormCustomerId] = useState<string | null>(null)
+  const [formCustomerName, setFormCustomerName] = useState('')
+  const [formSerial, setFormSerial] = useState('')
+  const [formCondition, setFormCondition] = useState<'good' | 'damaged' | 'needs_refurb'>('good')
+  const [formNotes, setFormNotes] = useState('')
+  const [formRedeployable, setFormRedeployable] = useState(false)
+  const [customerResults, setCustomerResults] = useState<{ id: string; full_name: string; phone: string }[]>([])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const { data } = await supabase
+      .from('equipment_returns')
+      .select('*, customers(full_name), products(name, sku)')
+      .order('created_at', { ascending: false })
+    setReturns((data || []) as EquipmentReturn[])
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  // Customer search
+  useEffect(() => {
+    if (formCustomerSearch.length < 2) { setCustomerResults([]); return }
+    const timer = setTimeout(async () => {
+      const { data } = await supabase
+        .from('customers')
+        .select('id, full_name, phone')
+        .ilike('full_name', `%${formCustomerSearch}%`)
+        .limit(6)
+      setCustomerResults(data || [])
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [formCustomerSearch])
+
+  async function handleSubmit() {
+    if (!formProductId) return
+    setSaving(true)
+    await supabase.from('equipment_returns').insert({
+      customer_id:   formCustomerId || null,
+      product_id:    formProductId,
+      serial_number: formSerial || null,
+      condition:     formCondition,
+      refurb_status: formCondition === 'needs_refurb' ? 'in_progress' : 'none',
+      redeployable:  formRedeployable,
+      restocked:     false,
+      notes:         formNotes || null,
+      returned_at:   new Date().toISOString().split('T')[0],
+    })
+    setSaving(false)
+    setShowForm(false)
+    setFormProductId(''); setFormSerial(''); setFormNotes('')
+    setFormCustomerId(null); setFormCustomerSearch(''); setFormCustomerName('')
+    setFormCondition('good'); setFormRedeployable(false)
+    load()
+  }
+
+  async function handleRestock(ret: EquipmentReturn) {
+    if (!ret.product_id || ret.restocked) return
+    setRestocking(ret.id)
+    const { data: inv } = await supabase
+      .from('inventory')
+      .select('id, quantity_on_hand, quantity_available')
+      .eq('product_id', ret.product_id)
+      .maybeSingle()
+    if (inv) {
+      await supabase.from('inventory').update({
+        quantity_on_hand:   inv.quantity_on_hand + 1,
+        quantity_available: inv.quantity_available + 1,
+      }).eq('id', inv.id)
+    }
+    await supabase.from('equipment_returns').update({ restocked: true, redeployable: true }).eq('id', ret.id)
+    setRestocking(null)
+    load()
+  }
+
+  async function updateRefurbStatus(id: string, refurb_status: string) {
+    const updates: any = { refurb_status }
+    if (refurb_status === 'complete') updates.redeployable = true
+    await supabase.from('equipment_returns').update(updates).eq('id', id)
+    load()
+  }
+
+  const CONDITION_TABS = [
+    { id: 'all',         label: 'All',          color: '#94a3b8' },
+    { id: 'good',        label: 'Good',         color: '#4ade80' },
+    { id: 'needs_refurb',label: 'Needs Refurb', color: '#fbbf24' },
+    { id: 'damaged',     label: 'Damaged',      color: '#f87171' },
+  ]
+
+  const filtered = returns.filter(r => filterCondition === 'all' || r.condition === filterCondition)
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 4, padding: 4, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, overflowX: 'auto' }}>
+          {CONDITION_TABS.map(tab => (
+            <button key={tab.id} onClick={() => setFilterCondition(tab.id)}
+              style={{ padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, border: filterCondition === tab.id ? `1px solid ${tab.color}35` : '1px solid transparent', background: filterCondition === tab.id ? `${tab.color}18` : 'transparent', color: filterCondition === tab.id ? tab.color : '#64748b' }}>
+              {tab.label} {tab.id !== 'all' && `(${returns.filter(r => r.condition === tab.id).length})`}
+            </button>
+          ))}
+        </div>
+        <button onClick={() => setShowForm(!showForm)}
+          style={{ padding: '9px 18px', borderRadius: 10, border: 'none', background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          + Log Return
+        </button>
+      </div>
+
+      {/* Stats row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
+        {[
+          { label: 'Total Returns',   value: returns.length,                                           color: '#60a5fa' },
+          { label: 'Redeployable',    value: returns.filter(r => r.redeployable && !r.restocked).length, color: '#4ade80' },
+          { label: 'Needs Refurb',    value: returns.filter(r => r.condition === 'needs_refurb').length,  color: '#fbbf24' },
+          { label: 'Restocked',       value: returns.filter(r => r.restocked).length,                    color: '#a78bfa' },
+        ].map(s => (
+          <div key={s.label} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, padding: '10px 14px' }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Log Return Form */}
+      {showForm && (
+        <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14, padding: 20, marginBottom: 16 }}>
+          <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 15, marginBottom: 16 }}>Log Equipment Return</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+            {/* Product picker */}
+            <div>
+              <label style={{ display: 'block', fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Product *</label>
+              <select value={formProductId} onChange={e => setFormProductId(e.target.value)}
+                style={{ width: '100%', background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: formProductId ? '#e2e8f0' : '#64748b', padding: '9px 12px', fontSize: 13, outline: 'none' }}>
+                <option value="">Select product…</option>
+                {allProducts.map(p => <option key={p.id} value={p.id} style={{ background: '#0f1923' }}>{p.name}</option>)}
+              </select>
+            </div>
+            {/* Customer search */}
+            <div style={{ position: 'relative' }}>
+              <label style={{ display: 'block', fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Customer (optional)</label>
+              {formCustomerId ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, padding: '9px 12px' }}>
+                  <span style={{ fontSize: 13, color: '#e2e8f0', flex: 1 }}>{formCustomerName}</span>
+                  <button onClick={() => { setFormCustomerId(null); setFormCustomerName(''); setFormCustomerSearch('') }}
+                    style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 14 }}>×</button>
+                </div>
+              ) : (
+                <>
+                  <input value={formCustomerSearch} onChange={e => setFormCustomerSearch(e.target.value)}
+                    placeholder="Search customer name…"
+                    style={{ width: '100%', background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '9px 12px', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
+                  {customerResults.length > 0 && (
+                    <div style={{ position: 'absolute', left: 0, right: 0, top: '100%', background: '#162232', border: '1px solid #1e3a4f', borderRadius: 8, zIndex: 10 }}>
+                      {customerResults.map(c => (
+                        <div key={c.id} onClick={() => { setFormCustomerId(c.id); setFormCustomerName(c.full_name); setFormCustomerSearch(''); setCustomerResults([]) }}
+                          style={{ padding: '9px 14px', cursor: 'pointer', borderBottom: '1px solid #0d1a26', fontSize: 13, color: '#e2e8f0' }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#1e3a4f' }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+                          {c.full_name} <span style={{ color: '#64748b', fontSize: 11 }}>{c.phone}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Serial Number</label>
+              <input value={formSerial} onChange={e => setFormSerial(e.target.value)} placeholder="Optional"
+                style={{ width: '100%', background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '9px 12px', fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: 'monospace' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Condition *</label>
+              <select value={formCondition} onChange={e => setFormCondition(e.target.value as any)}
+                style={{ width: '100%', background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '9px 12px', fontSize: 13, outline: 'none' }}>
+                <option value="good" style={{ background: '#0f1923' }}>Good</option>
+                <option value="needs_refurb" style={{ background: '#0f1923' }}>Needs Refurb</option>
+                <option value="damaged" style={{ background: '#0f1923' }}>Damaged</option>
+              </select>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', paddingBottom: 10 }}>
+                <input type="checkbox" checked={formRedeployable} onChange={e => setFormRedeployable(e.target.checked)} style={{ accentColor: '#4ade80', width: 15, height: 15 }} />
+                <span style={{ fontSize: 13, color: '#e2e8f0' }}>Redeployable now</span>
+              </label>
+            </div>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Notes</label>
+            <input value={formNotes} onChange={e => setFormNotes(e.target.value)} placeholder="Reason for return, condition details…"
+              style={{ width: '100%', background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '9px 12px', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
+          </div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <button onClick={() => setShowForm(false)} style={{ padding: '8px 16px', fontSize: 13, color: '#64748b', background: 'none', border: 'none', cursor: 'pointer' }}>Cancel</button>
+            <button onClick={handleSubmit} disabled={saving || !formProductId}
+              style={{ padding: '10px 22px', borderRadius: 8, border: 'none', cursor: 'pointer', background: formProductId ? '#0d7ea3' : '#334155', color: '#fff', fontWeight: 700, fontSize: 14, opacity: saving ? 0.5 : 1 }}>
+              {saving ? 'Saving…' : 'Log Return'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Returns table */}
+      <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 800 }}>
+            <thead>
+              <tr style={{ background: '#0f1923', borderBottom: '1px solid #1e3a4f' }}>
+                {['Date', 'Product', 'Customer', 'Serial', 'Condition', 'Refurb', 'Status', 'Actions'].map((h, i) => (
+                  <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>Loading…</td></tr>
+                : filtered.length === 0 ? (
+                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 60, color: '#64748b' }}>
+                    No returns logged yet. Use "Log Return" to record returned equipment.
+                  </td></tr>
+                ) : filtered.map(r => {
+                  const [condBg, condColor] = CONDITION_LABELS[r.condition] || ['rgba(100,116,139,0.12)', '#64748b']
+                  const [refurbBg, refurbColor] = REFURB_LABELS[r.refurb_status] || ['rgba(100,116,139,0.12)', '#64748b']
+                  return (
+                    <tr key={r.id} style={{ borderBottom: '1px solid #0d1a26' }}>
+                      <td style={{ padding: '10px 14px', fontSize: 12, color: '#64748b' }}>{new Date(r.returned_at).toLocaleDateString()}</td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{(r.products as any)?.name || '—'}</div>
+                        <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{(r.products as any)?.sku || '—'}</div>
+                      </td>
+                      <td style={{ padding: '10px 14px', fontSize: 13, color: '#94a3b8' }}>{(r.customers as any)?.full_name || <span style={{ color: '#334155' }}>—</span>}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>{r.serial_number || '—'}</td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <span style={{ background: condBg, color: condColor, border: `1px solid ${condColor}35`, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20 }}>
+                          {r.condition.replace(/_/g, ' ')}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 14px' }}>
+                        {r.condition === 'needs_refurb' ? (
+                          <select value={r.refurb_status} onChange={e => updateRefurbStatus(r.id, e.target.value)}
+                            style={{ background: refurbBg, color: refurbColor, border: `1px solid ${refurbColor}35`, borderRadius: 8, padding: '3px 8px', fontSize: 11, fontWeight: 700, outline: 'none', cursor: 'pointer' }}>
+                            <option value="in_progress" style={{ background: '#0f1923' }}>In Progress</option>
+                            <option value="complete" style={{ background: '#0f1923' }}>Complete</option>
+                          </select>
+                        ) : (
+                          <span style={{ color: '#334155', fontSize: 12 }}>—</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '10px 14px' }}>
+                        {r.restocked ? (
+                          <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 700 }}>✓ Restocked</span>
+                        ) : r.redeployable ? (
+                          <span style={{ fontSize: 11, color: '#22d3ee', fontWeight: 700 }}>Ready</span>
+                        ) : (
+                          <span style={{ fontSize: 11, color: '#334155' }}>Pending</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '10px 14px' }}>
+                        {r.redeployable && !r.restocked && (
+                          <button onClick={() => handleRestock(r)} disabled={restocking === r.id}
+                            style={{ fontSize: 11, padding: '4px 12px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.1)', color: '#4ade80', cursor: 'pointer', fontWeight: 600, opacity: restocking === r.id ? 0.5 : 1 }}>
+                            {restocking === r.id ? '…' : '+ Restock'}
+                          </button>
+                        )}
+                        {r.notes && (
+                          <div style={{ fontSize: 11, color: '#475569', marginTop: 4, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.notes}>{r.notes}</div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 const MAIN_TABS = [
@@ -1269,6 +1528,7 @@ const MAIN_TABS = [
   { id: 'purchase',     label: 'Purchase Orders',  icon: '🛒' },
   { id: 'receiving',    label: 'Receiving',         icon: '✅' },
   { id: 'transactions', label: 'Transactions',      icon: '📋' },
+  { id: 'returns',      label: 'Returns',           icon: '↩️' },
 ]
 
 export default function InventoryPage() {
@@ -1284,7 +1544,7 @@ export default function InventoryPage() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0', margin: 0 }}>Inventory</h1>
-          <p style={{ fontSize: 13, color: '#475569', marginTop: 4, marginBottom: 0 }}>Stock levels, reorder requests, purchase orders, and receiving</p>
+          <p style={{ fontSize: 13, color: '#475569', marginTop: 4, marginBottom: 0 }}>Stock levels, reorder requests, purchase orders, receiving, and returns</p>
         </div>
       </div>
 
@@ -1302,6 +1562,7 @@ export default function InventoryPage() {
       {activeTab === 'purchase'     && <PurchaseOrdersTab allProducts={allProducts} />}
       {activeTab === 'receiving'    && <ReceivingTab />}
       {activeTab === 'transactions' && <TransactionsTab />}
+      {activeTab === 'returns'      && <ReturnsTab allProducts={allProducts} />}
     </div>
   )
 }
