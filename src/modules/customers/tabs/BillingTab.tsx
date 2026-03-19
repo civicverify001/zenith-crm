@@ -134,13 +134,11 @@ function AddBankAccountForm({
   const [error, setError] = useState('')
   const [mode, setMode] = useState<'choose' | 'manual' | 'pending_verification'>('choose')
 
-  // Manual entry fields
   const [routingNumber, setRoutingNumber] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
   const [accountType, setAccountType] = useState<'checking' | 'savings'>('checking')
   const [accountHolderName, setAccountHolderName] = useState(customer.full_name || '')
 
-  // Micro-deposit verification
   const [clientSecretForVerify, setClientSecretForVerify] = useState('')
   const [savedPmId, setSavedPmId] = useState('')
   const [amount1, setAmount1] = useState('')
@@ -161,7 +159,6 @@ function AddBankAccountForm({
     return data
   }
 
-  // Flow 1: Financial Connections (instant bank login)
   async function handleFinancialConnections() {
     if (!stripe) return
     setLoading(true)
@@ -195,7 +192,6 @@ function AddBankAccountForm({
         ? result.setupIntent.payment_method
         : (result.setupIntent?.payment_method as any)?.id
 
-      // Get bank details
       const detailsRes = await fetch('/api/stripe/get-payment-method', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -220,7 +216,6 @@ function AddBankAccountForm({
     }
   }
 
-  // Flow 2: Manual routing + account number
   async function handleManualSubmit() {
     if (!stripe) return
     if (!routingNumber || !accountNumber || !accountHolderName) {
@@ -256,7 +251,6 @@ function AddBankAccountForm({
         ? result.setupIntent.payment_method
         : (result.setupIntent?.payment_method as any)?.id
 
-      // Save to Supabase with pending_verification status
       await savePaymentMethod({
         customer_id: customerId,
         stripe_payment_method_id: pmId,
@@ -278,7 +272,6 @@ function AddBankAccountForm({
     }
   }
 
-  // Flow 2b: Verify micro-deposits
   async function handleVerifyMicrodeposits() {
     if (!amount1 || !amount2) { setError('Enter both deposit amounts'); return }
     setLoading(true)
@@ -302,7 +295,6 @@ function AddBankAccountForm({
     }
   }
 
-  // ── Micro-deposit verification UI ──
   if (mode === 'pending_verification') {
     return (
       <div className="rounded-xl p-4 space-y-4" style={{ backgroundColor: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.25)' }}>
@@ -345,7 +337,6 @@ function AddBankAccountForm({
     )
   }
 
-  // ── Choose mode ──
   if (mode === 'choose') {
     return (
       <div className="rounded-xl p-4 space-y-3" style={{ backgroundColor: 'rgba(74,222,128,0.05)', border: '1px solid rgba(74,222,128,0.2)' }}>
@@ -391,7 +382,6 @@ function AddBankAccountForm({
     )
   }
 
-  // ── Manual entry form ──
   return (
     <div className="rounded-xl p-4 space-y-4" style={{ backgroundColor: 'rgba(148,163,184,0.05)', border: '1px solid rgba(148,163,184,0.15)' }}>
       <div className="flex items-center gap-2">
@@ -606,6 +596,11 @@ export function BillingTab({ customerId, customer }: Props) {
   const [dayDraft, setDayDraft] = useState('')
   const [dayLoading, setDayLoading] = useState(false)
   const [dayError, setDayError] = useState('')
+  // ── NEW: Plan price editing ──
+  const [editingPlanId, setEditingPlanId] = useState<string | null>(null)
+  const [planPriceDraft, setPlanPriceDraft] = useState('')
+  const [planPriceLoading, setPlanPriceLoading] = useState(false)
+  const [planPriceError, setPlanPriceError] = useState('')
 
   const { data: paymentMethods = [], isLoading: pmLoading } = useQuery({
     queryKey: ['payment-methods', customerId],
@@ -663,7 +658,6 @@ export function BillingTab({ customerId, customer }: Props) {
         .eq('id', activeContract.id)
       if (e1) throw e1
 
-      // Keep installed_systems snapshot in sync
       await supabase
         .from('installed_systems')
         .update({ monthly_amount_snapshot: parsed })
@@ -699,6 +693,26 @@ export function BillingTab({ customerId, customer }: Props) {
     }
   }
 
+  // ── NEW: Save plan price ──────────────────────────────────
+  async function savePlanPrice(planId: string) {
+    const parsed = parseFloat(planPriceDraft)
+    if (isNaN(parsed) || parsed < 0) { setPlanPriceError('Enter a valid amount'); return }
+    setPlanPriceLoading(true); setPlanPriceError('')
+    try {
+      const { error } = await supabase
+        .from('customer_service_plans')
+        .update({ price: parsed })
+        .eq('id', planId)
+      if (error) throw error
+      setEditingPlanId(null)
+      invalidate()
+    } catch (e: any) {
+      setPlanPriceError(e.message || 'Failed to save')
+    } finally {
+      setPlanPriceLoading(false)
+    }
+  }
+
   async function handleGeneratePaymentLink() {
     if (!activeContract) return
     setGeneratingLink(true)
@@ -724,10 +738,9 @@ export function BillingTab({ customerId, customer }: Props) {
   const succeededTotal = transactions.filter(t => t.status === 'succeeded').reduce((sum, t) => sum + Number(t.amount), 0)
   const failedRecent = transactions.filter(t => t.status === 'failed').slice(0, 3)
 
-  // GAP 11: Compute upcoming charges list
-  const upcomingCharges: { label: string; amount: number; date: string; type: 'rental' | 'plan' }[] = []
+  // GAP 11: Compute upcoming charges list — now with planId for editing
+  const upcomingCharges: { label: string; amount: number; date: string; type: 'rental' | 'plan'; planId?: string }[] = []
 
-  // Add rental contract charge
   if (activeContract?.monthly_amount && activeContract?.billing_day) {
     upcomingCharges.push({
       label: `Rental — ${activeContract.contract_number}`,
@@ -737,7 +750,6 @@ export function BillingTab({ customerId, customer }: Props) {
     })
   }
 
-  // Add service plan charges
   for (const plan of activePlans) {
     if (plan.price > 0) {
       upcomingCharges.push({
@@ -747,13 +759,12 @@ export function BillingTab({ customerId, customer }: Props) {
           ? new Date(plan.next_billing_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
           : 'TBD',
         type: 'plan',
+        planId: plan.id,
       })
     }
   }
 
-  // Sort by date
   upcomingCharges.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-
   const totalUpcoming = upcomingCharges.reduce((s, c) => s + c.amount, 0)
 
   return (
@@ -796,7 +807,6 @@ export function BillingTab({ customerId, customer }: Props) {
             <div className="flex items-center justify-between mb-3">
               <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">Billing Plan</div>
               <div className="flex items-center gap-2">
-                {/* Status badge — reflects actual contract status */}
                 <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{
                   backgroundColor: activeContract.status === 'active' ? 'rgba(74,222,128,0.12)' : 'rgba(239,68,68,0.12)',
                   color: activeContract.status === 'active' ? '#4ade80' : '#f87171',
@@ -805,7 +815,6 @@ export function BillingTab({ customerId, customer }: Props) {
                   {activeContract.status === 'active' ? 'Active' : activeContract.status}
                 </span>
 
-                {/* ADDED: Activate / Deactivate button — admin/frontdesk only */}
                 {canEditMonthly && (
                   activeContract.status === 'active' ? (
                     <button
@@ -840,13 +849,10 @@ export function BillingTab({ customerId, customer }: Props) {
             </div>
 
             <div className="space-y-2">
-              {/* Contract number */}
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-400">Contract</span>
                 <span className="text-slate-200 font-medium">{activeContract.contract_number}</span>
               </div>
-
-              {/* ADDED: Contract start date */}
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-400">Start date</span>
                 <span className="text-slate-200 font-medium">
@@ -855,8 +861,6 @@ export function BillingTab({ customerId, customer }: Props) {
                     : '—'}
                 </span>
               </div>
-
-              {/* ADDED: Contract end date */}
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-400">End date</span>
                 <span className="text-slate-200 font-medium">
@@ -866,34 +870,25 @@ export function BillingTab({ customerId, customer }: Props) {
                 </span>
               </div>
 
-              {/* Billing day — editable (unchanged) */}
+              {/* Billing day */}
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-400">Charges on</span>
                 {editingDay ? (
                   <div className="flex items-center gap-2">
                     <input
-                      type="number"
-                      min={1}
-                      max={31}
-                      value={dayDraft}
-                      onChange={e => setDayDraft(e.target.value)}
-                      autoFocus
+                      type="number" min={1} max={31} value={dayDraft}
+                      onChange={e => setDayDraft(e.target.value)} autoFocus
                       className="w-14 text-sm rounded-lg px-2 py-1 outline-none text-right"
                       style={{ backgroundColor: '#0f172a', border: '1px solid rgba(96,165,250,0.4)', color: '#e2e8f0' }}
                     />
                     <span className="text-slate-400">of month</span>
-                    <button
-                      onClick={saveBillingDay}
-                      disabled={dayLoading}
+                    <button onClick={saveBillingDay} disabled={dayLoading}
                       className="text-xs px-2 py-1 rounded-lg font-semibold disabled:opacity-50"
                       style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}>
                       {dayLoading ? '…' : 'Save'}
                     </button>
-                    <button
-                      onClick={() => { setEditingDay(false); setDayError('') }}
-                      className="text-xs text-slate-400 hover:text-slate-200">
-                      Cancel
-                    </button>
+                    <button onClick={() => { setEditingDay(false); setDayError('') }}
+                      className="text-xs text-slate-400 hover:text-slate-200">Cancel</button>
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
@@ -905,9 +900,7 @@ export function BillingTab({ customerId, customer }: Props) {
                     {canEditMonthly && (
                       <button
                         onClick={() => { setDayDraft(String(activeContract.billing_day ?? '')); setEditingDay(true); setDayError('') }}
-                        className="text-muted hover:text-slate-300 transition-colors"
-                        title="Edit billing day"
-                        style={{ lineHeight: 1 }}>
+                        className="text-muted hover:text-slate-300 transition-colors" title="Edit billing day" style={{ lineHeight: 1 }}>
                         ✏️
                       </button>
                     )}
@@ -920,33 +913,25 @@ export function BillingTab({ customerId, customer }: Props) {
                 </div>
               )}
 
-              {/* Monthly amount — editable (unchanged) */}
+              {/* Monthly amount */}
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-400">Monthly amount</span>
                 {editingMonthly ? (
                   <div className="flex items-center gap-2">
                     <span className="text-slate-400">$</span>
                     <input
-                      type="number"
-                      step="0.01"
-                      value={monthlyDraft}
-                      onChange={e => setMonthlyDraft(e.target.value)}
-                      autoFocus
+                      type="number" step="0.01" value={monthlyDraft}
+                      onChange={e => setMonthlyDraft(e.target.value)} autoFocus
                       className="w-20 text-sm rounded-lg px-2 py-1 outline-none text-right"
                       style={{ backgroundColor: '#0f172a', border: '1px solid rgba(96,165,250,0.4)', color: '#e2e8f0' }}
                     />
-                    <button
-                      onClick={saveMonthlyAmount}
-                      disabled={monthlyLoading}
+                    <button onClick={saveMonthlyAmount} disabled={monthlyLoading}
                       className="text-xs px-2 py-1 rounded-lg font-semibold disabled:opacity-50"
                       style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}>
                       {monthlyLoading ? '…' : 'Save'}
                     </button>
-                    <button
-                      onClick={() => { setEditingMonthly(false); setMonthlyError('') }}
-                      className="text-xs text-slate-400 hover:text-slate-200">
-                      Cancel
-                    </button>
+                    <button onClick={() => { setEditingMonthly(false); setMonthlyError('') }}
+                      className="text-xs text-slate-400 hover:text-slate-200">Cancel</button>
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
@@ -954,9 +939,7 @@ export function BillingTab({ customerId, customer }: Props) {
                     {canEditMonthly && (
                       <button
                         onClick={() => { setMonthlyDraft(String(activeContract.monthly_amount)); setEditingMonthly(true); setMonthlyError('') }}
-                        className="text-muted hover:text-slate-300 transition-colors"
-                        title="Edit monthly amount"
-                        style={{ lineHeight: 1 }}>
+                        className="text-muted hover:text-slate-300 transition-colors" title="Edit monthly amount" style={{ lineHeight: 1 }}>
                         ✏️
                       </button>
                     )}
@@ -972,7 +955,7 @@ export function BillingTab({ customerId, customer }: Props) {
           </div>
         )}
 
-        {/* ── GAP 11: Upcoming Charges ─────────────────────── */}
+        {/* ── GAP 11: Upcoming Charges — with editable plan prices ── */}
         {upcomingCharges.length > 0 && (
           <div className="bg-card border border-border rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
@@ -992,12 +975,49 @@ export function BillingTab({ customerId, customer }: Props) {
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0 ml-3">
                     <span className="text-xs" style={{ color: '#64748b' }}>{charge.date}</span>
-                    <span className="text-xs font-semibold" style={{ color: charge.type === 'rental' ? '#0ea5e9' : '#a855f7' }}>
-                      {fmt(charge.amount)}
-                    </span>
+                    {charge.type === 'plan' && charge.planId && editingPlanId === charge.planId ? (
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs text-slate-400">$</span>
+                        <input
+                          type="number" step="0.01" value={planPriceDraft}
+                          onChange={e => setPlanPriceDraft(e.target.value)}
+                          autoFocus
+                          className="w-16 text-xs rounded px-1.5 py-0.5 outline-none text-right"
+                          style={{ backgroundColor: '#0f172a', border: '1px solid rgba(168,85,247,0.4)', color: '#e2e8f0' }}
+                        />
+                        <button
+                          onClick={() => savePlanPrice(charge.planId!)}
+                          disabled={planPriceLoading}
+                          className="text-xs px-1.5 py-0.5 rounded font-semibold disabled:opacity-50"
+                          style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}>
+                          {planPriceLoading ? '…' : 'Save'}
+                        </button>
+                        <button onClick={() => { setEditingPlanId(null); setPlanPriceError('') }}
+                          className="text-xs text-slate-400 hover:text-slate-200">✕</button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-semibold" style={{ color: charge.type === 'rental' ? '#0ea5e9' : '#a855f7' }}>
+                          {fmt(charge.amount)}
+                        </span>
+                        {charge.type === 'plan' && charge.planId && canEditMonthly && (
+                          <button
+                            onClick={() => { setPlanPriceDraft(String(charge.amount)); setEditingPlanId(charge.planId!); setPlanPriceError('') }}
+                            className="text-muted hover:text-slate-300 transition-colors"
+                            title="Edit plan price" style={{ lineHeight: 1, fontSize: 11 }}>
+                            ✏️
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
+              {planPriceError && (
+                <div className="text-xs rounded px-2 py-1 mt-1" style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                  {planPriceError}
+                </div>
+              )}
             </div>
           </div>
         )}
