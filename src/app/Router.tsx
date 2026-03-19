@@ -18,6 +18,7 @@ import { FulfillmentPage } from '../modules/fulfillment/FulfillmentPage'
 import CommunicationsPage from '../modules/communications/CommunicationsPage'
 import QuickInvoicePage from '../modules/invoices/QuickInvoicePage'
 import InvoiceThankYouPage from '../modules/invoices/InvoiceThankYouPage'
+import HeatMapPage from '../modules/heatmap/HeatMapPage'
 
 // ─── Module pages ────────────────────────────────────────────────
 import { DashboardPage } from '../modules/dashboard/DashboardPage'
@@ -148,8 +149,6 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
   const { canAccess } = usePermissions()
   const cs = COMING_SOON_PAGES
 
-  // Helper — wraps a page element with a permission check
-  // Admin always bypasses the check
   function guard(path: string, element: React.ReactElement) {
     if (role === 'admin') return element
     return canAccess(path) ? element : <Navigate to="/dashboard" replace />
@@ -216,9 +215,14 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
         {/* Inventory */}
         <Route path="/inventory" element={guard('/inventory', <InventoryPage />)} />
 
-        {/* Analytics — coming soon */}
+        {/* Heat Map — admin only */}
+        <Route path="/heatmap" element={
+          role === 'admin' ? <HeatMapPage /> : <Navigate to="/dashboard" replace />
+        } />
+
+        {/* Analytics */}
         <Route path="/marketing" element={guard('/marketing', <ComingSoon {...cs.marketing} />)} />
-        <Route path="/reports"  element={guard('/reports',  <ReportsPage />)} />
+        <Route path="/reports"   element={guard('/reports',   <ReportsPage />)} />
 
         {/* Admin only */}
         <Route path="/admin/terms" element={
