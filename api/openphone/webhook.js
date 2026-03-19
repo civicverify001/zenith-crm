@@ -212,8 +212,84 @@ export default async function handler(req, res) {
             metadata: { source: 'openphone_sms', direction: 'inbound' },
           }).then(() => {}).catch(() => {})
         }
-      }
 
+        // ── Smart reply handling: CONFIRM / RESCHEDULE / STOP ────
+        if (direction === 'inbound' && body && entity) {
+          const upper = body.trim().toUpperCase()
+          const today = new Date().toISOString().split('T')[0]
+
+          if (upper === 'CONFIRM' || upper === 'YES' || upper === 'CONFIRMED') {
+            const confirmTable = entity.entity_type === 'lead' ? 'lead_activity_log' : 'customer_activity_log'
+            const confirmField = entity.entity_type === 'lead' ? 'lead_id' : 'customer_id'
+            await supabase.from(confirmTable).insert({
+              [confirmField]: entity.entity_id,
+              event_type: 'appointment_confirmed',
+              title: 'Appointment confirmed via SMS by ' + (entity.name || 'customer'),
+              actor_name: entity.name || 'Customer',
+              metadata: { source: 'sms_reply', reply_text: body },
+            }).then(() => {}).catch(() => {})
+            console.log('[openphone-webhook] CONFIRM received from ' + entity.name)
+          }
+
+          else if (upper === 'RESCHEDULE' || upper === 'CANCEL' || upper.includes('RESCHEDULE')) {
+            await supabase.from('follow_up_tasks').insert({
+              entity_type: entity.entity_type,
+              entity_id: entity.entity_id,
+              title: 'Reschedule requested via SMS: ' + (entity.name || 'Unknown'),
+              description: 'Customer replied "' + body + '" to appointment reminder. Call to reschedule ASAP.',
+              due_date: today,
+              status: 'pending',
+              priority: 'urgent',
+            }).then(() => {}).catch(() => {})
+            console.log('[openphone-webhook] RESCHEDULE requested by ' + entity.name)
+          }
+
+          else if (upper === 'STOP' || upper === 'UNSUBSCRIBE' || upper === 'OPT OUT') {
+            if (entity.entity_type === 'lead') {
+              await supabase.from('leads').update({
+                stage: 'dnd',
+                stage_changed_at: new Date().toISOString(),
+              }).eq('id', entity.entity_id).then(() => {}).catch(() => {})
+              await supabase.from('lead_activity_log').insert({
+                lead_id: entity.entity_id,
+                event_type: 'dnd_requested',
+                title: 'DND requested via SMS — lead marked Do Not Disturb',
+                actor_name: entity.name || 'Customer',
+                metadata: { source: 'sms_reply', reply_text: body },
+              }).then(() => {}).catch(() => {})
+            } else if (entity.entity_type === 'customer') {
+              await supabase.from('customers').update({
+                sms_opt_in: false,
+              }).eq('id', entity.entity_id).then(() => {}).catch(() => {})
+              await supabase.from('customer_activity_log').insert({
+                customer_id: entity.entity_id,
+                event_type: 'sms_opt_out',
+                title: 'SMS opt-out requested — customer replied STOP',
+                actor_name: entity.name || 'Customer',
+                metadata: { source: 'sms_reply', reply_text: body },
+              }).then(() => {}).catch(() => {})
+            }
+            console.log('[openphone-webhook] STOP received from ' + entity.name + ' — marked DND')
+          }
+
+          else {
+            // Smart time reply — check if message looks like a preferred time
+            var timeMatch = body.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|morning|afternoon|evening|\d{1,2}\s*(am|pm|:\d{2}))\b/i)
+            if (timeMatch) {
+              await supabase.from('follow_up_tasks').insert({
+                entity_type: entity.entity_type,
+                entity_id: entity.entity_id,
+                title: 'Customer suggested time: ' + (entity.name || 'Unknown'),
+                description: 'Customer replied with preferred time: "' + body + '". Call to confirm and schedule.',
+                due_date: today,
+                status: 'pending',
+                priority: 'high',
+              }).then(() => {}).catch(() => {})
+              console.log('[openphone-webhook] Time suggestion from ' + entity.name + ': ' + body)
+            }
+          }
+        }
+      }
       console.log(`[openphone-webhook] Logged ${direction} SMS ${entity ? `→ ${entity.entity_type} ${entity.name}` : '(unmatched)'}`)
     }
 
