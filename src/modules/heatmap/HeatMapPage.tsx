@@ -103,10 +103,10 @@ export default function HeatMapPage() {
       try {
         const { data } = await supabase
           .from('customers')
-          .select('id, full_name, phone, address, service_address, lifecycle_status')
+          .select('id, full_name, phone, address, city, state, zip, lifecycle_status')
           .limit(400)
         for (const c of data || []) {
-          const addr = c.service_address || c.address
+          const addr = [c.address, c.city, c.state, c.zip].filter(Boolean).join(', ') || c.address
           if (addr) {
             all.push({
               id: c.id,
