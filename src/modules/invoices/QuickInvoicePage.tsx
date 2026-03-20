@@ -152,11 +152,16 @@ const t = setTimeout(async () => {
           <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: 16, marginBottom: 24 }}>
             <div style={{ fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Payment Link</div>
             <div style={{ fontSize: 13, color: '#22d3ee', wordBreak: 'break-all', marginBottom: 10, fontFamily: 'monospace' }}>{result.paymentLink}</div>
-            <button onClick={() => { navigator.clipboard.writeText(result.paymentLink); }}
-              style={{ padding: '6px 16px', borderRadius: 8, border: '1px solid rgba(34,211,238,0.3)', background: 'rgba(34,211,238,0.1)', color: '#22d3ee', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-              Copy Link
-            </button>
-          </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 4 }}>
+  <button onClick={() => { navigator.clipboard.writeText(result.paymentLink); }}
+    style={{ padding: '6px 16px', borderRadius: 8, border: '1px solid rgba(34,211,238,0.3)', background: 'rgba(34,211,238,0.1)', color: '#22d3ee', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+    Copy Link
+  </button>
+  <a href={result.paymentLink} target="_blank" rel="noopener noreferrer"
+    style={{ padding: '6px 16px', borderRadius: 8, border: 'none', background: '#0d7ea3', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+    Pay Now →
+  </a>
+</div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
             <button onClick={() => { setResult(null); setLineItems([]); setSelectedCustomer(null); setAdhocName(''); setAdhocPhone(''); setAdhocEmail('') }}
               style={{ padding: '10px 24px', borderRadius: 10, border: '1px solid #1e3a4f', background: 'transparent', color: '#94a3b8', cursor: 'pointer', fontSize: 14 }}>
