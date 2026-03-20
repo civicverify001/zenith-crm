@@ -16,14 +16,12 @@ const OPENPHONE_NUM = process.env.OPENPHONE_NUMBER  || '+14633005100'
 const RESEND_KEY    = process.env.RESEND_API_KEY    || ''
 const APP_URL       = process.env.VITE_APP_URL      || 'https://zenith-crm-ten.vercel.app'
 
-// ── Generate invoice number ───────────────────────────────────────
 function generateInvoiceNumber() {
   const year = new Date().getFullYear()
   const rand = String(Math.floor(Math.random() * 9000) + 1000)
   return `INV-${year}-${rand}`
 }
 
-// ── SMS fire-and-forget ───────────────────────────────────────────
 async function sendSms(to, message, customerId) {
   if (!OPENPHONE_KEY || !to) return
   try {
@@ -47,7 +45,6 @@ async function sendSms(to, message, customerId) {
   } catch (e) { console.error('[create-payment-link] sendSms error:', e.message) }
 }
 
-// ── Email fire-and-forget ─────────────────────────────────────────
 async function sendInvoiceEmail({ to, recipientName, invoiceNumber, total, paymentLink, lineItems, notes, customerId }) {
   if (!RESEND_KEY || !to) return
   const rows = lineItems.map(l =>
@@ -138,7 +135,7 @@ export default async function handler(req, res) {
     recipient_name,
     recipient_phone,
     recipient_email,
-    line_items,   // [{ description, qty, unit_price }]
+    line_items,
     notes,
   } = req.body
 
@@ -146,18 +143,24 @@ export default async function handler(req, res) {
   if (!recipient_name)       return res.status(400).json({ error: 'recipient_name required' })
   if (!recipient_phone && !recipient_email) return res.status(400).json({ error: 'phone or email required' })
 
+  // ── Filter out empty/placeholder line items ───────────────────
+  const validItems = line_items.filter(l => {
+    const desc = (l.description || '').trim()
+    return desc && desc !== 'Item description' && Number(l.unit_price) > 0
+  })
+  if (!validItems.length) {
+    return res.status(400).json({ error: 'Add at least one item with a description and price greater than $0' })
+  }
+
   try {
-    // ── 1. Build Stripe Price objects ────────────────────────────
-    const stripePriceData = await Promise.all(line_items.map(async item => {
-      const unitAmountCents = Math.round(item.unit_price * 100)
-      return {
-        price_data: {
-          currency: 'usd',
-          product_data: { name: item.description },
-          unit_amount: unitAmountCents,
-        },
-        quantity: item.qty,
-      }
+    // ── 1. Build Stripe line items ───────────────────────────────
+    const stripePriceData = validItems.map(item => ({
+      price_data: {
+        currency: 'usd',
+        product_data: { name: item.description.trim() },
+        unit_amount: Math.round(Number(item.unit_price) * 100),
+      },
+      quantity: Math.max(1, parseInt(item.qty) || 1),
     }))
 
     // ── 2. Create Stripe Payment Link ────────────────────────────
@@ -172,7 +175,7 @@ export default async function handler(req, res) {
     })
 
     // ── 3. Calculate totals ──────────────────────────────────────
-    const subtotal = line_items.reduce((s, l) => s + l.qty * l.unit_price, 0)
+    const subtotal = validItems.reduce((s, l) => s + (Math.max(1, parseInt(l.qty) || 1)) * Number(l.unit_price), 0)
     const tax      = subtotal * 0.07
     const total    = (subtotal + tax).toFixed(2)
     const invoiceNumber = generateInvoiceNumber()
@@ -180,23 +183,22 @@ export default async function handler(req, res) {
     // ── 4. Log invoice to Supabase ───────────────────────────────
     try {
       await supabase.from('invoices').insert({
-        customer_id:    customer_id || null,
-        invoice_number: invoiceNumber,
-        status:         'sent',
+        customer_id:            customer_id || null,
+        invoice_number:         invoiceNumber,
+        status:                 'sent',
         subtotal,
-        tax_amount:     tax,
-        total:          parseFloat(total),
-        notes:          notes || null,
-        payment_link:   paymentLink.url,
+        tax_amount:             tax,
+        total:                  parseFloat(total),
+        notes:                  notes || null,
+        payment_link:           paymentLink.url,
         stripe_payment_link_id: paymentLink.id,
         recipient_name,
-        recipient_phone: recipient_phone || null,
-        recipient_email: recipient_email || null,
-        sent_at:        new Date().toISOString(),
-        created_at:     new Date().toISOString(),
+        recipient_phone:        recipient_phone || null,
+        recipient_email:        recipient_email || null,
+        sent_at:                new Date().toISOString(),
+        created_at:             new Date().toISOString(),
       })
     } catch (dbErr) {
-      // Non-blocking — log but don't fail
       console.error('[create-payment-link] invoice insert error:', dbErr.message)
     }
 
@@ -218,7 +220,7 @@ export default async function handler(req, res) {
         invoiceNumber,
         total,
         paymentLink:   paymentLink.url,
-        lineItems:     line_items,
+        lineItems:     validItems,
         notes:         notes || '',
         customerId:    customer_id || null,
       })
