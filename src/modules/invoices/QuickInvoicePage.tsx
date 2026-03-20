@@ -1,7 +1,4 @@
 // src/modules/invoices/QuickInvoicePage.tsx
-// Manual invoice builder — customer lookup OR ad-hoc (no customer record needed)
-// Creates Stripe Payment Link → sends SMS + email → logs to invoices table
-
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
@@ -25,51 +22,39 @@ type Mode = 'customer' | 'adhoc'
 
 export default function QuickInvoicePage() {
   const navigate = useNavigate()
-
-  // Mode
   const [mode, setMode] = useState<Mode>('customer')
-
-  // Customer mode
   const [customerSearch, setCustomerSearch] = useState('')
   const [customerResults, setCustomerResults] = useState<any[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null)
-
-  // Ad-hoc mode
   const [adhocName, setAdhocName] = useState('')
   const [adhocPhone, setAdhocPhone] = useState('')
   const [adhocEmail, setAdhocEmail] = useState('')
-
-  // Products
   const [allProducts, setAllProducts] = useState<Product[]>([])
   const [productSearch, setProductSearch] = useState('')
   const [lineItems, setLineItems] = useState<LineItem[]>([])
-
-  // Invoice meta
   const [invoiceNotes, setInvoiceNotes] = useState('')
   const [sending, setSending] = useState(false)
   const [result, setResult] = useState<{ paymentLink: string; invoiceNumber: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Load products
   useEffect(() => {
     supabase.from('products').select('id, name, sku, retail_price, category')
       .eq('is_active', true).order('name')
       .then(({ data }) => setAllProducts(data || []))
   }, [])
 
-  // Customer search
   useEffect(() => {
     if (mode !== 'customer' || customerSearch.length < 2) { setCustomerResults([]); return }
-const t = setTimeout(async () => {
-  try {
-    const { data, error } = await supabase.from('customers')
-      .select('id, full_name, phone, email, address')
-      .or(`full_name.ilike.%${customerSearch}%,phone.ilike.%${customerSearch}%`)
-      .limit(6)
-    if (error) console.error('Customer search error:', error)
-    setCustomerResults(data || [])
-  } catch(e) { console.error('Search failed:', e) }
-}, 300)
+    const t = setTimeout(async () => {
+      try {
+        const { data, error: err } = await supabase.from('customers')
+          .select('id, full_name, phone, email, address')
+          .or(`full_name.ilike.%${customerSearch}%,phone.ilike.%${customerSearch}%`)
+          .limit(6)
+        if (err) console.error('Customer search error:', err)
+        setCustomerResults(data || [])
+      } catch (e) { console.error('Search failed:', e) }
+    }, 300)
     return () => clearTimeout(t)
   }, [customerSearch, mode])
 
@@ -92,16 +77,16 @@ const t = setTimeout(async () => {
   }
 
   const subtotal = lineItems.reduce((s, l) => s + l.qty * l.unit_price, 0)
-  const tax      = subtotal * 0.07
-  const total    = subtotal + tax
+  const tax = subtotal * 0.07
+  const total = subtotal + tax
 
-  // Recipient info
   const recipientName  = mode === 'customer' ? selectedCustomer?.full_name  : adhocName
   const recipientPhone = mode === 'customer' ? selectedCustomer?.phone       : adhocPhone
   const recipientEmail = mode === 'customer' ? selectedCustomer?.email       : adhocEmail
   const customerId     = mode === 'customer' ? selectedCustomer?.id          : null
 
   const canSend = lineItems.length > 0 && total > 0 && recipientName && (recipientPhone || recipientEmail)
+    && lineItems.every(l => l.description.trim())
 
   async function handleSend() {
     if (!canSend) return
@@ -112,15 +97,11 @@ const t = setTimeout(async () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customer_id:   customerId,
+          customer_id:     customerId,
           recipient_name:  recipientName,
           recipient_phone: recipientPhone,
           recipient_email: recipientEmail,
-          line_items: lineItems.map(l => ({
-            description: l.description,
-            qty:         l.qty,
-            unit_price:  l.unit_price,
-          })),
+          line_items: lineItems.map(l => ({ description: l.description, qty: l.qty, unit_price: l.unit_price })),
           notes: invoiceNotes,
         }),
       })
@@ -149,27 +130,38 @@ const t = setTimeout(async () => {
             Invoice <span style={{ color: '#60a5fa', fontFamily: 'monospace' }}>{result.invoiceNumber}</span> created for {recipientName}.
             {recipientPhone && ' SMS sent.'} {recipientEmail && ' Email sent.'}
           </div>
-          <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: 16, marginBottom: 24 }}>
+          <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: 16, marginBottom: 20 }}>
             <div style={{ fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Payment Link</div>
-            <div style={{ fontSize: 13, color: '#22d3ee', wordBreak: 'break-all', marginBottom: 10, fontFamily: 'monospace' }}>{result.paymentLink}</div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 4 }}>
-  <button onClick={() => { navigator.clipboard.writeText(result.paymentLink); }}
-    style={{ padding: '6px 16px', borderRadius: 8, border: '1px solid rgba(34,211,238,0.3)', background: 'rgba(34,211,238,0.1)', color: '#22d3ee', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-    Copy Link
-  </button>
-  <a href={result.paymentLink} target="_blank" rel="noopener noreferrer"
-    style={{ padding: '6px 16px', borderRadius: 8, border: 'none', background: '#0d7ea3', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
-    Pay Now →
-  </a>
-</div>
+            <div style={{ fontSize: 13, color: '#22d3ee', wordBreak: 'break-all', marginBottom: 12, fontFamily: 'monospace' }}>{result.paymentLink}</div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+              <button
+                onClick={() => navigator.clipboard.writeText(result.paymentLink)}
+                style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid rgba(34,211,238,0.3)', background: 'rgba(34,211,238,0.1)', color: '#22d3ee', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+              >
+                Copy Link
+              </button>
+              <a
+                href={result.paymentLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: '#0d7ea3', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+              >
+                Pay Now →
+              </a>
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-            <button onClick={() => { setResult(null); setLineItems([]); setSelectedCustomer(null); setAdhocName(''); setAdhocPhone(''); setAdhocEmail('') }}
-              style={{ padding: '10px 24px', borderRadius: 10, border: '1px solid #1e3a4f', background: 'transparent', color: '#94a3b8', cursor: 'pointer', fontSize: 14 }}>
+            <button
+              onClick={() => { setResult(null); setLineItems([]); setSelectedCustomer(null); setAdhocName(''); setAdhocPhone(''); setAdhocEmail('') }}
+              style={{ padding: '10px 24px', borderRadius: 10, border: '1px solid #1e3a4f', background: 'transparent', color: '#94a3b8', cursor: 'pointer', fontSize: 14 }}
+            >
               New Invoice
             </button>
             {customerId && (
-              <button onClick={() => navigate(`/customers/${customerId}`)}
-                style={{ padding: '10px 24px', borderRadius: 10, border: 'none', background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+              <button
+                onClick={() => navigate(`/customers/${customerId}`)}
+                style={{ padding: '10px 24px', borderRadius: 10, border: 'none', background: '#0d7ea3', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}
+              >
                 View Customer →
               </button>
             )}
@@ -181,7 +173,6 @@ const t = setTimeout(async () => {
 
   return (
     <div style={{ minHeight: '100%', maxWidth: 860, margin: '0 auto' }}>
-      {/* Header */}
       <div style={{ marginBottom: 24 }}>
         <button onClick={() => navigate(-1)}
           style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 13, marginBottom: 8 }}>
@@ -194,11 +185,9 @@ const t = setTimeout(async () => {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20, alignItems: 'start' }}>
-
-        {/* Left column */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-          {/* Mode toggle */}
+          {/* Bill To */}
           <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14, padding: 20 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>Bill To</div>
             <div style={{ display: 'flex', gap: 4, marginBottom: 16, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 4 }}>
@@ -221,7 +210,7 @@ const t = setTimeout(async () => {
                       <div>
                         <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 14 }}>{selectedCustomer.full_name}</div>
                         <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>{selectedCustomer.phone}{selectedCustomer.email && ` · ${selectedCustomer.email}`}</div>
-                        {selectedCustomer.service_address && <div style={{ color: '#475569', fontSize: 11, marginTop: 2 }}>{selectedCustomer.service_address}</div>}
+                        {selectedCustomer.address && <div style={{ color: '#475569', fontSize: 11, marginTop: 2 }}>{selectedCustomer.address}</div>}
                       </div>
                       <button onClick={() => { setSelectedCustomer(null); setCustomerSearch('') }}
                         style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 16 }}>×</button>
@@ -230,7 +219,7 @@ const t = setTimeout(async () => {
                 ) : (
                   <>
                     <input value={customerSearch} onChange={e => setCustomerSearch(e.target.value)}
-                      placeholder="Search customer name…"
+                      placeholder="Search customer name or phone…"
                       style={{ width: '100%', background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '10px 14px', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
                     {customerResults.length > 0 && (
                       <div style={{ position: 'absolute', left: 0, right: 0, top: '100%', background: '#162232', border: '1px solid #1e3a4f', borderRadius: 10, zIndex: 20, marginTop: 4 }}>
@@ -272,8 +261,6 @@ const t = setTimeout(async () => {
           {/* Line Items */}
           <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14, padding: 20 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>Line Items</div>
-
-            {/* Product search */}
             <div style={{ position: 'relative', marginBottom: 14 }}>
               <input value={productSearch} onChange={e => setProductSearch(e.target.value)}
                 placeholder="Search products to add… or type a custom item below"
@@ -295,14 +282,10 @@ const t = setTimeout(async () => {
                 </div>
               )}
             </div>
-
-            {/* Custom item button */}
             <button onClick={() => addLine()}
               style={{ fontSize: 12, padding: '6px 14px', borderRadius: 8, border: '1px solid rgba(96,165,250,0.25)', background: 'rgba(96,165,250,0.08)', color: '#60a5fa', cursor: 'pointer', fontWeight: 600, marginBottom: 14 }}>
               + Add Custom Line Item
             </button>
-
-            {/* Lines */}
             {lineItems.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '24px 0', color: '#334155', fontSize: 13 }}>
                 Search for a product above or add a custom line item
@@ -340,12 +323,10 @@ const t = setTimeout(async () => {
           </div>
         </div>
 
-        {/* Right column — summary + send */}
+        {/* Right — summary */}
         <div style={{ position: 'sticky', top: 20 }}>
           <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14, padding: 20 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 16 }}>Invoice Summary</div>
-
-            {/* Recipient */}
             <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #1e3a4f' }}>
               <div style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>Bill to</div>
               {recipientName ? (
@@ -358,13 +339,8 @@ const t = setTimeout(async () => {
                 <div style={{ color: '#334155', fontSize: 13, fontStyle: 'italic' }}>No recipient yet</div>
               )}
             </div>
-
-            {/* Totals */}
             <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #1e3a4f' }}>
-              {[
-                { label: 'Subtotal', value: subtotal },
-                { label: 'Tax (7% Indiana)', value: tax },
-              ].map(row => (
+              {[{ label: 'Subtotal', value: subtotal }, { label: 'Tax (7% Indiana)', value: tax }].map(row => (
                 <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                   <span style={{ fontSize: 13, color: '#64748b' }}>{row.label}</span>
                   <span style={{ fontSize: 13, color: '#94a3b8', fontWeight: 600 }}>${row.value.toFixed(2)}</span>
@@ -375,41 +351,32 @@ const t = setTimeout(async () => {
                 <span style={{ fontSize: 18, fontWeight: 800, color: '#4ade80' }}>${total.toFixed(2)}</span>
               </div>
             </div>
-
-            {/* Delivery method */}
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 11, color: '#475569', marginBottom: 8 }}>Payment link will be sent via:</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {recipientPhone && (
-                  <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'rgba(34,197,94,0.12)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.25)', fontWeight: 600 }}>
-                    💬 SMS
-                  </span>
+                  <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'rgba(34,197,94,0.12)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.25)', fontWeight: 600 }}>💬 SMS</span>
                 )}
                 {recipientEmail && (
-                  <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'rgba(96,165,250,0.12)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.25)', fontWeight: 600 }}>
-                    ✉️ Email
-                  </span>
+                  <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'rgba(96,165,250,0.12)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.25)', fontWeight: 600 }}>✉️ Email</span>
                 )}
                 {!recipientPhone && !recipientEmail && (
                   <span style={{ fontSize: 11, color: '#334155', fontStyle: 'italic' }}>Add phone or email above</span>
                 )}
               </div>
             </div>
-
             {error && (
               <div style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 13, color: '#f87171' }}>
                 {error}
               </div>
             )}
-
             <button onClick={handleSend} disabled={!canSend || sending}
               style={{ width: '100%', padding: '14px 0', borderRadius: 10, border: 'none', background: canSend ? '#0d7ea3' : '#334155', color: '#fff', fontWeight: 700, fontSize: 15, cursor: canSend ? 'pointer' : 'not-allowed', opacity: sending ? 0.6 : 1, transition: 'background 0.2s' }}>
               {sending ? 'Creating invoice…' : '⚡ Send Invoice'}
             </button>
-
             {!canSend && (
               <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', marginTop: 8 }}>
-                {lineItems.length === 0 ? 'Add at least one item' : !recipientName ? 'Add recipient name' : 'Add phone or email to send'}
+                {lineItems.length === 0 ? 'Add at least one item' : !recipientName ? 'Add recipient name' : !lineItems.every(l => l.description.trim()) ? 'Fill in all item descriptions' : 'Add phone or email to send'}
               </div>
             )}
           </div>
