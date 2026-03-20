@@ -60,13 +60,16 @@ export default function QuickInvoicePage() {
   // Customer search
   useEffect(() => {
     if (mode !== 'customer' || customerSearch.length < 2) { setCustomerResults([]); return }
-    const t = setTimeout(async () => {
-      const { data } = await supabase.from('customers')
-        .select('id, full_name, phone, email, service_address')
-        .ilike('full_name', `%${customerSearch}%`)
-        .limit(6)
-      setCustomerResults(data || [])
-    }, 300)
+const t = setTimeout(async () => {
+  try {
+    const { data, error } = await supabase.from('customers')
+      .select('id, full_name, phone, email, address')
+      .or(`full_name.ilike.%${customerSearch}%,phone.ilike.%${customerSearch}%`)
+      .limit(6)
+    if (error) console.error('Customer search error:', error)
+    setCustomerResults(data || [])
+  } catch(e) { console.error('Search failed:', e) }
+}, 300)
     return () => clearTimeout(t)
   }, [customerSearch, mode])
 
