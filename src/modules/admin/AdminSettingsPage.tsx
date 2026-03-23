@@ -1428,8 +1428,7 @@ function ServicePlansTemplateTab() {
                         </div>
                       </td>
                     </tr>
-                  )}
-                </React.Fragment>
+                  </React.Fragment>
                 )
               })}
             </tbody>
