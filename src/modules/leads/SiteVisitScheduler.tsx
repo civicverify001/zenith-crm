@@ -1,6 +1,7 @@
 // src/modules/leads/SiteVisitScheduler.tsx
 // Site visit calendar picker — shows reps, week view, busy/open 1-hour slots
 // Mon-Sun, 9am-5pm, weekends flagged
+// AUTOMATION: fires consult_booking_sms via /api/automations/trigger on schedule
 
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../../lib/supabase'
@@ -182,6 +183,28 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
 
       if (insertedVisit?.id) {
         syncToCalendar('site_visit', insertedVisit.id).catch(e => console.warn('Google Cal sync failed:', e))
+      }
+
+      // ── Consult booking SMS (fire-and-forget) ──────────────────
+      if (leadPhone) {
+        const dateLabel = new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', {
+          weekday: 'long', month: 'long', day: 'numeric',
+        })
+        fetch('/api/automations/trigger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            key: 'consult_booking_sms',
+            to: leadPhone,
+            entity_type: 'lead',
+            entity_id: leadId,
+            variables: {
+              name: leadName.split(' ')[0],
+              date: dateLabel,
+              time: HOUR_LABELS[selectedHour],
+            },
+          }),
+        }).catch(() => {})
       }
 
       const repName = reps.find(r => r.id === selectedRep)?.full_name || 'Rep'
