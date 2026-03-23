@@ -49,7 +49,6 @@ function quoteHtml(quote: any, customer: any, items: any[], senderName: string) 
   const sub   = parseFloat(quote.subtotal) || 0
   const reviewUrl = `${APP_URL}/q/${quote.public_token || quote.accept_token}`
 
-  // FIX: render line item rows — filter out service_plan items for display
   const displayItems = items.filter((li: any) => li.item_type !== 'service_plan')
   const rows = displayItems.map((li: any) => `
     <tr>
@@ -63,7 +62,6 @@ function quoteHtml(quote: any, customer: any, items: any[], senderName: string) 
     ? `<tr><td colspan="4" style="padding:20px 16px;text-align:center;color:#94a3b8;font-size:13px">No line items</td></tr>`
     : ''
 
-  // Service plan section (if any)
   const planItems = items.filter((li: any) => li.item_type === 'service_plan')
   const planSection = planItems.length > 0 ? `
     <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:16px;margin-bottom:24px">
@@ -85,25 +83,21 @@ function quoteHtml(quote: any, customer: any, items: any[], senderName: string) 
 <tr><td align="center">
 <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;">
 
-  <!-- Header -->
   <tr><td style="background:#0f1e2e;padding:32px;text-align:center;">
     <h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:700;">Zenith Pure Solutions</h1>
     <p style="color:#7fb3d0;margin:6px 0 0;font-size:13px;">Clean Water. Pure Simple.</p>
   </td></tr>
 
-  <!-- Body -->
   <tr><td style="padding:32px;">
 
     <h2 style="color:#0f1e2e;margin:0 0 16px;font-size:20px;">Your Quote is Ready, ${customer.full_name || ''}</h2>
 
-    <!-- Quote number box -->
     <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:20px;margin-bottom:24px;">
       <p style="margin:0;font-size:11px;color:#0ea5e9;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">Quote Number</p>
       <p style="margin:4px 0 0;font-size:22px;font-weight:700;color:#0f1e2e;font-family:monospace;">${quote.quote_number}</p>
       <p style="margin:8px 0 0;font-size:12px;color:#dc2626;font-weight:600;">Valid until ${fmtDate(quote.valid_until)}</p>
     </div>
 
-    <!-- Line items table -->
     <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:16px;">
       <thead>
         <tr style="background:#f8fafc;">
@@ -119,7 +113,6 @@ function quoteHtml(quote: any, customer: any, items: any[], senderName: string) 
       </tbody>
     </table>
 
-    <!-- FIX: totals use table not flexbox (Gmail strips display:flex) -->
     <div style="background:#f8fafc;border-radius:10px;padding:16px;margin-bottom:28px;">
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
@@ -139,14 +132,12 @@ function quoteHtml(quote: any, customer: any, items: any[], senderName: string) 
 
     ${planSection}
 
-    <!-- CTA button -->
     <div style="text-align:center;margin-bottom:28px;">
       <a href="${reviewUrl}" style="display:inline-block;background:#0ea5e9;color:#ffffff;text-decoration:none;padding:16px 40px;border-radius:12px;font-size:16px;font-weight:700;">
         Review &amp; Accept Quote &rarr;
       </a>
     </div>
 
-    <!-- Questions box -->
     <div style="background:#fff8ed;border:1px solid #fed7aa;border-radius:10px;padding:16px;">
       <p style="margin:0;color:#92400e;font-size:14px;font-weight:600;">Questions?</p>
       <p style="margin:6px 0 0;color:#b45309;font-size:13px;">Reply directly to this email — ${senderName} will get back to you.</p>
@@ -154,7 +145,6 @@ function quoteHtml(quote: any, customer: any, items: any[], senderName: string) 
 
   </td></tr>
 
-  <!-- Footer -->
   <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:20px;text-align:center;">
     <p style="margin:0;font-size:12px;color:#94a3b8;">Zenith Pure Solutions LLC &middot; 6951 E 30th St, Suite B &middot; Indianapolis, IN 46219</p>
     <p style="margin:4px 0 0;font-size:12px;color:#94a3b8;">info@zenithpuresolutions.com &middot; (317) 690-4172</p>
@@ -174,17 +164,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const fromName  = senderName  || 'Zenith Pure Solutions'
 
   try {
-    // Fetch quote without relation join — we load line items separately
     const { data: quote } = await supabase
       .from('quotes').select('*').eq('id', quoteId).single()
     if (!quote) return res.status(404).json({ error: 'Quote not found' })
 
-    // Added phone to customer select for SMS
     const { data: customer } = await supabase
-      .from('customers').select('full_name, email, phone').eq('id', quote.customer_id).single()
+      .from('customers').select('full_name, email, phone, lead_id').eq('id', quote.customer_id).single()
     if (!customer?.email) return res.status(400).json({ error: 'Customer has no email' })
 
-    // FIX: read from document_line_items first (authoritative), fall back to quote_line_items
+    // ── DND check — block all comms if lead is DND ───────────────
+    const leadId = quote.lead_id || customer.lead_id
+    if (leadId) {
+      const { data: lead } = await supabase
+        .from('leads').select('stage, full_name').eq('id', leadId).single()
+      if (lead?.stage === 'dnd') {
+        console.warn(`[send-quote] Blocked — lead is DND: ${lead.full_name}`)
+        return res.status(403).json({
+          error: 'Cannot send quote — this contact is marked Do Not Disturb.',
+          lead_name: lead.full_name,
+        })
+      }
+    }
+
     let { data: lineItems } = await supabase
       .from('document_line_items')
       .select('*')
@@ -208,7 +209,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       fromName,
     )
 
-    // Update quote status to sent + set tokens if not already set
     const updates: any = {
       status: 'sent',
       sent_at: new Date().toISOString(),
@@ -223,7 +223,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       metadata: { email: customer.email, sent_by: fromEmail },
     })
 
-    // Log to email_log
     await supabase.from('email_log').insert({
       customer_id: quote.customer_id,
       email_type: 'quote_sent',
@@ -250,7 +249,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ── GAP 14: Auto-create follow-up 2 days after quote sent ────
     try {
-      const followUpDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000) // +2 days
+      const followUpDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
       await supabase.from('follow_up_tasks').insert({
         entity_type: 'customer',
         entity_id: quote.customer_id,
