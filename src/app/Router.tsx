@@ -194,6 +194,7 @@ function AuthenticatedRoutes({ role }: { role: string | null }) {
 
         {/* Invoices */}
         <Route path="/invoices" element={guard('/invoices', <InvoicesPage />)} />
+        <Route path="/invoices/quick" element={guard('/invoices', <QuickInvoicePage />)} />
         <Route path="/invoice/new" element={guard('/invoices', <QuickInvoicePage />)} />
 
         {/* Contracts */}
