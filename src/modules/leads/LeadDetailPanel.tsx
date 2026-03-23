@@ -310,8 +310,15 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
       await logCall({ leadId: lead.id, outcome: callOutcome, notes: callNotes })
       setShowCallModal(false)
       setCallNotes('')
-    } catch (e) { console.error(e) }
-  }
+    if (callOutcome === 'no_show') {
+  supabase.from('follow_up_tasks').insert({
+    entity_type: 'lead', entity_id: lead.id,
+    title: `No-show follow-up: ${lead.full_name}`,
+    description: 'Customer did not show for scheduled consultation. Follow up to reschedule.',
+    due_date: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().split('T')[0],
+    status: 'pending', priority: 'high', assigned_to: lead.assigned_rep_id || null,
+  }).then(() => {}).catch(() => {})
+}
 
   const stageEnteredAt = lead.stage_entered_at || lead.stage_changed_at
   const daysInStage = daysSince(stageEnteredAt)
@@ -687,6 +694,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                       <option value="voicemail">Voicemail</option>
                       <option value="no_answer">No Answer</option>
                       <option value="callback_scheduled">Callback Scheduled</option>
+                      <option value="no_show">🚫 No Show</option>
                       <option value="no_contact_requested">⛔ Requested No Contact</option>
                     </select>
                   </div>
