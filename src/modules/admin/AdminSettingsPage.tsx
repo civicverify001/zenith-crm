@@ -3,7 +3,7 @@
 import { EmailTemplatesTab } from './EmailTemplatesTab'
 import SmsTemplatesTab from './SmsTemplatesTab'
 import { ChecklistTemplatesTab } from './ChecklistTemplatesTab'
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../hooks/useAuth'
 import {
@@ -961,13 +961,6 @@ const PRODUCT_CATEGORIES = [
   { value: 'combo_whole_home_ro', label: 'Combo (Whole Home + RO)' },
 ]
 
-interface PlanItem {
-  id: string
-  product_id: string
-  quantity: number
-  cycle_year: number | null
-}
-
 function ServicePlansTemplateTab() {
   const [templates, setTemplates] = useState<ServicePlanTemplate[]>([])
   const [loading, setLoading] = useState(true)
@@ -988,56 +981,6 @@ function ServicePlansTemplateTab() {
   const [fRequiresSystem, setFRequiresSystem] = useState(true)
   const [fAutoActivate, setFAutoActivate] = useState(false)
   const [fProductId, setFProductId] = useState('')
-
-  // ── Plan Items (Gap 18: multi-product per plan) ──────────
-  const [planItemsExpanded, setPlanItemsExpanded] = useState<string | null>(null)
-  const [planItemsMap, setPlanItemsMap] = useState<Record<string, PlanItem[]>>({})
-  const [addingItemTo, setAddingItemTo] = useState<string | null>(null)
-  const [itemProductId, setItemProductId] = useState('')
-  const [itemQty, setItemQty] = useState('1')
-  const [itemCycleYear, setItemCycleYear] = useState('')
-  const [savingItem, setSavingItem] = useState(false)
-
-  async function loadPlanItems(planId: string) {
-    const { data } = await supabase
-      .from('service_plan_items')
-      .select('id, product_id, quantity, cycle_year')
-      .eq('service_plan_id', planId)
-      .order('cycle_year', { ascending: true, nullsFirst: true })
-    setPlanItemsMap(prev => ({ ...prev, [planId]: data || [] }))
-  }
-
-  function togglePlanItems(planId: string) {
-    if (planItemsExpanded === planId) {
-      setPlanItemsExpanded(null)
-    } else {
-      setPlanItemsExpanded(planId)
-      loadPlanItems(planId)
-    }
-    setAddingItemTo(null)
-    setItemProductId(''); setItemQty('1'); setItemCycleYear('')
-  }
-
-  async function addPlanItem(planId: string) {
-    if (!itemProductId) return
-    setSavingItem(true)
-    await supabase.from('service_plan_items').insert({
-      service_plan_id: planId,
-      product_id: itemProductId,
-      quantity: parseInt(itemQty) || 1,
-      cycle_year: itemCycleYear ? parseInt(itemCycleYear) : null,
-    })
-    setItemProductId(''); setItemQty('1'); setItemCycleYear('')
-    setAddingItemTo(null)
-    await loadPlanItems(planId)
-    setSavingItem(false)
-  }
-
-  async function removePlanItem(planId: string, itemId: string) {
-    if (!confirm('Remove this item from the plan?')) return
-    await supabase.from('service_plan_items').delete().eq('id', itemId)
-    await loadPlanItems(planId)
-  }
 
   useEffect(() => {
     loadTemplates()
@@ -1294,7 +1237,6 @@ function ServicePlansTemplateTab() {
               {templates.map((t, idx) => {
                 const productName = products.find(p => p.id === (t as any).product_id)?.name
                 return (
-                  <React.Fragment key={t.id}>
                   <tr key={t.id} style={{ opacity: t.is_active ? 1 : 0.4 }}>
                     <td style={{ ...tdStyle, color: '#64748b', fontFamily: 'monospace' }}>{idx + 1}</td>
                     <td style={tdStyle}>
@@ -1349,87 +1291,11 @@ function ServicePlansTemplateTab() {
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                        <button onClick={() => togglePlanItems(t.id)}
-                          style={{ fontSize: 12, color: planItemsExpanded === t.id ? '#a855f7' : '#94a3b8', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
-                          📦 Items {planItemsMap[t.id] ? `(${planItemsMap[t.id].length})` : ''}
-                        </button>
                         <button onClick={() => startEdit(t)} style={{ fontSize: 12, color: '#60a5fa', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Edit</button>
                         <button onClick={() => handleDelete(t)} style={{ fontSize: 12, color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Delete</button>
                       </div>
                     </td>
                   </tr>
-                  {/* ── Plan Items Expanded Row ── */}
-                  {planItemsExpanded === t.id && (
-                    <tr key={t.id + '_items'}>
-                      <td colSpan={10} style={{ padding: '0 0 4px 0', background: 'rgba(168,85,247,0.04)', borderBottom: '1px solid #1e3a4f' }}>
-                        <div style={{ padding: '14px 20px' }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: '#a855f7', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
-                            📦 Products in this plan — shipped/fulfilled each cycle
-                          </div>
-                          <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>
-                            Cycle Year = which year of a multi-year plan this ships (leave blank = every cycle)
-                          </div>
-                          {/* Existing items */}
-                          {(planItemsMap[t.id] || []).length === 0 && (
-                            <div style={{ fontSize: 12, color: '#334155', fontStyle: 'italic', marginBottom: 10 }}>
-                              No items linked yet — uses single product from plan settings above
-                            </div>
-                          )}
-                          {(planItemsMap[t.id] || []).map(item => {
-                            const prodName = products.find(p => p.id === item.product_id)?.name || item.product_id.slice(0, 8)
-                            return (
-                              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                                <span style={{ fontSize: 13, color: '#e2e8f0', flex: 1 }}>{prodName}</span>
-                                <span style={{ fontSize: 11, color: '#64748b' }}>Qty: <strong style={{ color: '#e2e8f0' }}>{item.quantity}</strong></span>
-                                {item.cycle_year != null && (
-                                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'rgba(168,85,247,0.1)', color: '#a855f7', border: '1px solid rgba(168,85,247,0.25)' }}>
-                                    Year {item.cycle_year}
-                                  </span>
-                                )}
-                                <button onClick={() => removePlanItem(t.id, item.id)}
-                                  style={{ fontSize: 11, color: '#f87171', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
-                              </div>
-                            )
-                          })}
-                          {/* Add item form */}
-                          {addingItemTo === t.id ? (
-                            <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                              <select value={itemProductId} onChange={e => setItemProductId(e.target.value)}
-                                style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: itemProductId ? '#e2e8f0' : '#64748b', padding: '6px 10px', fontSize: 12, outline: 'none', minWidth: 200 }}>
-                                <option value="">Select product…</option>
-                                {products.map(p => <option key={p.id} value={p.id} style={{ background: '#0f1923' }}>{p.name}</option>)}
-                              </select>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <label style={{ fontSize: 11, color: '#64748b' }}>Qty</label>
-                                <input type="number" min="1" value={itemQty} onChange={e => setItemQty(e.target.value)}
-                                  style={{ width: 56, background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '6px 8px', fontSize: 12, outline: 'none', textAlign: 'right' }} />
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <label style={{ fontSize: 11, color: '#64748b' }}>Cycle Year</label>
-                                <input type="number" min="1" value={itemCycleYear} onChange={e => setItemCycleYear(e.target.value)}
-                                  placeholder="any"
-                                  style={{ width: 60, background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '6px 8px', fontSize: 12, outline: 'none', textAlign: 'right' }} />
-                              </div>
-                              <button onClick={() => addPlanItem(t.id)} disabled={savingItem || !itemProductId}
-                                style={{ padding: '6px 14px', borderRadius: 8, border: 'none', background: itemProductId ? '#a855f7' : '#334155', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: savingItem ? 0.5 : 1 }}>
-                                {savingItem ? '…' : 'Add'}
-                              </button>
-                              <button onClick={() => setAddingItemTo(null)}
-                                style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #1e3a4f', background: 'transparent', color: '#64748b', fontSize: 12, cursor: 'pointer' }}>
-                                Cancel
-                              </button>
-                            </div>
-                          ) : (
-                            <button onClick={() => setAddingItemTo(t.id)}
-                              style={{ marginTop: 10, fontSize: 12, padding: '5px 14px', borderRadius: 8, border: '1px solid rgba(168,85,247,0.3)', background: 'rgba(168,85,247,0.08)', color: '#a855f7', cursor: 'pointer', fontWeight: 600 }}>
-                              + Add Product to Plan
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                   </tr>
-                  )}
-                  </React.Fragment>
                 )
               })}
             </tbody>
@@ -1734,7 +1600,7 @@ function AutomationsTab() {
             </div>
           </div>
         )
-      ))}
+      })}
     </div>
   )
 }
