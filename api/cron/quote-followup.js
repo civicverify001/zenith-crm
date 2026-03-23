@@ -343,6 +343,142 @@ module.exports = async function handler(req, res) {
       console.log('[quote-followup] quote_day10_followup disabled — skipping')
     }
 
+    // ══════════════════════════════════════════════════════════
+    // SECTION 3 — POST-INSTALL REVIEW EMAIL (24hr delay)
+    // Jobs where review_email_send_after <= NOW and review_email_sent_at IS NULL
+    // ══════════════════════════════════════════════════════════
+
+    if (settings['install_complete_review_email']?.enabled !== false) {
+      const { data: reviewJobs, error: rjErr } = await supabase
+        .from('jobs')
+        .select('id, lead_id, customer_name_snapshot, email_snapshot, phone_snapshot')
+        .eq('status', 'complete')
+        .lte('review_email_send_after', now.toISOString())
+        .is('review_email_sent_at', null)
+        .not('review_email_send_after', 'is', null)
+
+      if (rjErr) {
+        console.error('[quote-followup] Section 3 query error:', rjErr.message)
+      } else {
+        console.log(`[quote-followup] Section 3: ${reviewJobs?.length || 0} review emails due`)
+
+        for (const rjob of (reviewJobs || [])) {
+          try {
+            // Get customer email — prefer customers table, fall back to job snapshot
+            let email = rjob.email_snapshot || null
+            let customerName = rjob.customer_name_snapshot || 'there'
+            let customerId = null
+            let leadStage = null
+
+            if (rjob.lead_id) {
+              const { data: lead } = await supabase
+                .from('leads').select('stage, customer_id').eq('id', rjob.lead_id).single()
+              leadStage = lead?.stage
+              if (lead?.customer_id) {
+                const { data: cust } = await supabase
+                  .from('customers').select('id, full_name, email').eq('id', lead.customer_id).single()
+                if (cust) {
+                  customerId = cust.id
+                  customerName = cust.full_name || customerName
+                  email = cust.email || email
+                }
+              }
+            }
+
+            // DND check
+            if (leadStage === 'dnd') {
+              console.log(`[quote-followup] S3 skipped DND: ${customerName}`)
+              // Mark sent so we don't retry
+              await supabase.from('jobs').update({ review_email_sent_at: now.toISOString() }).eq('id', rjob.id)
+              continue
+            }
+
+            if (!email) {
+              console.log(`[quote-followup] S3 skipped no email: ${customerName}`)
+              await supabase.from('jobs').update({ review_email_sent_at: now.toISOString() }).eq('id', rjob.id)
+              continue
+            }
+
+            const firstName = customerName.split(' ')[0]
+            const googleReviewUrl = process.env.GOOGLE_REVIEW_URL || 'https://g.page/r/zenithpuresolutions/review'
+            const subject = `How's your new water system? — Zenith Pure Solutions`
+
+            const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:32px 16px;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;">
+  <tr><td style="background:#0f1e2e;padding:32px;text-align:center;">
+    <h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:700;">Zenith Pure Solutions</h1>
+    <p style="color:#7fb3d0;margin:6px 0 0;font-size:13px;">Clean Water. Pure Simple.</p>
+  </td></tr>
+  <tr><td style="padding:32px;">
+    <h2 style="color:#0f1e2e;margin:0 0 16px;font-size:20px;">Welcome to the Zenith family, ${firstName}! 💧</h2>
+    <p style="color:#334155;font-size:15px;line-height:1.7;margin:0 0 20px;">
+      It has been about a day since your installation and we want to make sure everything is working perfectly.
+      Your water should already be noticeably cleaner — if you have any questions or anything at all,
+      just reply to this email or call us at (317) 690-4172.
+    </p>
+    <p style="color:#334155;font-size:15px;line-height:1.7;margin:0 0 28px;">
+      If you are happy with your new system, we would really appreciate a quick Google review.
+      It helps other families find clean water too!
+    </p>
+    <div style="text-align:center;margin-bottom:28px;">
+      <a href="${googleReviewUrl}" style="display:inline-block;background:#0ea5e9;color:#ffffff;text-decoration:none;padding:16px 40px;border-radius:12px;font-size:16px;font-weight:700;">
+        Leave a Google Review ⭐
+      </a>
+    </div>
+    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:16px;">
+      <p style="margin:0;color:#166534;font-size:14px;font-weight:600;">Need anything?</p>
+      <p style="margin:6px 0 0;color:#15803d;font-size:13px;">Call (317) 690-4172 or reply to this email — we are here to help.</p>
+    </div>
+  </td></tr>
+  <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:20px;text-align:center;">
+    <p style="margin:0;font-size:12px;color:#94a3b8;">Zenith Pure Solutions LLC &middot; 6951 E 30th St, Suite B &middot; Indianapolis, IN 46219</p>
+    <p style="margin:4px 0 0;font-size:12px;color:#94a3b8;">info@zenithpuresolutions.com &middot; (317) 690-4172</p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`
+
+            const sent = await sendEmail(email, subject, html)
+
+            if (sent) {
+              await supabase.from('jobs')
+                .update({ review_email_sent_at: now.toISOString() })
+                .eq('id', rjob.id)
+
+              if (customerId) {
+                await supabase.from('email_log').insert({
+                  customer_id: customerId,
+                  email_type: 'install_review_request',
+                  to_address: email,
+                  subject,
+                  status: 'sent',
+                  sent_at: now.toISOString(),
+                  created_at: now.toISOString(),
+                }).then(() => {}).catch(() => {})
+              }
+
+              results.day2_sent++ // reuse counter for summary
+              console.log(`[quote-followup] S3 review email sent: ${customerName}`)
+            } else {
+              // Don't retry failed sends indefinitely — mark after 3 cron runs would be ideal
+              // For now mark sent to avoid infinite retry
+              await supabase.from('jobs').update({ review_email_sent_at: now.toISOString() }).eq('id', rjob.id)
+            }
+          } catch (err) {
+            console.error('[quote-followup] S3 error:', err.message)
+            results.errors.push({ section: 'review', job_id: rjob.id, reason: err.message })
+          }
+        }
+      }
+    } else {
+      console.log('[quote-followup] install_complete_review_email disabled — skipping')
+    }
+
     // ── Summary log ──────────────────────────────────────────
     const total = results.day2_sent + results.day10_sent
     if (total > 0) {
