@@ -514,20 +514,31 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
 
       {/* Dispatch-owned status actions */}
       {actions.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {actions.map(a => (
-            <button
-              key={a.target}
-              onClick={() => handleStatusChange(a.target)}
-              disabled={statusPending}
-              className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${a.variant} ${statusPending ? 'opacity-50' : ''}`}
-            >
-              {a.label}
-            </button>
-          ))}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {actions.map(a => {
+            const isReady = a.target === 'ready_to_schedule'
+            const isScheduled = a.target === 'scheduled'
+            const bg = isReady ? 'rgba(168,85,247,0.15)' : isScheduled ? 'rgba(100,116,139,0.15)' : 'rgba(245,158,11,0.15)'
+            const color = isReady ? '#c084fc' : isScheduled ? '#cbd5e1' : '#fbbf24'
+            const border = isReady ? 'rgba(168,85,247,0.35)' : isScheduled ? 'rgba(100,116,139,0.3)' : 'rgba(245,158,11,0.35)'
+            return (
+              <button
+                key={a.target}
+                onClick={() => handleStatusChange(a.target)}
+                disabled={statusPending}
+                style={{
+                  fontSize: 12, padding: '6px 12px', borderRadius: 8, fontWeight: 600,
+                  background: bg, color, border: `1px solid ${border}`,
+                  cursor: statusPending ? 'not-allowed' : 'pointer',
+                  opacity: statusPending ? 0.5 : 1,
+                }}
+              >
+                {a.label}
+              </button>
+            )
+          })}
         </div>
       )}
-
       {/* ── Schedule Install trigger button ── */}
       {job.status === 'ready_to_schedule' && (
         <div style={{
