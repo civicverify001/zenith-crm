@@ -1427,7 +1427,8 @@ function ServicePlansTemplateTab() {
                           )}
                         </div>
                       </td>
-                    </tr>
+                   </tr>
+                  )}
                   </React.Fragment>
                 )
               })}
@@ -1733,8 +1734,7 @@ function AutomationsTab() {
             </div>
           </div>
         )
-      </React.Fragment>
-              ))}
+      ))}
     </div>
   )
 }
