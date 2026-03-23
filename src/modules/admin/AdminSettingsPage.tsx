@@ -64,7 +64,7 @@ const FIELD_TYPE_LABELS: Record<string, string> = {
   prefill_source:        'Auto-fill: Lead Source',
 }
 
-type AdminTab = 'qualifying' | 'site_visit' | 'terms' | 'service_plans' | 'email_templates' | 'checklists'
+type AdminTab = 'qualifying' | 'site_visit' | 'terms' | 'service_plans' | 'email_templates' | 'checklists' | 'sms_templates'
 
 const TABS: { key: AdminTab; label: string; icon: string; color: string }[] = [
   { key: 'qualifying',       label: 'Qualifying Checklist', icon: '✅', color: '#4ade80' },
@@ -73,6 +73,7 @@ const TABS: { key: AdminTab; label: string; icon: string; color: string }[] = [
   { key: 'service_plans',    label: 'Service Plans',        icon: '🔄', color: '#f59e0b' },
   { key: 'email_templates',  label: 'Email Templates',      icon: '✉️', color: '#f472b6' },
   { key: 'checklists',       label: 'Checklists',           icon: '📋', color: '#8b5cf6' },
+  { key: 'sms_templates',    label: 'SMS Templates',        icon: '💬', color: '#22c55e' },
 ]
 
 export default function AdminSettingsPage() {
@@ -148,6 +149,7 @@ export default function AdminSettingsPage() {
         {activeTab === 'service_plans' && <ServicePlansTemplateTab />}
         {activeTab === 'email_templates' && <EmailTemplatesTab />}
         {activeTab === 'checklists'      && <ChecklistTemplatesTab />}
+        {activeTab === 'sms_templates'   && <SmsTemplatesTab />}
       </div>
     </div>
   )
