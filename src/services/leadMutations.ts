@@ -52,18 +52,29 @@ export async function moveStage(
   return data as Lead
 }
 
+// ─── CHANGED: optional structured fields for reason code + re-engage date ─
+export interface LostStructuredFields {
+  lost_reason_code?: string
+  lost_reengage_date?: string  // YYYY-MM-DD
+}
+
 // ─── Mark Lost (requires reason, min 5 chars) ────────────────────
+// CHANGED: added optional 5th param `structured` — writes lost_reason_code
+// and lost_reengage_date alongside the existing lost_reason string column.
+// Fully backward-compatible — callers that don't pass structured still work.
 export async function markLost(
   leadId: string,
   fromStage: string,
   actor: ActorInfo,
-  lostReason: string
+  lostReason: string,
+  structured?: LostStructuredFields  // CHANGED: new optional param
 ): Promise<Lead> {
   const reason = lostReason.trim()
   if (!reason || reason.length < 5) {
     throw new Error('Lost reason must be at least 5 characters')
   }
 
+  // CHANGED: merge structured fields into the update payload when provided
   const { data, error } = await supabase
     .from('leads')
     .update({
@@ -71,6 +82,9 @@ export async function markLost(
       stage_entered_at: new Date().toISOString(),
       lost_reason: reason,
       lost_at: new Date().toISOString(),
+      // CHANGED: only written when structured is passed
+      ...(structured?.lost_reason_code   && { lost_reason_code:   structured.lost_reason_code }),
+      ...(structured?.lost_reengage_date && { lost_reengage_date: structured.lost_reengage_date }),
     })
     .eq('id', leadId)
     .select(SELECT_WITH_REP)
@@ -82,7 +96,13 @@ export async function markLost(
     lead_id: leadId,
     event_type: 'lead_lost',
     title: 'Marked as Lost',
-    metadata: { from_stage: fromStage, reason },
+    // CHANGED: include reason code in activity metadata for reports
+    metadata: {
+      from_stage: fromStage,
+      reason,
+      ...(structured?.lost_reason_code   && { reason_code:    structured.lost_reason_code }),
+      ...(structured?.lost_reengage_date && { reengage_date:  structured.lost_reengage_date }),
+    },
     ...actor,
     from_stage: fromStage,
     to_stage: 'lost',
@@ -287,7 +307,8 @@ export async function createInstallJob(
   return data as Lead
 }
 
-// ─── Reopen from Lost (cleanup: nullify lost_reason, lost_at) ────
+// ─── Reopen from Lost ────────────────────────────────────────────
+// CHANGED: also clears lost_reason_code and lost_reengage_date
 export async function reopenFromLost(
   leadId: string,
   currentLead: Lead,
@@ -300,6 +321,8 @@ export async function reopenFromLost(
       stage_entered_at: new Date().toISOString(),
       lost_reason: null,
       lost_at: null,
+      lost_reason_code: null,   // CHANGED: clear new column
+      lost_reengage_date: null, // CHANGED: clear new column
     })
     .eq('id', leadId)
     .select(SELECT_WITH_REP)
@@ -314,7 +337,7 @@ export async function reopenFromLost(
     metadata: {
       from_stage: 'lost',
       to_stage: 'new_lead',
-      cleared_fields: ['lost_reason', 'lost_at'],
+      cleared_fields: ['lost_reason', 'lost_at', 'lost_reason_code', 'lost_reengage_date'],
       previous_lost_reason: currentLead.lost_reason || undefined,
     },
     ...actor,
@@ -360,7 +383,7 @@ export async function reopenFromDND(
   return data as Lead
 }
 
-// ─── Reopen from Future Follow-Up (cleanup: nullify followup fields) ─
+// ─── Reopen from Future Follow-Up ───────────────────────────────
 export async function reopenFromFollowUp(
   leadId: string,
   currentLead: Lead,
