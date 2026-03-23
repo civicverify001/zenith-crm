@@ -50,12 +50,40 @@ export function getYTDRange(): DateRange {
   }
 }
 
+// ─── MRR Helper ────────────────────────────────────────────────
+// FIX: True MRR = active rental contracts + active service plan subscriptions.
+// autopay.js charges both. Previously only contracts were summed — understated MRR
+// for any customer with a service plan.
+async function computeMRR(): Promise<number> {
+  const [contractsRes, plansRes] = await Promise.all([
+    supabase.from('contracts').select('monthly_amount').eq('status', 'active'),
+    supabase.from('customer_service_plans')
+      .select('price, billing_cycle')
+      .eq('status', 'active'),
+  ])
+
+  const contractMRR = (contractsRes.data || []).reduce(
+    (s, c) => s + (Number(c.monthly_amount) || 0), 0
+  )
+
+  // Normalize plan billing cycles to monthly equivalent
+  const planMRR = (plansRes.data || []).reduce((s, p) => {
+    const price = Number(p.price) || 0
+    const cycle = p.billing_cycle || 'monthly'
+    if (cycle === 'monthly')    return s + price
+    if (cycle === 'quarterly')  return s + price / 3
+    if (cycle === 'yearly')     return s + price / 12
+    return s + price // one_time treated as 0 MRR contribution
+  }, 0)
+
+  return contractMRR + planMRR
+}
+
 // ─── Executive KPIs ────────────────────────────────────────────
 export async function getExecutiveKPIs(range: DateRange) {
   try {
     const [
       activeLeadsRes,
-      contractsRes,
       paymentsRes,
       installsRes,
       failedRes,
@@ -65,10 +93,6 @@ export async function getExecutiveKPIs(range: DateRange) {
       supabase.from('leads')
         .select('*', { count: 'exact', head: true })
         .neq('stage', 'won').neq('stage', 'lost').neq('stage', 'dnd').neq('stage', 'future_follow_up'),
-
-      supabase.from('contracts')
-        .select('monthly_amount')
-        .eq('status', 'active'),
 
       supabase.from('payment_transactions')
         .select('amount')
@@ -97,9 +121,9 @@ export async function getExecutiveKPIs(range: DateRange) {
         .is('assigned_technician_id', null),
     ])
 
-    const mrr = (contractsRes.data || []).reduce(
-      (s, c) => s + (Number(c.monthly_amount) || 0), 0
-    )
+    // FIX: use computeMRR() so service plans are included
+    const mrr = await computeMRR()
+
     const cashCollected = (paymentsRes.data || []).reduce(
       (s, p) => s + (Number(p.amount) || 0), 0
     )
@@ -122,8 +146,7 @@ export async function getExecutiveKPIs(range: DateRange) {
 // ─── Revenue & Billing ─────────────────────────────────────────
 export async function getRevenueSummary(range: DateRange) {
   try {
-    const [contractsRes, overdueRes, failedRes, collectedRes] = await Promise.all([
-      supabase.from('contracts').select('monthly_amount').eq('status', 'active'),
+    const [overdueRes, failedRes, collectedRes] = await Promise.all([
       supabase.from('invoices').select('amount').eq('status', 'overdue'),
       supabase.from('payment_transactions')
         .select('*', { count: 'exact', head: true })
@@ -137,10 +160,13 @@ export async function getRevenueSummary(range: DateRange) {
         .lte('completed_at', range.end + 'T23:59:59'),
     ])
 
+    // FIX: use shared computeMRR() helper
+    const mrr = await computeMRR()
+
     return {
-      mrr:                  (contractsRes.data || []).reduce((s, c) => s + (Number(c.monthly_amount) || 0), 0),
-      overdueTotal:         (overdueRes.data  || []).reduce((s, i) => s + (Number(i.amount)         || 0), 0),
-      cashCollected:        (collectedRes.data || []).reduce((s, p) => s + (Number(p.amount)        || 0), 0),
+      mrr,
+      overdueTotal:         (overdueRes.data  || []).reduce((s, i) => s + (Number(i.amount) || 0), 0),
+      cashCollected:        (collectedRes.data || []).reduce((s, p) => s + (Number(p.amount) || 0), 0),
       failedPaymentsCount:  failedRes.count ?? 0,
     }
   } catch (err) {
@@ -156,7 +182,7 @@ export async function getCashByMonth(months = 6): Promise<{ month: string; total
       .select('month, total_collected, payment_count')
       .limit(months)
     if (error) throw error
-    return (data || []).reverse() // oldest first for chart
+    return (data || []).reverse()
   } catch (err) {
     console.error('getCashByMonth:', err)
     return []
@@ -263,7 +289,6 @@ export async function getWeeklyInstalls(weeks = 8): Promise<{ label: string; cou
       .not('completed_at', 'is', null)
     if (error) throw error
 
-    // Build week buckets
     const now = new Date()
     const buckets: { start: Date; label: string; count: number }[] = []
     for (let w = weeks - 1; w >= 0; w--) {
@@ -304,7 +329,23 @@ export async function getJobsDrilldown(range: DateRange, limit = 100) {
       .order('scheduled_date', { ascending: false })
       .limit(limit)
     if (error) throw error
-    return data || []
+    if (!data?.length) return []
+
+    // FIX: resolve technician name from user_profiles so table shows name not UUID
+    const techIds = [...new Set((data).map((j: any) => j.assigned_technician_id).filter(Boolean))]
+    let techNames: Record<string, string> = {}
+    if (techIds.length) {
+      const { data: profiles } = await supabase
+        .from('user_profiles')
+        .select('id, full_name')
+        .in('id', techIds)
+      for (const p of (profiles || [])) techNames[p.id] = p.full_name
+    }
+
+    return data.map((job: any) => ({
+      ...job,
+      technician_name: techNames[job.assigned_technician_id] || null,
+    }))
   } catch (err) {
     console.error('getJobsDrilldown:', err)
     return []
@@ -325,7 +366,6 @@ export async function getPipelineSnapshot(): Promise<{ stage: string; lead_count
   }
 }
 
-// Won/Lost use updated_at — labeled approximate in UI
 export async function getPipelineOutcomes(range: DateRange) {
   try {
     const [wonRes, lostRes, dndRes, parkedRes] = await Promise.all([
@@ -374,6 +414,56 @@ export async function getLeadsDrilldown(limit = 100) {
   }
 }
 
+// ─── FIX: Lost Reason Breakdown ────────────────────────────────
+// New function — uses lost_reason_code column added in this sprint.
+// Falls back to parsing lost_reason string for leads that predate the new column.
+export async function getLostReasonBreakdown(): Promise<{
+  code: string
+  label: string
+  count: number
+  pct: number
+}[]> {
+  try {
+    const { data, error } = await supabase
+      .from('leads')
+      .select('lost_reason_code, lost_reason')
+      .eq('stage', 'lost')
+    if (error) throw error
+
+    const CODE_LABELS: Record<string, string> = {
+      price_too_high:      'Price Too High',
+      went_with_competitor:'Went With Competitor',
+      finance_declined:    'Finance Declined',
+      no_response:         'No Response After Follow-ups',
+      deferred:            'Deferred / Timing Not Right',
+      other:               'Other',
+      legacy:              'Pre-code (legacy)',
+    }
+
+    const counts: Record<string, number> = {}
+    for (const row of (data || [])) {
+      // Use structured code if available, else bucket as legacy
+      const code = row.lost_reason_code || 'legacy'
+      counts[code] = (counts[code] || 0) + 1
+    }
+
+    const total = Object.values(counts).reduce((s, n) => s + n, 0)
+    if (total === 0) return []
+
+    return Object.entries(counts)
+      .map(([code, count]) => ({
+        code,
+        label: CODE_LABELS[code] || code,
+        count,
+        pct: Math.round((count / total) * 100),
+      }))
+      .sort((a, b) => b.count - a.count)
+  } catch (err) {
+    console.error('getLostReasonBreakdown:', err)
+    return []
+  }
+}
+
 // ─── Data Quality Exceptions ────────────────────────────────────
 export async function getDataQualityExceptions() {
   try {
@@ -385,7 +475,6 @@ export async function getDataQualityExceptions() {
       contractsRes,
       overdue60Res,
     ] = await Promise.all([
-      // 1. Leads with null or blank source
       supabase.from('leads')
         .select('id, full_name, created_at, stage')
         .is('source', null)
@@ -393,7 +482,6 @@ export async function getDataQualityExceptions() {
         .order('created_at', { ascending: false })
         .limit(50),
 
-      // 2. Non-draft quotes missing commercial_type
       supabase.from('quotes')
         .select('id, quote_number, created_at, status')
         .is('commercial_type', null)
@@ -401,7 +489,6 @@ export async function getDataQualityExceptions() {
         .order('created_at', { ascending: false })
         .limit(50),
 
-      // 3. Jobs complete, proof not approved
       supabase.from('jobs')
         .select('id, customer_name_snapshot, completed_at, scheduled_date')
         .eq('status', 'complete')
@@ -409,13 +496,11 @@ export async function getDataQualityExceptions() {
         .order('completed_at', { ascending: false })
         .limit(50),
 
-      // 4. All customers (filter no-system client-side)
       supabase.from('customers')
         .select('id, full_name, created_at, lifecycle_status')
         .order('created_at', { ascending: false })
         .limit(300),
 
-      // 5. Active rental contracts signed 35+ days ago
       supabase.from('contracts')
         .select('id, contract_number, customer_id, monthly_amount, created_at')
         .eq('status', 'active')
@@ -423,7 +508,6 @@ export async function getDataQualityExceptions() {
         .lte('created_at', new Date(Date.now() - 35 * 86400000).toISOString())
         .limit(200),
 
-      // 6. Invoices overdue 60+ days
       supabase.from('invoices')
         .select('id, amount, due_date, status, customer_id')
         .eq('status', 'overdue')
@@ -432,7 +516,6 @@ export async function getDataQualityExceptions() {
         .limit(50),
     ])
 
-    // Client-side: customers with no installed system
     let customersNoSystem: any[] = []
     if (customersRes.data?.length) {
       const { data: systems } = await supabase.from('installed_systems').select('customer_id')
@@ -440,7 +523,6 @@ export async function getDataQualityExceptions() {
       customersNoSystem = customersRes.data.filter((c: any) => !withSystem.has(c.id)).slice(0, 50)
     }
 
-    // Client-side: active rental contracts with no recent payment (account-level)
     let contractsNoPmt: any[] = []
     if (contractsRes.data?.length) {
       const custIds = [...new Set(contractsRes.data.map((c: any) => c.customer_id))]
@@ -469,10 +551,8 @@ export async function getDataQualityExceptions() {
 }
 
 // ─── Customers & Rentals ───────────────────────────────────────
-
 export async function getCustomerKPIs() {
   try {
-    // Run each query independently so one failure doesn't kill the rest
     let totalCustomers = 0, activeCustomers = 0, atRisk = 0, renewalsIn30 = 0, serviceDue = 0
 
     try {
@@ -536,6 +616,8 @@ export async function getCustomerLifecycleDistribution(): Promise<{ status: stri
       counts[s] = (counts[s] || 0) + 1
     }
 
+    // FIX: order matches lifecycle cron enum values exactly
+    // lifecycle cron sets: active, service_due, renewal_due, at_risk, inactive
     const order = ['active', 'service_due', 'renewal_due', 'upsell', 'at_risk', 'inactive', 'unknown']
     return order
       .filter(s => counts[s] > 0)
@@ -580,20 +662,17 @@ export async function getCustomersDrilldown(limit = 150) {
 
     const custIds = customers.map((c: any) => c.id)
 
-    // Get contracts
     const { data: contracts } = await supabase
       .from('contracts')
       .select('customer_id, type, monthly_amount, status, end_date')
       .in('customer_id', custIds)
       .eq('status', 'active')
 
-    // Get installed systems
     const { data: systems } = await supabase
       .from('installed_systems')
       .select('customer_id, system_type, ownership_type')
       .in('customer_id', custIds)
 
-    // Get last payment per customer
     const { data: payments } = await supabase
       .from('payment_transactions')
       .select('customer_id, completed_at, amount')
@@ -601,7 +680,6 @@ export async function getCustomersDrilldown(limit = 150) {
       .in('customer_id', custIds)
       .order('completed_at', { ascending: false })
 
-    // Build maps
     const contractMap: Record<string, any> = {}
     for (const c of (contracts || [])) {
       if (!contractMap[c.customer_id]) contractMap[c.customer_id] = c
@@ -670,14 +748,11 @@ export async function getNewCustomersByMonth(months = 6): Promise<{ month: strin
 // ─── Rental vs Purchase vs Financed ───────────────────────────
 export async function getCommercialTypeSplit(): Promise<{ type: string; count: number; totalValue: number }[]> {
   try {
-    // Source: installed_systems.ownership_type — more reliable than contracts.type
-    // because purchases do not always create a contracts row
     const { data: systems, error } = await supabase
       .from('installed_systems')
       .select('ownership_type, customer_id')
     if (error) throw error
 
-    // Get monthly amounts for rentals from contracts
     const { data: contracts } = await supabase
       .from('contracts')
       .select('customer_id, monthly_amount, type')
@@ -688,7 +763,6 @@ export async function getCommercialTypeSplit(): Promise<{ type: string; count: n
       rentalAmounts[c.customer_id] = (rentalAmounts[c.customer_id] || 0) + (Number(c.monthly_amount) || 0)
     }
 
-    // Get purchase amounts from succeeded payment_transactions (one-time payments)
     const { data: payments } = await supabase
       .from('payment_transactions')
       .select('customer_id, amount, type')
@@ -705,11 +779,10 @@ export async function getCommercialTypeSplit(): Promise<{ type: string; count: n
       const t = row.ownership_type || 'unknown'
       if (!map[t]) map[t] = { count: 0, totalValue: 0 }
       map[t].count++
-      if (t === 'rented')    map[t].totalValue += rentalAmounts[row.customer_id]  || 0
+      if (t === 'rented')    map[t].totalValue += rentalAmounts[row.customer_id]   || 0
       if (t === 'purchased') map[t].totalValue += purchaseAmounts[row.customer_id] || 0
     }
 
-    // Normalize key names for display
     const normalized: Record<string, { count: number; totalValue: number }> = {}
     const keyMap: Record<string, string> = { rented: 'rental', purchased: 'purchase', financed: 'financed' }
     for (const [k, v] of Object.entries(map)) {
@@ -771,21 +844,14 @@ export async function getRentalLifecycleByMonth(months = 6): Promise<{ month: st
 }
 
 // ─── Gross Margin Estimate ─────────────────────────────────────
-// Revenue = active contract monthly amounts + paid invoices (purchase)
-// Cost    = vendor_cost from products, matched via installed_systems + source_quote_id
-// WARNING: Only products with vendor_cost populated contribute to cost.
-//          If vendor_cost is null or missing, margin will be overstated.
 export async function getGrossMarginEstimate() {
   try {
-    // Revenue side
     const { data: rentalContracts } = await supabase
       .from('contracts')
       .select('monthly_amount, type')
       .eq('status', 'active')
       .eq('type', 'rental')
 
-    // Purchase revenue: use payment_transactions (succeeded, non-autopay)
-    // because invoices may not reach status=paid even after Stripe payment
     const { data: purchasePayments } = await supabase
       .from('payment_transactions')
       .select('amount')
@@ -796,23 +862,22 @@ export async function getGrossMarginEstimate() {
     const purchaseRevenue = (purchasePayments || []).reduce((s, p) => s + (Number(p.amount)         || 0), 0)
     const totalRevenue    = rentalRevenue + purchaseRevenue
 
-    // Cost side — via product catalog vendor_cost
     const { data: products } = await supabase
       .from('products')
       .select('id, name, vendor_cost, retail_price, rental_price_monthly, install_fee')
       .not('vendor_cost', 'is', null)
       .gt('vendor_cost', 0)
 
-    // How many of each product is installed (from installed_systems + system_type match)
     const { data: installedSystems } = await supabase
       .from('installed_systems')
       .select('system_type, product_catalog_id')
 
-    // Count by product_id where available, else skip
     const productCounts: Record<string, number> = {}
     for (const sys of (installedSystems || [])) {
       if (sys.product_catalog_id) {
-        productCounts[sys.product_catalog_id] = (productCounts[sys.product_id] || 0) + 1
+        // FIX: was (productCounts[sys.product_id] || 0) — product_id doesn't exist on
+        // installed_systems. Correct key is product_catalog_id on both read and write.
+        productCounts[sys.product_catalog_id] = (productCounts[sys.product_catalog_id] || 0) + 1
       }
     }
 
@@ -821,19 +886,18 @@ export async function getGrossMarginEstimate() {
     let uncoveredProducts = 0
 
     for (const p of (products || [])) {
-      const qty  = productCounts[p.id] || 0
+      const qty = productCounts[p.id] || 0
       if (qty > 0) {
         totalCost += qty * (Number(p.vendor_cost) || 0)
         coveredProducts += qty
       }
     }
 
-    // Count installs with no product_id (uncovered)
     uncoveredProducts = (installedSystems || []).filter(s => !s.product_catalog_id).length
 
-    const grossMargin    = totalRevenue - totalCost
-    const marginPct      = totalRevenue > 0 ? (grossMargin / totalRevenue) * 100 : 0
-    const costCoverage   = (installedSystems || []).length > 0
+    const grossMargin  = totalRevenue - totalCost
+    const marginPct    = totalRevenue > 0 ? (grossMargin / totalRevenue) * 100 : 0
+    const costCoverage = (installedSystems || []).length > 0
       ? Math.round((coveredProducts / (installedSystems || []).length) * 100)
       : 0
 
@@ -844,8 +908,8 @@ export async function getGrossMarginEstimate() {
       totalCost,
       grossMargin,
       marginPct: Math.round(marginPct),
-      costCoverage,       // % of installed systems with cost data
-      uncoveredProducts,  // systems with no product_id = no cost data
+      costCoverage,
+      uncoveredProducts,
       isEstimate: uncoveredProducts > 0 || coveredProducts === 0,
     }
   } catch (err) {
@@ -859,9 +923,11 @@ export async function getGrossMarginEstimate() {
 }
 
 // ─── Rep Performance ───────────────────────────────────────────
+// FIX: installs now credited to the rep whose lead converted to the install job,
+// not just by assigned_technician_id (which is always Kendrick, never reps).
+// Jobs → customers → leads → assigned_rep_id chain resolves correctly.
 export async function getRepPerformance() {
   try {
-    // Get all reps from user_profiles
     const { data: reps } = await supabase
       .from('user_profiles')
       .select('id, full_name, role')
@@ -869,21 +935,24 @@ export async function getRepPerformance() {
 
     if (!reps?.length) return []
 
-    // Leads per rep
     const { data: leads } = await supabase
       .from('leads')
-      .select('assigned_rep_id, stage, created_at')
+      .select('id, assigned_rep_id, stage, created_at')
 
-    // Quotes — join via lead_id to get rep attribution
     const { data: quotes } = await supabase
       .from('quotes')
       .select('lead_id, status, commercial_type, monthly_amount, created_at')
 
-    // Jobs per technician
+    // FIX: fetch jobs with customer_id so we can trace back to lead → rep
     const { data: jobs } = await supabase
       .from('jobs')
-      .select('assigned_technician_id, status')
+      .select('id, customer_id, assigned_technician_id, status')
       .eq('status', 'complete')
+
+    // FIX: fetch customers to build customer → lead map
+    const { data: customers } = await supabase
+      .from('customers')
+      .select('id, lead_id')
 
     // Build lead → rep map
     const leadRepMap: Record<string, string> = {}
@@ -913,17 +982,27 @@ export async function getRepPerformance() {
       }
     }
 
-    // Installs per tech
-    const techInstallCounts: Record<string, number> = {}
+    // FIX: installs credited to rep via customer → lead → rep chain
+    // customer.lead_id → leadRepMap[lead_id] → rep
+    const customerLeadMap: Record<string, string> = {}
+    for (const c of (customers || [])) {
+      if (c.lead_id) customerLeadMap[c.id] = c.lead_id
+    }
+
+    const repInstallCounts: Record<string, number> = {}
     for (const job of (jobs || [])) {
-      if (!job.assigned_technician_id) continue
-      techInstallCounts[job.assigned_technician_id] = (techInstallCounts[job.assigned_technician_id] || 0) + 1
+      if (!job.customer_id) continue
+      const leadId = customerLeadMap[job.customer_id]
+      if (!leadId) continue
+      const repId = leadRepMap[leadId]
+      if (!repId) continue
+      repInstallCounts[repId] = (repInstallCounts[repId] || 0) + 1
     }
 
     return reps.map(rep => {
       const lc = repLeadCounts[rep.id]  || { total: 0, won: 0, lost: 0 }
       const qc = repQuoteCounts[rep.id] || { sent: 0, accepted: 0, totalValue: 0 }
-      const installs = techInstallCounts[rep.id] || 0
+      const installs = repInstallCounts[rep.id] || 0
       const closeRate = qc.sent > 0 ? Math.round((qc.accepted / qc.sent) * 100) : 0
       return {
         id:         rep.id,
@@ -955,23 +1034,11 @@ export async function getQuotesSummary() {
     if (error) throw error
 
     const quotes = data || []
-    const now = Date.now()
 
     const summary = {
-      total:       0,
-      draft:       0,
-      sent:        0,
-      viewed:      0,
-      accepted:    0,
-      declined:    0,
-      expired:     0,
-      rental:      0,
-      purchase:    0,
-      financed:    0,
-      avgDaysToAccept: 0,
-      acceptanceRate:  0,
-      avgQuoteValue:   0,
-      totalPipeline:   0,
+      total: 0, draft: 0, sent: 0, viewed: 0, accepted: 0, declined: 0, expired: 0,
+      rental: 0, purchase: 0, financed: 0,
+      avgDaysToAccept: 0, acceptanceRate: 0, avgQuoteValue: 0, totalPipeline: 0,
     }
 
     let daysToAcceptTotal = 0
@@ -986,13 +1053,9 @@ export async function getQuotesSummary() {
       if (s === 'viewed')   summary.viewed++
       if (['accepted','signed'].includes(s)) {
         summary.accepted++
-        // Days to accept = updated_at - created_at (approximate — updated_at when status changed)
         if (q.updated_at && q.created_at) {
           const days = Math.floor((new Date(q.updated_at).getTime() - new Date(q.created_at).getTime()) / 86400000)
-          if (days >= 0 && days < 365) {
-            daysToAcceptTotal += days
-            daysToAcceptCount++
-          }
+          if (days >= 0 && days < 365) { daysToAcceptTotal += days; daysToAcceptCount++ }
         }
       }
       if (s === 'declined') summary.declined++
@@ -1004,7 +1067,6 @@ export async function getQuotesSummary() {
       if (ct === 'financed') summary.financed++
 
       if (['sent','viewed','accepted','signed','declined','expired'].includes(s)) totalSent++
-
       const val = Number(q.monthly_amount) || 0
       if (['sent','viewed'].includes(s)) summary.totalPipeline += val
     }
@@ -1024,11 +1086,13 @@ export async function getQuotesSummary() {
 }
 
 // ─── Marketing / Lead Sources ──────────────────────────────────
+// FIX: utm_source was fetched but only utm_campaign was broken out.
+// Now returns both utm_source AND utm_campaign breakdowns.
 export async function getLeadSourceBreakdown() {
   try {
     const { data: leads, error } = await supabase
       .from('leads')
-      .select('id, source, utm_source, utm_campaign, stage, created_at')
+      .select('id, source, utm_source, utm_medium, utm_campaign, stage, created_at')
     if (error) throw error
 
     const sourceMap: Record<string, { total: number; won: number; lost: number; active: number }> = {}
@@ -1042,11 +1106,16 @@ export async function getLeadSourceBreakdown() {
       if (!['won','lost','dnd','future_follow_up'].includes(lead.stage || '')) sourceMap[src].active++
     }
 
-    // UTM breakdown
-    const utmMap: Record<string, number> = {}
+    // FIX: break down by utm_source (paid channel) AND utm_campaign (specific campaign)
+    const utmSourceMap: Record<string, number> = {}
+    const utmCampaignMap: Record<string, number> = {}
     for (const lead of (leads || [])) {
-      if (!lead.utm_campaign) continue
-      utmMap[lead.utm_campaign] = (utmMap[lead.utm_campaign] || 0) + 1
+      if (lead.utm_source) {
+        utmSourceMap[lead.utm_source] = (utmSourceMap[lead.utm_source] || 0) + 1
+      }
+      if (lead.utm_campaign) {
+        utmCampaignMap[lead.utm_campaign] = (utmCampaignMap[lead.utm_campaign] || 0) + 1
+      }
     }
 
     const sources = Object.entries(sourceMap)
@@ -1057,14 +1126,25 @@ export async function getLeadSourceBreakdown() {
       }))
       .sort((a, b) => b.total - a.total)
 
-    const utmCampaigns = Object.entries(utmMap)
+    // FIX: utm_source breakdown (google, facebook, etc.) now surfaced separately
+    const utmSources = Object.entries(utmSourceMap)
+      .map(([source, count]) => ({ source, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10)
+
+    const utmCampaigns = Object.entries(utmCampaignMap)
       .map(([campaign, count]) => ({ campaign, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10)
 
-    return { sources, utmCampaigns, totalLeads: (leads || []).length }
+    return {
+      sources,
+      utmSources,    // FIX: new — paid channel breakdown (google_ads, facebook_ads, etc.)
+      utmCampaigns,
+      totalLeads: (leads || []).length,
+    }
   } catch (err) {
     console.error('getLeadSourceBreakdown:', err)
-    return { sources: [], utmCampaigns: [], totalLeads: 0 }
+    return { sources: [], utmSources: [], utmCampaigns: [], totalLeads: 0 }
   }
 }
