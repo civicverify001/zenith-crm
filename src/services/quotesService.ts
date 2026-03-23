@@ -73,6 +73,7 @@ export interface Product {
   parts_warranty?: string | null
   labour_warranty?: string | null
   is_active: boolean
+  discount_category?: string | null
 }
 
 // ─── Products ────────────────────────────────────────────────
@@ -133,8 +134,6 @@ export async function fetchQuote(quoteId: string): Promise<Quote | null> {
   if (error) throw error
   if (!data) return null
 
-  // Read from document_line_items (authoritative). Fall back to quote_line_items
-  // for quotes created before the migration.
   let { data: lineItems } = await supabase
     .from('document_line_items')
     .select('*')
@@ -191,7 +190,6 @@ export async function createQuote(params: {
     .filter(li => li.item_type === 'install_fee')
     .reduce((s, li) => s + li.total, 0) || null
 
-  // quote_type enum only accepts 'rental' | 'purchase' — map financed → purchase
   const quote_type_db = params.commercial_type === 'financed' ? 'purchase' : params.commercial_type
 
   const { data: quote, error: qErr } = await supabase
@@ -272,7 +270,6 @@ export async function updateQuote(quoteId: string, params: {
       .filter(li => li.item_type === 'install_fee')
       .reduce((s, li) => s + li.total, 0) || null
 
-    // quote_type enum only accepts 'rental' | 'purchase' — map financed → purchase
     const quote_type_db = params.commercial_type === 'financed' ? 'purchase' : params.commercial_type
 
     await supabase.from('document_line_items').delete().eq('document_id', quoteId)
@@ -415,7 +412,6 @@ export async function cloneQuote(
   newCommercialType: 'rental' | 'purchase',
   leadId: string
 ): Promise<string> {
-  // 1. Fetch original quote
   const { data: orig, error: origErr } = await supabase
     .from('quotes')
     .select('*')
@@ -423,7 +419,6 @@ export async function cloneQuote(
     .single()
   if (origErr || !orig) throw new Error('Original quote not found')
 
-  // 2. Fetch original line items (document_line_items preferred, fallback quote_line_items)
   const { data: rawLineItems } = await supabase
     .from('document_line_items')
     .select('*')
@@ -438,7 +433,6 @@ export async function cloneQuote(
 
   const sourceItems: any[] = rawLineItems?.length ? rawLineItems : (rawQli || [])
 
-  // 3. Fetch product catalog prices for all product_ids in line items
   const productIds = sourceItems.map((li: any) => li.product_id).filter(Boolean)
   const productPriceMap = new Map<string, { rental_price_monthly: number | null; retail_price: number | null; install_fee: number | null }>()
   if (productIds.length) {
@@ -449,9 +443,7 @@ export async function cloneQuote(
     ;(products || []).forEach((p: any) => productPriceMap.set(p.id, p))
   }
 
-  // 4. Reprice line items based on new commercial type
-  // install_fee lines stay the same price — they are always one-time
-  function repriceItem(li: any): { unit_price: number; total: number; monthly_amount?: number | null } {
+  function repriceItem(li: any): { unit_price: number; total: number } {
     const isInstallFee = li.item_type === 'install_fee' || (li.description || '').toLowerCase().includes('installation fee')
     if (isInstallFee) return { unit_price: li.unit_price, total: li.total }
 
@@ -459,19 +451,15 @@ export async function cloneQuote(
       const prod = productPriceMap.get(li.product_id)!
       if (newCommercialType === 'rental') {
         const price = prod.rental_price_monthly ?? li.unit_price
-        const qty = li.quantity || 1
-        return { unit_price: price, total: price * qty }
+        return { unit_price: price, total: price * (li.quantity || 1) }
       } else {
         const price = prod.retail_price ?? li.unit_price
-        const qty = li.quantity || 1
-        return { unit_price: price, total: price * qty }
+        return { unit_price: price, total: price * (li.quantity || 1) }
       }
     }
-    // No product_id or not found — keep original price, rep can adjust
     return { unit_price: li.unit_price, total: li.total }
   }
 
-  // 5. Compute new totals from repriced items
   const repricedItems = sourceItems.map((li: any) => {
     const { unit_price, total } = repriceItem(li)
     return { ...li, unit_price, total }
@@ -488,10 +476,9 @@ export async function cloneQuote(
   const newInstallFee = installFeeItems.reduce((sum: number, li: any) => sum + (li.total || 0), 0)
   const newMonthlyAmount = newCommercialType === 'rental' ? newSubtotal : null
   const newTotal = newCommercialType === 'rental'
-    ? newSubtotal  // monthly subtotal (install fee is separate one-time)
+    ? newSubtotal
     : newSubtotal + newInstallFee
 
-  // 6. Fetch next quote number
   const { data: lastQuote } = await supabase
     .from('quotes')
     .select('quote_number')
@@ -507,7 +494,6 @@ export async function cloneQuote(
   const year = new Date().getFullYear()
   const quote_number = `Q-${year}-${String(nextNum).padStart(4, '0')}`
 
-  // 7. Insert new quote
   const quote_type_db = newCommercialType === 'rental' ? 'rental' : 'purchase'
   const { data: newQuote, error: insertErr } = await supabase
     .from('quotes')
@@ -532,7 +518,6 @@ export async function cloneQuote(
     .single()
   if (insertErr || !newQuote) throw new Error('Failed to create cloned quote: ' + insertErr?.message)
 
-  // 8. Write repriced document_line_items
   if (rawLineItems?.length) {
     const clonedItems = repricedItems.map(({ id: _id, created_at: _ca, document_id: _di, ...rest }: any) => ({
       ...rest,
@@ -541,9 +526,8 @@ export async function cloneQuote(
     await supabase.from('document_line_items').insert(clonedItems)
   }
 
-  // 9. Write repriced quote_line_items (backward compat)
   if (rawQli?.length) {
-    const sourceForQli = rawLineItems?.length ? [] : repricedItems  // avoid double-writing if doc_line_items existed
+    const sourceForQli = rawLineItems?.length ? [] : repricedItems
     if (sourceForQli.length) {
       const clonedQli = sourceForQli.map(({ id: _id, created_at: _ca, quote_id: _qi, document_id: _di, ...rest }: any) => ({
         ...rest,
