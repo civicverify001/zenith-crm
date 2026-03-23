@@ -3,7 +3,7 @@
 import { EmailTemplatesTab } from './EmailTemplatesTab'
 import SmsTemplatesTab from './SmsTemplatesTab'
 import { ChecklistTemplatesTab } from './ChecklistTemplatesTab'
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../hooks/useAuth'
 import {
@@ -1291,7 +1291,8 @@ function ServicePlansTemplateTab() {
               </tr>
             </thead>
             <tbody>
-              {templates.map((t, idx) => {
+              {templates.map((t, idx) => (
+                <React.Fragment key={t.id}>
                 const productName = products.find(p => p.id === (t as any).product_id)?.name
                 return (
                   <tr key={t.id} style={{ opacity: t.is_active ? 1 : 0.4 }}>
@@ -1732,7 +1733,8 @@ function AutomationsTab() {
             </div>
           </div>
         )
-      })}
+      </React.Fragment>
+              ))}
     </div>
   )
 }
