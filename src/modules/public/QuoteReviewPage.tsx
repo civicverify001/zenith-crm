@@ -770,6 +770,7 @@ export function QuoteReviewPage() {
   const [signing, setSigning] = useState(false)
   const [redirecting, setRedirecting] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [signatureImageUrl, setSignatureImageUrl] = useState<string>('')
   const topRef = useRef<HTMLDivElement>(null)
 
   const flowType: 'rental' | 'purchase' | 'finance' =
@@ -1085,7 +1086,8 @@ export function QuoteReviewPage() {
     return fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip).catch(() => 'unknown')
   }
 
-  async function handleSignQuote(signedName: string) {
+  async function handleSignQuote(signedName: string, sigDataUrl?: string) {
+    if (sigDataUrl) setSignatureImageUrl(sigDataUrl)
     if (!quote) return
     setSigning(true); setError('')
     try {
@@ -1159,7 +1161,8 @@ export function QuoteReviewPage() {
     setSigning(false)
   }
 
-  async function handleSignAgreement(signedName: string) {
+  async function handleSignAgreement(signedName: string, sigDataUrl?: string) {
+    if (sigDataUrl) setSignatureImageUrl(sigDataUrl)
     if (!agreement) return
     setSigning(true); setError('')
     try {
@@ -1208,7 +1211,8 @@ export function QuoteReviewPage() {
     setSigning(false)
   }
 
-  async function handleSignInvoice(signedName: string) {
+  async function handleSignInvoice(signedName: string, sigDataUrl?: string) {
+    if (sigDataUrl) setSignatureImageUrl(sigDataUrl)
     if (!invoice) return
     setSigning(true); setError('')
     try {
