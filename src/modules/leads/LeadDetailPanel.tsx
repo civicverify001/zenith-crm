@@ -311,14 +311,18 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
       setShowCallModal(false)
       setCallNotes('')
     if (callOutcome === 'no_show') {
-  supabase.from('follow_up_tasks').insert({
-    entity_type: 'lead', entity_id: lead.id,
-    title: `No-show follow-up: ${lead.full_name}`,
-    description: 'Customer did not show for scheduled consultation. Follow up to reschedule.',
-    due_date: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().split('T')[0],
-    status: 'pending', priority: 'high', assigned_to: lead.assigned_rep_id || null,
-  }).then(() => {}).catch(() => {})
-}
+        supabase.from('follow_up_tasks').insert({
+          entity_type: 'lead', entity_id: lead.id,
+          title: `No-show follow-up: ${lead.full_name}`,
+          description: 'Customer did not show for scheduled consultation. Follow up to reschedule.',
+          due_date: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().split('T')[0],
+          status: 'pending', priority: 'high', assigned_to: lead.assigned_rep_id || null,
+        }).then(() => {}).catch(() => {})
+      }
+    } catch (e) { console.error(e) }
+  }
+
+  const stageEnteredAt
 
   const stageEnteredAt = lead.stage_entered_at || lead.stage_changed_at
   const daysInStage = daysSince(stageEnteredAt)
