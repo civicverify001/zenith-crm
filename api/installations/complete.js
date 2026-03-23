@@ -63,8 +63,6 @@ module.exports = async function handler(req, res) {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    // NOTE: No hard early exit on status === 'complete'.
-    // Re-runs are intentionally allowed so ownership and snapshots can be corrected.
     const alreadyComplete = job.status === 'complete';
 
     // ── 2. Customer lookup — two layers ──────────────────────────────
@@ -95,8 +93,6 @@ module.exports = async function handler(req, res) {
     let ownershipType = 'purchased';
     let ownershipSource = 'default';
 
-    // Layer 1 — quote by lead_id / opportunity_id
-    // NOTE: quotes table does NOT have product_id column — selecting it causes 400 from PostgREST
     if (job.lead_id) {
       const { data: q, error: q1Err } = await supabase
         .from('quotes')
@@ -110,7 +106,6 @@ module.exports = async function handler(req, res) {
       if (q) { acceptedQuote = q; ownershipSource = 'quote_lead_id'; }
     }
 
-    // Layer 2 — quote by customer_id
     if (!acceptedQuote && customerId) {
       const { data: q, error: q2Err } = await supabase
         .from('quotes')
@@ -124,7 +119,6 @@ module.exports = async function handler(req, res) {
       if (q) { acceptedQuote = q; ownershipSource = 'quote_customer_id'; }
     }
 
-    // Resolve ownership + fee from quote
     if (acceptedQuote) {
       const ct = acceptedQuote.commercial_type;
       ownershipType = ct === 'rental'  ? 'rented'
@@ -136,8 +130,7 @@ module.exports = async function handler(req, res) {
       monthlyAmount = acceptedQuote.monthly_amount ? parseFloat(acceptedQuote.monthly_amount) : null;
     }
 
-    // Layer 3 — signed agreement
-    let fallbackQuoteId = null; // For product + plan lookup when quote queries fail
+    let fallbackQuoteId = null;
     if (!acceptedQuote && customerId) {
       const { data: ag } = await supabase
         .from('agreements')
@@ -157,7 +150,6 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // Layer 4 — active contract
     if (ownershipSource === 'default' && customerId) {
       const { data: con } = await supabase
         .from('contracts')
@@ -368,7 +360,6 @@ module.exports = async function handler(req, res) {
           console.error('[COMPLETE][S6] INSERT installed_systems FAILED:', sysError?.message);
         }
 
-        // Warranty: only on INSERT path
         if (installedSystemId && product?.warranty_months) {
           const warrantyEnd = new Date();
           warrantyEnd.setMonth(warrantyEnd.getMonth() + product.warranty_months);
@@ -623,7 +614,6 @@ module.exports = async function handler(req, res) {
 
       console.log('[COMPLETE][S7b] Plan activation complete. Total activated:', activatedPlans.length);
 
-      // ── Activity logs for activated plans ──────────────────────────
       for (const ap of activatedPlans) {
         try {
           await supabase.from('customer_activity_log').insert({
@@ -655,7 +645,6 @@ module.exports = async function handler(req, res) {
         });
       } catch(e) { console.error('[BEST-EFFORT] job_activity_log:', e.message); }
 
-      // ── 8b. Customer activity log ───────────────────────────────────
       if (customerId) {
         try {
           await supabase.from('customer_activity_log').insert({
@@ -705,6 +694,15 @@ module.exports = async function handler(req, res) {
           await sendSms(smsCustomer.phone, msg, customerId)
         }
       } catch (_) { /* fire-and-forget */ }
+    }
+
+    // ── Schedule 24hr review email (picked up by quote-followup cron) ─
+    if (customerId && !alreadyComplete) {
+      const reviewSendAfter = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+      supabase.from('jobs')
+        .update({ review_email_send_after: reviewSendAfter })
+        .eq('id', job_id)
+        .then(() => {}).catch(() => {})
     }
 
     // ── 9. Skip charge if no customer or no fee ───────────────────────
