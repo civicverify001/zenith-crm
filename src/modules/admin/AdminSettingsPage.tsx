@@ -45,6 +45,12 @@ interface QualifyingQuestion {
   updated_at: string
 }
 
+interface PlanItem {
+  product_id: string
+  quantity: number
+  cycle_year: number
+}
+
 const DOC_TYPE_LABELS: Record<string, string> = {
   terms_page:       '📄 General Terms & Conditions',
   rental_agreement: '📋 Rental Agreement',
@@ -144,10 +150,10 @@ export default function AdminSettingsPage() {
 
       {/* Tab content */}
       <div style={{ flex: 1, overflow: 'hidden' }}>
-        {activeTab === 'qualifying'    && <QualifyingQuestionsTab />}
-        {activeTab === 'site_visit'    && <SiteVisitQuestionsTab />}
-        {activeTab === 'terms'         && <TermBlocksTab />}
-        {activeTab === 'service_plans' && <ServicePlansTemplateTab />}
+        {activeTab === 'qualifying'      && <QualifyingQuestionsTab />}
+        {activeTab === 'site_visit'      && <SiteVisitQuestionsTab />}
+        {activeTab === 'terms'           && <TermBlocksTab />}
+        {activeTab === 'service_plans'   && <ServicePlansTemplateTab />}
         {activeTab === 'email_templates' && <EmailTemplatesTab />}
         {activeTab === 'checklists'      && <ChecklistTemplatesTab />}
         {activeTab === 'sms_templates'   && <SmsTemplatesTab />}
@@ -949,7 +955,10 @@ function TermBlocksTab() {
 }
 
 // ════════════════════════════════════════════════════════════════
-// TAB 4: SERVICE PLAN TEMPLATES (with product picker)
+// TAB 4: SERVICE PLAN TEMPLATES
+// Gap 18: Multi-product plan items with quantity + cycle_year
+// Uses service_plan_items table. Single fProductId removed.
+// planItemsMap loaded at template-load time for table display.
 // ════════════════════════════════════════════════════════════════
 
 const PRODUCT_CATEGORIES = [
@@ -961,8 +970,193 @@ const PRODUCT_CATEGORIES = [
   { value: 'combo_whole_home_ro', label: 'Combo (Whole Home + RO)' },
 ]
 
+// ── Plan Items Editor sub-component ───────────────────────────
+function PlanItemsEditor({
+  items,
+  onChange,
+  products,
+  fulfillmentType,
+}: {
+  items: PlanItem[]
+  onChange: (items: PlanItem[]) => void
+  products: { id: string; name: string }[]
+  fulfillmentType: string
+}) {
+  const [newProductId, setNewProductId] = useState('')
+  const [newQuantity, setNewQuantity] = useState('1')
+  const [newCycleYear, setNewCycleYear] = useState('0')
+  const [addError, setAddError] = useState('')
+
+  // cycle_year = 0 means "every cycle". 1+ = specific year
+  const cycleYearLabel = (cy: number) => cy === 0 ? 'Every cycle' : `Year ${cy} only`
+
+  function addItem() {
+    if (!newProductId) { setAddError('Select a product'); return }
+    const qty = parseInt(newQuantity) || 1
+    const cy = parseInt(newCycleYear) || 0
+    // Prevent duplicate product+cycle_year combos
+    const exists = items.some(i => i.product_id === newProductId && i.cycle_year === cy)
+    if (exists) { setAddError('This product+cycle combo already exists'); return }
+    onChange([...items, { product_id: newProductId, quantity: qty, cycle_year: cy }])
+    setNewProductId(''); setNewQuantity('1'); setNewCycleYear('0'); setAddError('')
+  }
+
+  function removeItem(idx: number) {
+    onChange(items.filter((_, i) => i !== idx))
+  }
+
+  function updateQty(idx: number, val: string) {
+    const qty = Math.max(1, parseInt(val) || 1)
+    onChange(items.map((item, i) => i === idx ? { ...item, quantity: qty } : item))
+  }
+
+  const isShipment = fulfillmentType === 'shipment'
+  const isTechVisit = fulfillmentType === 'tech_visit'
+  const showCycleYear = isShipment // cycle year most relevant for filter shipments
+
+  return (
+    <div>
+      <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        {isShipment ? '📦 Products to Ship' : isTechVisit ? '🔧 Related Products' : '🛍 Products'}
+        {isShipment && <span style={{ color: '#a855f7', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}> — fulfilled per cycle by shipping cron</span>}
+      </label>
+
+      {/* Existing items */}
+      {items.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+          {items.map((item, idx) => {
+            const prodName = products.find(p => p.id === item.product_id)?.name || 'Unknown product'
+            return (
+              <div key={idx} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.2)',
+                borderRadius: 10, padding: '8px 12px',
+              }}>
+                <span style={{ fontSize: 14 }}>📦</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {prodName}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+                    <span style={{ fontSize: 10, color: '#a855f7' }}>Qty: {item.quantity}</span>
+                    {showCycleYear && (
+                      <span style={{ fontSize: 10, color: '#64748b' }}>· {cycleYearLabel(item.cycle_year)}</span>
+                    )}
+                  </div>
+                </div>
+                {/* Inline qty edit */}
+                <input
+                  type="number" min="1" value={item.quantity}
+                  onChange={e => updateQty(idx, e.target.value)}
+                  style={{
+                    width: 50, background: 'rgba(255,255,255,0.06)', border: '1px solid #1e3a4f',
+                    borderRadius: 6, padding: '4px 8px', color: '#e2e8f0', fontSize: 12, outline: 'none',
+                    textAlign: 'center',
+                  }}
+                />
+                <button onClick={() => removeItem(idx)} style={{
+                  color: '#f87171', background: 'none', border: 'none', cursor: 'pointer',
+                  fontSize: 16, lineHeight: 1, padding: '2px 4px',
+                }}>×</button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Add new item row */}
+      <div style={{
+        background: 'rgba(255,255,255,0.03)', border: '1px dashed #1e3a4f',
+        borderRadius: 10, padding: 12,
+      }}>
+        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8, fontWeight: 600 }}>+ Add Product</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <select
+            value={newProductId}
+            onChange={e => { setNewProductId(e.target.value); setAddError('') }}
+            style={{
+              flex: '2 1 160px', background: 'rgba(255,255,255,0.05)', border: '1px solid #1e3a4f',
+              borderRadius: 8, padding: '7px 10px', color: newProductId ? '#e2e8f0' : '#64748b',
+              fontSize: 12, outline: 'none',
+            }}
+          >
+            <option value="" style={{ background: '#0f1923' }}>Select product...</option>
+            {products.map(p => (
+              <option key={p.id} value={p.id} style={{ background: '#0f1923' }}>{p.name}</option>
+            ))}
+          </select>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: '0 0 70px' }}>
+            <label style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Qty</label>
+            <input
+              type="number" min="1" value={newQuantity}
+              onChange={e => setNewQuantity(e.target.value)}
+              style={{
+                background: 'rgba(255,255,255,0.05)', border: '1px solid #1e3a4f',
+                borderRadius: 8, padding: '7px 10px', color: '#e2e8f0', fontSize: 12, outline: 'none',
+                textAlign: 'center',
+              }}
+            />
+          </div>
+
+          {showCycleYear && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: '1 1 100px' }}>
+              <label style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Ships in</label>
+              <select
+                value={newCycleYear}
+                onChange={e => setNewCycleYear(e.target.value)}
+                style={{
+                  background: 'rgba(255,255,255,0.05)', border: '1px solid #1e3a4f',
+                  borderRadius: 8, padding: '7px 10px', color: '#e2e8f0', fontSize: 12, outline: 'none',
+                }}
+              >
+                <option value="0" style={{ background: '#0f1923' }}>Every cycle</option>
+                <option value="1" style={{ background: '#0f1923' }}>Year 1 only</option>
+                <option value="2" style={{ background: '#0f1923' }}>Year 2 only</option>
+                <option value="3" style={{ background: '#0f1923' }}>Year 3 only</option>
+                <option value="4" style={{ background: '#0f1923' }}>Year 4 only</option>
+                <option value="5" style={{ background: '#0f1923' }}>Year 5 only</option>
+              </select>
+            </div>
+          )}
+
+          <button
+            onClick={addItem}
+            style={{
+              flex: '0 0 auto', alignSelf: 'flex-end',
+              padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              background: 'linear-gradient(135deg, #a855f7, #9333ea)', color: '#fff', border: 'none',
+            }}
+          >
+            Add
+          </button>
+        </div>
+
+        {addError && (
+          <div style={{ fontSize: 11, color: '#f87171', marginTop: 6 }}>⚠️ {addError}</div>
+        )}
+
+        {showCycleYear && (
+          <div style={{ fontSize: 10, color: '#475569', marginTop: 8, lineHeight: 1.5 }}>
+            💡 <strong>Every cycle</strong> = ships on every fulfillment date.
+            {' '}<strong>Year N only</strong> = only ships when the subscription age matches that year.
+            Use this for multi-year filter kits (e.g., annual + 3-year membrane).
+          </div>
+        )}
+      </div>
+
+      {isShipment && items.length === 0 && (
+        <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 8 }}>
+          ⚠️ No products added — fulfillment cron will skip this plan until at least one product is linked
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ServicePlansTemplateTab() {
   const [templates, setTemplates] = useState<ServicePlanTemplate[]>([])
+  const [planItemsMap, setPlanItemsMap] = useState<Record<string, PlanItem[]>>({})
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<ServicePlanTemplate | null>(null)
@@ -970,6 +1164,7 @@ function ServicePlansTemplateTab() {
   const [error, setError] = useState('')
   const [products, setProducts] = useState<{ id: string; name: string }[]>([])
 
+  // Form state
   const [fName, setFName] = useState('')
   const [fDesc, setFDesc] = useState('')
   const [fNotes, setFNotes] = useState('')
@@ -980,7 +1175,8 @@ function ServicePlansTemplateTab() {
   const [fCategories, setFCategories] = useState<string[]>([])
   const [fRequiresSystem, setFRequiresSystem] = useState(true)
   const [fAutoActivate, setFAutoActivate] = useState(false)
-  const [fProductId, setFProductId] = useState('')
+  // Gap 18: Multi-product items replaces single fProductId
+  const [fPlanItems, setFPlanItems] = useState<PlanItem[]>([])
 
   useEffect(() => {
     loadTemplates()
@@ -994,6 +1190,27 @@ function ServicePlansTemplateTab() {
     try {
       const data = await fetchPlanTemplates()
       setTemplates(data)
+
+      // Load plan items for all templates in one query
+      if (data.length > 0) {
+        const ids = data.map(t => t.id)
+        const { data: items } = await supabase
+          .from('service_plan_items')
+          .select('service_plan_id, product_id, quantity, cycle_year')
+          .in('service_plan_id', ids)
+        if (items) {
+          const map: Record<string, PlanItem[]> = {}
+          for (const item of items) {
+            if (!map[item.service_plan_id]) map[item.service_plan_id] = []
+            map[item.service_plan_id].push({
+              product_id: item.product_id,
+              quantity: item.quantity ?? 1,
+              cycle_year: item.cycle_year ?? 0,
+            })
+          }
+          setPlanItemsMap(map)
+        }
+      }
     } catch (e: any) {
       console.error('Failed to load plan templates:', e)
     }
@@ -1003,7 +1220,7 @@ function ServicePlansTemplateTab() {
   function resetForm() {
     setFName(''); setFDesc(''); setFNotes(''); setFCycle('yearly'); setFPrice('')
     setFFulfillment('none'); setFInterval(''); setFCategories([])
-    setFRequiresSystem(true); setFAutoActivate(false); setFProductId('')
+    setFRequiresSystem(true); setFAutoActivate(false); setFPlanItems([])
     setEditing(null); setError('')
   }
 
@@ -1015,13 +1232,16 @@ function ServicePlansTemplateTab() {
     setFInterval(t.fulfillment_interval_months ? String(t.fulfillment_interval_months) : '')
     setFCategories(Array.isArray(t.applies_to_categories) ? t.applies_to_categories : [])
     setFRequiresSystem(t.requires_installed_system); setFAutoActivate(t.auto_activate_on_install)
-    setFProductId((t as any).product_id || ''); setShowForm(true); setError('')
+    // Load existing plan items for this template
+    setFPlanItems(planItemsMap[t.id] || [])
+    setShowForm(true); setError('')
   }
 
   async function handleSave() {
     if (!fName.trim()) { setError('Plan name is required'); return }
     if (!fPrice || parseFloat(fPrice) < 0) { setError('Valid price is required'); return }
     setSaving(true); setError('')
+
     const input: CreatePlanTemplateInput = {
       name: fName.trim(), description: fDesc.trim() || undefined,
       internal_notes: fNotes.trim() || undefined, billing_cycle: fCycle,
@@ -1030,16 +1250,35 @@ function ServicePlansTemplateTab() {
       applies_to_categories: fCategories, requires_installed_system: fRequiresSystem,
       auto_activate_on_install: fAutoActivate,
     }
+
     try {
+      let planId: string
+
       if (editing) {
         await updatePlanTemplate(editing.id, input)
-        await supabase.from('service_plans').update({ product_id: fProductId || null }).eq('id', editing.id)
+        planId = editing.id
       } else {
         const created = await createPlanTemplate(input)
-        if (created && fProductId) await supabase.from('service_plans').update({ product_id: fProductId }).eq('id', created.id)
+        planId = created.id
       }
+
+      // Gap 18: Sync service_plan_items — delete existing, insert new
+      await supabase.from('service_plan_items').delete().eq('service_plan_id', planId)
+      if (fPlanItems.length > 0) {
+        await supabase.from('service_plan_items').insert(
+          fPlanItems.map(item => ({
+            service_plan_id: planId,
+            product_id: item.product_id,
+            quantity: item.quantity,
+            cycle_year: item.cycle_year,
+          }))
+        )
+      }
+
       setShowForm(false); resetForm(); loadTemplates()
-    } catch (e: any) { setError(e.message || 'Failed to save') }
+    } catch (e: any) {
+      setError(e.message || 'Failed to save')
+    }
     setSaving(false)
   }
 
@@ -1059,6 +1298,7 @@ function ServicePlansTemplateTab() {
 
   async function handleDelete(t: ServicePlanTemplate) {
     if (!confirm(`Delete "${t.name}"? This cannot be undone.`)) return
+    // service_plan_items cascade deletes with plan (FK ON DELETE CASCADE expected)
     const { error } = await supabase.from('service_plans').delete().eq('id', t.id)
     if (!error) loadTemplates()
   }
@@ -1147,19 +1387,19 @@ function ServicePlansTemplateTab() {
                 </div>
               )}
             </div>
+
+            {/* Gap 18: Multi-product plan items editor — shown for all fulfillment types */}
             {fFulfillment !== 'none' && (
-              <div>
-                <label style={labelStyle}>
-                  {fFulfillment === 'shipment' ? 'Product to Ship' : 'Related Product'}
-                  <span style={{ color: '#f59e0b' }}> — fulfillment cron needs this</span>
-                </label>
-                <select value={fProductId} onChange={e => setFProductId(e.target.value)} style={inputStyle}>
-                  <option value="" style={{ background: '#0f1923' }}>Select product...</option>
-                  {products.map(p => <option key={p.id} value={p.id} style={{ background: '#0f1923' }}>{p.name}</option>)}
-                </select>
-                {!fProductId && <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 4 }}>⚠️ Fulfillment cron will skip this plan until a product is linked</div>}
+              <div style={{ background: 'rgba(168,85,247,0.04)', border: '1px solid rgba(168,85,247,0.15)', borderRadius: 12, padding: 16 }}>
+                <PlanItemsEditor
+                  items={fPlanItems}
+                  onChange={setFPlanItems}
+                  products={products}
+                  fulfillmentType={fFulfillment}
+                />
               </div>
             )}
+
             <div>
               <label style={labelStyle}>Customer-Facing Description</label>
               <textarea value={fDesc} onChange={e => setFDesc(e.target.value)} rows={2} placeholder="Shown on quotes and customer pages" style={{ ...inputStyle, resize: 'none' as const, fontFamily: 'inherit' }} />
@@ -1226,7 +1466,7 @@ function ServicePlansTemplateTab() {
                 <th style={thStyle}>Plan</th>
                 <th style={{ ...thStyle, width: 100 }}>Billing</th>
                 <th style={{ ...thStyle, width: 90, textAlign: 'right' }}>Price</th>
-                <th style={{ ...thStyle, width: 120 }}>Fulfillment</th>
+                <th style={{ ...thStyle, width: 160 }}>Fulfillment</th>
                 <th style={{ ...thStyle, width: 80, textAlign: 'center' }}>Active</th>
                 <th style={{ ...thStyle, width: 90, textAlign: 'center' }}>Auto-Enroll</th>
                 <th style={{ ...thStyle, width: 70, textAlign: 'center' }}>Order</th>
@@ -1235,7 +1475,7 @@ function ServicePlansTemplateTab() {
             </thead>
             <tbody>
               {templates.map((t, idx) => {
-                const productName = products.find(p => p.id === (t as any).product_id)?.name
+                const tItems = planItemsMap[t.id] || []
                 return (
                   <tr key={t.id} style={{ opacity: t.is_active ? 1 : 0.4 }}>
                     <td style={{ ...tdStyle, color: '#64748b', fontFamily: 'monospace' }}>{idx + 1}</td>
@@ -1269,8 +1509,28 @@ function ServicePlansTemplateTab() {
                         {FULFILLMENT_TYPE_LABELS[t.fulfillment_type] || t.fulfillment_type}
                       </span>
                       {t.fulfillment_interval_months && <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>Every {t.fulfillment_interval_months} mo</div>}
-                      {t.fulfillment_type === 'shipment' && productName && <div style={{ fontSize: 10, color: '#a855f7', marginTop: 2 }}>📦 {productName}</div>}
-                      {t.fulfillment_type === 'shipment' && !productName && <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 2 }}>⚠️ No product linked</div>}
+                      {/* Gap 18: Show all plan items instead of single product */}
+                      {tItems.length > 0 ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
+                          {tItems.map((item, i) => {
+                            const pName = products.find(p => p.id === item.product_id)?.name
+                            if (!pName) return null
+                            return (
+                              <div key={i} style={{ fontSize: 10, color: '#a855f7', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <span>📦</span>
+                                <span>{pName} ×{item.quantity}</span>
+                                {item.cycle_year > 0 && (
+                                  <span style={{ color: '#64748b' }}>· Yr {item.cycle_year}</span>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        t.fulfillment_type === 'shipment' && (
+                          <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 2 }}>⚠️ No products linked</div>
+                        )
+                      )}
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'center' }}><ActiveBadge active={t.is_active} onClick={() => handleToggleActive(t)} /></td>
                     <td style={{ ...tdStyle, textAlign: 'center' }}>
