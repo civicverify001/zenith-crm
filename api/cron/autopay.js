@@ -5,6 +5,9 @@
 //            + Creates fulfillment_requests for tech_visit plans (Phase 3.5)
 // Section 3: Retries payment_failed plans when new card on file
 //
+// DND rule: payment processing always runs regardless of DND.
+//           Email + SMS notifications are skipped for DND customers.
+//
 // {
 //   "crons": [{ "path": "/api/cron/autopay", "schedule": "0 11 * * *" }]
 // }
@@ -22,7 +25,19 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-12-
 const OPENPHONE_KEY = process.env.OPENPHONE_API_KEY || ''
 const OPENPHONE_NUM = process.env.OPENPHONE_NUMBER  || '+14633005100'
 
-// ─── Resend email helper ──────────────────────────────────────────
+// ── DND check helper ──────────────────────────────────────────────
+async function isCustomerDnd(customerId) {
+  try {
+    const { data: cust } = await supabase
+      .from('customers').select('lead_id').eq('id', customerId).single()
+    if (!cust?.lead_id) return false
+    const { data: lead } = await supabase
+      .from('leads').select('stage').eq('id', cust.lead_id).single()
+    return lead?.stage === 'dnd'
+  } catch (_) { return false }
+}
+
+// ─── Resend email helper ──────────────────────────────────────────────
 async function sendEmail({ to, subject, html, customer_id, email_type, document_id = null }) {
   const now = new Date().toISOString()
   try {
@@ -227,6 +242,10 @@ export default async function handler(req, res) {
           continue
         }
 
+        // ── DND check (Section 1) — payment runs regardless, comms skip ──
+        const isDnd = await isCustomerDnd(customer.id)
+        if (isDnd) console.log(`[autopay] S1 DND customer — charging but skipping comms: ${customer.full_name}`)
+
         const { data: paymentMethod } = await supabase
           .from('payment_methods').select('id, external_id, type, last_four')
           .eq('customer_id', contract.customer_id).eq('is_default', true).eq('status', 'active').single()
@@ -279,29 +298,31 @@ export default async function handler(req, res) {
             actor_type: 'system', metadata: { amount: contract.monthly_amount, payment_intent: paymentIntent?.id },
           })
 
-          // ── EMAIL: Payment receipt ────────────────────────────
-          if (customer.email) {
-            const nextBillingDate = new Date()
-            nextBillingDate.setMonth(nextBillingDate.getMonth() + 1)
-            const nextStr = nextBillingDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-            await sendEmail({
-              to: customer.email,
-              subject: `Payment received — $${contract.monthly_amount.toFixed(2)} — Zenith Pure Solutions`,
-              html: paymentReceiptHtml({
-                customerName: customer.full_name, amount: contract.monthly_amount,
-                description, contractNumber: contract.contract_number,
-                nextDate: nextStr, cardLast4: paymentMethod.last_four, isServicePlan: false,
-              }),
-              customer_id: customer.id, email_type: 'payment_receipt',
-            })
-          }
+          if (!isDnd) {
+            // ── EMAIL: Payment receipt ──────────────────────────
+            if (customer.email) {
+              const nextBillingDate = new Date()
+              nextBillingDate.setMonth(nextBillingDate.getMonth() + 1)
+              const nextStr = nextBillingDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+              await sendEmail({
+                to: customer.email,
+                subject: `Payment received — $${contract.monthly_amount.toFixed(2)} — Zenith Pure Solutions`,
+                html: paymentReceiptHtml({
+                  customerName: customer.full_name, amount: contract.monthly_amount,
+                  description, contractNumber: contract.contract_number,
+                  nextDate: nextStr, cardLast4: paymentMethod.last_four, isServicePlan: false,
+                }),
+                customer_id: customer.id, email_type: 'payment_receipt',
+              })
+            }
 
-          // ── SMS: Payment receipt (fire-and-forget) ────────────
-          if (customer.phone) {
-            const firstName = (customer.full_name || 'there').split(' ')[0]
-            await sendSms(customer.phone,
-              `Hi ${firstName}, your $${contract.monthly_amount.toFixed(2)} rental payment was received. Thank you! — Zenith Pure Solutions`,
-              customer.id)
+            // ── SMS: Payment receipt ────────────────────────────
+            if (customer.phone) {
+              const firstName = (customer.full_name || 'there').split(' ')[0]
+              await sendSms(customer.phone,
+                `Hi ${firstName}, your $${contract.monthly_amount.toFixed(2)} rental payment was received. Thank you! — Zenith Pure Solutions`,
+                customer.id)
+            }
           }
 
         } else {
@@ -317,26 +338,28 @@ export default async function handler(req, res) {
             actor_type: 'system', metadata: { amount: contract.monthly_amount, reason: results.errors[results.errors.length - 1]?.reason },
           })
 
-          // ── EMAIL: Failed payment notice ──────────────────────
-          if (customer.email) {
-            await sendEmail({
-              to: customer.email,
-              subject: `Payment failed — action required — Zenith Pure Solutions`,
-              html: paymentFailedHtml({
-                customerName: customer.full_name, amount: contract.monthly_amount,
-                description, contractNumber: contract.contract_number,
-                attemptCount: 1, isFinal: false, isServicePlan: false,
-              }),
-              customer_id: customer.id, email_type: 'payment_failed',
-            })
-          }
+          if (!isDnd) {
+            // ── EMAIL: Failed payment notice ────────────────────
+            if (customer.email) {
+              await sendEmail({
+                to: customer.email,
+                subject: `Payment failed — action required — Zenith Pure Solutions`,
+                html: paymentFailedHtml({
+                  customerName: customer.full_name, amount: contract.monthly_amount,
+                  description, contractNumber: contract.contract_number,
+                  attemptCount: 1, isFinal: false, isServicePlan: false,
+                }),
+                customer_id: customer.id, email_type: 'payment_failed',
+              })
+            }
 
-          // ── SMS: Failed payment notice (fire-and-forget) ──────
-          if (customer.phone) {
-            const firstName = (customer.full_name || 'there').split(' ')[0]
-            await sendSms(customer.phone,
-              `Hi ${firstName}, your autopay of $${contract.monthly_amount.toFixed(2)} failed. Please call us at (317) 690-4172 to update your payment method. — Zenith Pure Solutions`,
-              customer.id)
+            // ── SMS: Failed payment notice ──────────────────────
+            if (customer.phone) {
+              const firstName = (customer.full_name || 'there').split(' ')[0]
+              await sendSms(customer.phone,
+                `Hi ${firstName}, your autopay of $${contract.monthly_amount.toFixed(2)} failed. Please call us at (317) 690-4172 to update your payment method. — Zenith Pure Solutions`,
+                customer.id)
+            }
           }
         }
 
@@ -370,7 +393,6 @@ export default async function handler(req, res) {
       for (const plan of duePlans) {
         results.plans_processed++
         try {
-          // Added phone to customer select for SMS
           const { data: customer } = await supabase
             .from('customers').select('id, full_name, email, phone, stripe_customer_id')
             .eq('id', plan.customer_id).single()
@@ -380,6 +402,10 @@ export default async function handler(req, res) {
             results.plans_errors.push({ plan_id: plan.id, reason: 'No Stripe customer ID', customer_id: plan.customer_id })
             continue
           }
+
+          // ── DND check (Section 2) ─────────────────────────────
+          const isDnd = await isCustomerDnd(customer.id)
+          if (isDnd) console.log(`[autopay] S2 DND customer — charging but skipping comms: ${customer.full_name}`)
 
           const { data: paymentMethod } = await supabase
             .from('payment_methods').select('id, external_id, type, last_four')
@@ -474,29 +500,31 @@ export default async function handler(req, res) {
               }
             }
 
-            // ── EMAIL: Service plan receipt ───────────────────
-            if (customer.email) {
-              const nextStr = isOneTime ? null : (nextDate
-                ? new Date(nextDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-                : null)
-              await sendEmail({
-                to: customer.email,
-                subject: `Payment received — ${planName} — Zenith Pure Solutions`,
-                html: paymentReceiptHtml({
-                  customerName: customer.full_name, amount: plan.price,
-                  description, contractNumber: planName,
-                  nextDate: nextStr, cardLast4: paymentMethod.last_four, isServicePlan: true,
-                }),
-                customer_id: customer.id, email_type: 'payment_receipt',
-              })
-            }
+            if (!isDnd) {
+              // ── EMAIL: Service plan receipt ─────────────────
+              if (customer.email) {
+                const nextStr = isOneTime ? null : (nextDate
+                  ? new Date(nextDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                  : null)
+                await sendEmail({
+                  to: customer.email,
+                  subject: `Payment received — ${planName} — Zenith Pure Solutions`,
+                  html: paymentReceiptHtml({
+                    customerName: customer.full_name, amount: plan.price,
+                    description, contractNumber: planName,
+                    nextDate: nextStr, cardLast4: paymentMethod.last_four, isServicePlan: true,
+                  }),
+                  customer_id: customer.id, email_type: 'payment_receipt',
+                })
+              }
 
-            // ── SMS: Service plan receipt (fire-and-forget) ───
-            if (customer.phone) {
-              const firstName = (customer.full_name || 'there').split(' ')[0]
-              await sendSms(customer.phone,
-                `Hi ${firstName}, your $${plan.price.toFixed(2)} ${planName} payment was received. Thank you! — Zenith Pure Solutions`,
-                customer.id)
+              // ── SMS: Service plan receipt ───────────────────
+              if (customer.phone) {
+                const firstName = (customer.full_name || 'there').split(' ')[0]
+                await sendSms(customer.phone,
+                  `Hi ${firstName}, your $${plan.price.toFixed(2)} ${planName} payment was received. Thank you! — Zenith Pure Solutions`,
+                  customer.id)
+              }
             }
 
           } else {
@@ -521,27 +549,29 @@ export default async function handler(req, res) {
               actor_id: null, metadata: { plan_id: plan.id, amount: plan.price, failed_count: newFailCount, escalated: shouldEscalate },
             }).then(() => {}).catch(() => {})
 
-            // ── EMAIL: Service plan failure notice ────────────
-            if (customer.email) {
-              await sendEmail({
-                to: customer.email,
-                subject: `Payment failed — ${planName} — action required — Zenith Pure Solutions`,
-                html: paymentFailedHtml({
-                  customerName: customer.full_name, amount: plan.price,
-                  description, contractNumber: planName,
-                  attemptCount: newFailCount, isFinal: shouldEscalate, isServicePlan: true,
-                }),
-                customer_id: customer.id, email_type: 'payment_failed',
-              })
-            }
+            if (!isDnd) {
+              // ── EMAIL: Service plan failure ─────────────────
+              if (customer.email) {
+                await sendEmail({
+                  to: customer.email,
+                  subject: `Payment failed — ${planName} — action required — Zenith Pure Solutions`,
+                  html: paymentFailedHtml({
+                    customerName: customer.full_name, amount: plan.price,
+                    description, contractNumber: planName,
+                    attemptCount: newFailCount, isFinal: shouldEscalate, isServicePlan: true,
+                  }),
+                  customer_id: customer.id, email_type: 'payment_failed',
+                })
+              }
 
-            // ── SMS: Service plan failure (fire-and-forget) ───
-            if (customer.phone) {
-              const firstName = (customer.full_name || 'there').split(' ')[0]
-              const msg = shouldEscalate
-                ? `Hi ${firstName}, your ${planName} payment failed after 3 attempts. Your plan is paused. Please call us at (317) 690-4172. — Zenith Pure Solutions`
-                : `Hi ${firstName}, your ${planName} payment of $${plan.price.toFixed(2)} failed. Please call us at (317) 690-4172 to update your card. — Zenith Pure Solutions`
-              await sendSms(customer.phone, msg, customer.id)
+              // ── SMS: Service plan failure ───────────────────
+              if (customer.phone) {
+                const firstName = (customer.full_name || 'there').split(' ')[0]
+                const msg = shouldEscalate
+                  ? `Hi ${firstName}, your ${planName} payment failed after 3 attempts. Your plan is paused. Please call us at (317) 690-4172. — Zenith Pure Solutions`
+                  : `Hi ${firstName}, your ${planName} payment of $${plan.price.toFixed(2)} failed. Please call us at (317) 690-4172 to update your card. — Zenith Pure Solutions`
+                await sendSms(customer.phone, msg, customer.id)
+              }
             }
           }
 
@@ -574,6 +604,9 @@ export default async function handler(req, res) {
             .eq('id', plan.customer_id).single()
 
           if (!customer?.stripe_customer_id) continue
+
+          // ── DND check (Section 3) ─────────────────────────────
+          const isDnd = await isCustomerDnd(customer.id)
 
           const { data: paymentMethod } = await supabase
             .from('payment_methods').select('id, external_id, last_four')
@@ -621,25 +654,27 @@ export default async function handler(req, res) {
               actor_id: null, metadata: { plan_id: plan.id, amount: plan.price },
             }).then(() => {}).catch(() => {})
 
-            if (customer.email) {
-              await sendEmail({
-                to: customer.email,
-                subject: `Payment received — ${planName} — Zenith Pure Solutions`,
-                html: paymentReceiptHtml({
-                  customerName: customer.full_name, amount: plan.price,
-                  description: `${planName} — account reactivated`, contractNumber: planName,
-                  nextDate: nextDate ? new Date(nextDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : null,
-                  cardLast4: paymentMethod.last_four, isServicePlan: true,
-                }),
-                customer_id: customer.id, email_type: 'payment_receipt',
-              })
-            }
+            if (!isDnd) {
+              if (customer.email) {
+                await sendEmail({
+                  to: customer.email,
+                  subject: `Payment received — ${planName} — Zenith Pure Solutions`,
+                  html: paymentReceiptHtml({
+                    customerName: customer.full_name, amount: plan.price,
+                    description: `${planName} — account reactivated`, contractNumber: planName,
+                    nextDate: nextDate ? new Date(nextDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : null,
+                    cardLast4: paymentMethod.last_four, isServicePlan: true,
+                  }),
+                  customer_id: customer.id, email_type: 'payment_receipt',
+                })
+              }
 
-            if (customer.phone) {
-              const firstName = (customer.full_name || 'there').split(' ')[0]
-              await sendSms(customer.phone,
-                `Hi ${firstName}, your ${planName} payment was successful and your plan is reactivated! Thank you. — Zenith Pure Solutions`,
-                customer.id)
+              if (customer.phone) {
+                const firstName = (customer.full_name || 'there').split(' ')[0]
+                await sendSms(customer.phone,
+                  `Hi ${firstName}, your ${planName} payment was successful and your plan is reactivated! Thank you. — Zenith Pure Solutions`,
+                  customer.id)
+              }
             }
 
             results.plans_succeeded++
