@@ -634,7 +634,7 @@ function FormView({
                       </div>
                     </td>
                     <td style={S.td}>
-                      <td style={{ ...S.td, width: '42%' }}>
+                      <td style={S.td}>
                       {li.sku && <div style={{ color: '#0d7ea3', fontSize: 11, fontWeight: 700, marginBottom: 3 }}>{li.sku}</div>}
                       {li.item_type === 'install_fee' && (
                         <div style={{ color: '#f59e0b', fontSize: 10, fontWeight: 700, marginBottom: 3, textTransform: 'uppercase' }}>One-time — charged after installation</div>
