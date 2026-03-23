@@ -40,9 +40,50 @@ export default async function handler(req, res) {
         }
       }
 
+      // ── First open: update status + create 2hr call task for rep ──
       if (quote.status === 'sent') {
         await supabase.from('quotes').update({ status: 'viewed', viewed_at: new Date().toISOString() }).eq('id', quote.id)
         await supabase.from('document_audit_log').insert({ entity_type: 'quote', entity_id: quote.id, event: 'viewed', actor_type: 'customer' })
+
+        // Fire-and-forget: check automation setting + create task
+        ;(async () => {
+          try {
+            const { data: setting } = await supabase
+              .from('automation_settings')
+              .select('enabled')
+              .eq('key', 'quote_first_opened_task')
+              .single()
+
+            if (setting?.enabled === false) return
+
+            // Find assigned rep — check lead first, fall back to quote.created_by
+            let assignedTo = quote.created_by || null
+            if (quote.lead_id) {
+              const { data: lead } = await supabase
+                .from('leads')
+                .select('assigned_rep_id')
+                .eq('id', quote.lead_id)
+                .single()
+              if (lead?.assigned_rep_id) assignedTo = lead.assigned_rep_id
+            }
+
+            const dueAt = new Date(Date.now() + 2 * 60 * 60 * 1000)
+            const customerName = customer?.full_name || 'Customer'
+
+            await supabase.from('follow_up_tasks').insert({
+              entity_type: 'customer',
+              entity_id: quote.customer_id,
+              title: `Call re: quote viewed — ${customerName} (${quote.quote_number})`,
+              description: `${customerName} just opened quote ${quote.quote_number}. Call within 2 hours while interest is high.`,
+              due_date: dueAt.toISOString().split('T')[0],
+              status: 'pending',
+              priority: 'high',
+              assigned_to: assignedTo,
+            })
+          } catch (e) {
+            console.error('[review] quote_first_opened_task error:', e.message)
+          }
+        })()
       }
 
       const addrParts = [customer?.address, customer?.city, customer?.state, customer?.zip].filter(Boolean)
