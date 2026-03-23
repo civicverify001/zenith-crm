@@ -640,7 +640,7 @@ function FormView({
                         <div style={{ color: '#f59e0b', fontSize: 10, fontWeight: 700, marginBottom: 3, textTransform: 'uppercase' }}>One-time — charged after installation</div>
                       )}
                       <textarea value={li.description} onChange={e => onUpdateLine(li._key, 'description', e.target.value)}
-                        rows={4} style={{ ...S.input, width: '100%', resize: 'vertical', fontSize: 12, padding: '6px 8px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} />style={{ ...S.input, width: '100%', resize: 'vertical', fontSize: 12, padding: '6px 8px' }} />
+                        rows={4} style={{ ...S.input, width: '100%', resize: 'vertical', fontSize: 12, padding: '6px 8px' }} />
                       <div style={{ marginTop: 4 }}>
                         <select value={li.item_type} onChange={e => onUpdateLine(li._key, 'item_type', e.target.value)}
                           style={{ ...S.input, fontSize: 11, padding: '4px 8px', width: 'auto' }}>
