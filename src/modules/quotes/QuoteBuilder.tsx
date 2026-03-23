@@ -614,7 +614,7 @@ function FormView({
               <thead>
                 <tr>
                   <th style={S.th}></th>
-                  <th style={S.th}>Description</th>
+                  <th style={{ ...S.th, width: '42%' }}>Description</th>
                   <th style={{ ...S.th, textAlign: 'center' as const, width: 60 }}>Qty</th>
                   <th style={{ ...S.th, textAlign: 'right' as const, width: 100 }}>Unit Price</th>
                   <th style={{ ...S.th, textAlign: 'center' as const, width: 70 }}>Disc %</th>
@@ -634,12 +634,13 @@ function FormView({
                       </div>
                     </td>
                     <td style={S.td}>
+                      <td style={{ ...S.td, width: '42%' }}>
                       {li.sku && <div style={{ color: '#0d7ea3', fontSize: 11, fontWeight: 700, marginBottom: 3 }}>{li.sku}</div>}
                       {li.item_type === 'install_fee' && (
                         <div style={{ color: '#f59e0b', fontSize: 10, fontWeight: 700, marginBottom: 3, textTransform: 'uppercase' }}>One-time — charged after installation</div>
                       )}
                       <textarea value={li.description} onChange={e => onUpdateLine(li._key, 'description', e.target.value)}
-                        rows={3} style={{ ...S.input, width: '100%', resize: 'vertical', fontSize: 12, padding: '6px 8px' }} />
+                        rows={4} style={{ ...S.input, width: '100%', resize: 'vertical', fontSize: 12, padding: '6px 8px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} />style={{ ...S.input, width: '100%', resize: 'vertical', fontSize: 12, padding: '6px 8px' }} />
                       <div style={{ marginTop: 4 }}>
                         <select value={li.item_type} onChange={e => onUpdateLine(li._key, 'item_type', e.target.value)}
                           style={{ ...S.input, fontSize: 11, padding: '4px 8px', width: 'auto' }}>
