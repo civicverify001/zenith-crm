@@ -614,7 +614,7 @@ function FormView({
               <thead>
                 <tr>
                   <th style={S.th}></th>
-                  <th style={{ ...S.th, width: '42%' }}>Description</th>
+                  <th style={S.th}>Description</th>
                   <th style={{ ...S.th, textAlign: 'center' as const, width: 60 }}>Qty</th>
                   <th style={{ ...S.th, textAlign: 'right' as const, width: 100 }}>Unit Price</th>
                   <th style={{ ...S.th, textAlign: 'center' as const, width: 70 }}>Disc %</th>
