@@ -1,6 +1,7 @@
 // src/modules/quotes/QuoteBuilder.tsx
 // Full quote creation form + live PDF preview in one flow
 // SERVICE PLANS: Added service plan picker below line items (item_type = 'service_plan')
+// DISCOUNT POLICY: v1.2 enforcement via discountPolicy.ts — calcQuoteTier + getLineDiscountLimit
 
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
@@ -15,6 +16,10 @@ import {
   FULFILLMENT_TYPE_LABELS,
   type ServicePlanTemplate,
 } from '../../services/servicePlanService'
+import {
+  calcQuoteTier, getLineDiscountLimit, getTierBadge,
+  type DiscountCategory, type QuoteTier,
+} from '../../lib/discountPolicy'
 
 declare const html2pdf: any
 
@@ -38,11 +43,13 @@ const ESTIMATION_DEFAULT = `Why This System Is Recommended for Your Home\nThis s
 
 const AUTH_TEXT = `This is an estimate, not a final invoice or contract for services.\nThe summary above is a good-faith estimate based on our evaluation of the work to be performed at the installation address. It does not include potential material price changes or any additional labor or materials that may be required if unforeseen conditions arise during installation.\nI understand that the final cost of the work may differ from this estimate if extra materials, modifications, or labor are required. This estimate does not guarantee the final price of the work to be performed.\nBy approving this estimate, I authorize Zenith Pure Solutions to proceed as outlined and agree to pay the full amount for all services rendered.\nFor complete details, please refer to the Terms & Conditions link.`
 
+// EDIT 2: discount_category added to DraftLineItem
 interface DraftLineItem extends Omit<QuoteLineItem, 'id' | 'quote_id'> {
   _key: string
   discount_pct: number
   original_unit_price: number
   sku?: string
+  discount_category?: DiscountCategory | null
 }
 
 interface SelectedServicePlan {
@@ -103,6 +110,10 @@ export function QuoteBuilder({
   const [serviceAddress, setServiceAddress] = useState(customerAddress || existingQuote?.customer_address || '')
   const [selectedPlans, setSelectedPlans] = useState<SelectedServicePlan[]>([])
 
+  // EDIT 5: compute tier + admin flag in parent scope so updateLine can use them
+  const isAdmin = profile?.role === 'admin'
+  const quoteTier = calcQuoteTier(lineItems)
+
   useEffect(() => {
     if (!existingQuote?.id) return
     if (existingQuote.line_items && existingQuote.line_items.length > 0) return
@@ -156,6 +167,7 @@ export function QuoteBuilder({
     fetchPlanTemplates(true).then(setPlanTemplates).catch(console.error)
   }, [])
 
+  // EDIT 3: discount_category carried from product catalog onto line item
   function addProduct(product: Product) {
     let unitPrice: number
     if (commercialType === 'rental') {
@@ -175,6 +187,7 @@ export function QuoteBuilder({
       description: buildProductDescription(product), quantity: 1,
       unit_price: unitPrice, original_unit_price: unitPrice, total: unitPrice,
       item_type: 'product', sort_order: 0, discount_pct: 0,
+      discount_category: (product.discount_category as DiscountCategory) || null,
     }
 
     if (product.install_fee && product.install_fee > 0) {
@@ -183,6 +196,7 @@ export function QuoteBuilder({
         description: `Installation Fee — ${product.name}`, quantity: 1,
         unit_price: product.install_fee, original_unit_price: product.install_fee,
         total: product.install_fee, item_type: 'install_fee', sort_order: 1, discount_pct: 0,
+        discount_category: null,
       }
       setLineItems(prev => [...prev, productItem, installItem])
     } else {
@@ -210,18 +224,24 @@ export function QuoteBuilder({
     setLineItems(prev => [...prev, {
       _key: uid(), product_id: null, sku: '', description: '', quantity: 1,
       unit_price: 0, original_unit_price: 0, total: 0, item_type: 'custom',
-      sort_order: prev.length, discount_pct: 0,
+      sort_order: prev.length, discount_pct: 0, discount_category: null,
     }])
   }
 
+  // EDIT 4: clamp discount_pct to policy-allowed max before applying
   function updateLine(key: string, field: keyof DraftLineItem, value: any) {
     setLineItems(prev => prev.map(li => {
       if (li._key !== key) return li
       const updated = { ...li, [field]: value }
+      if (field === 'discount_pct') {
+        const limit = getLineDiscountLimit(li, commercialType, quoteTier, isAdmin)
+        const raw = parseFloat(value) || 0
+        updated.discount_pct = limit.blocked ? 0 : Math.min(raw, limit.allowed)
+      }
       if (field === 'quantity' || field === 'unit_price' || field === 'discount_pct') {
-        const disc = field === 'discount_pct' ? value : updated.discount_pct
-        const qty = field === 'quantity' ? value : updated.quantity
-        const up = field === 'unit_price' ? value : updated.unit_price
+        const disc = updated.discount_pct
+        const qty  = updated.quantity
+        const up   = updated.unit_price
         const discounted = up * (1 - disc / 100)
         updated.total = parseFloat((qty * discounted).toFixed(2))
       }
@@ -290,6 +310,7 @@ export function QuoteBuilder({
           item_type: li.item_type,
           sort_order: i,
           sku: li.sku,
+          discount_category: li.discount_category || null,
         })),
         ...selectedPlans.map((sp, i) => ({
           product_id: null,
@@ -444,6 +465,7 @@ export function QuoteBuilder({
             planTemplates={planTemplates} selectedPlans={selectedPlans}
             onAddServicePlan={addServicePlan} onRemoveServicePlan={removeServicePlan}
             onUpdatePlanPrice={updatePlanPrice}
+            quoteTier={quoteTier} isAdmin={isAdmin}
           />
         : <PreviewView
             quoteNumber={savedQuoteId ? quoteNumber : 'Q-DRAFT'} quoteDate={todayStr()} validUntil={validUntil}
@@ -460,6 +482,7 @@ export function QuoteBuilder({
 
 // ─── Form View ─────────────────────────────────────────────────
 
+// EDIT 5 (continued): FormView accepts quoteTier + isAdmin
 function FormView({
   commercialType, setCommercialType,
   serviceAddress, setServiceAddress,
@@ -469,6 +492,7 @@ function FormView({
   onAddProduct, onAddCustom, onUpdateLine, onRemoveLine, onMoveLine,
   subtotal, taxAmount, total, monthlySubtotal, installFeeTotal,
   planTemplates, selectedPlans, onAddServicePlan, onRemoveServicePlan, onUpdatePlanPrice,
+  quoteTier, isAdmin,
 }: any) {
   const [productSearch, setProductSearch] = useState('')
   const [showProductPicker, setShowProductPicker] = useState(false)
@@ -487,6 +511,9 @@ function FormView({
     th: { color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase' as const, padding: '8px 10px', textAlign: 'left' as const },
     td: { padding: '8px 6px', borderTop: '1px solid #1a2e42', verticalAlign: 'top' as const },
   }
+
+  // EDIT 6: derive tier badge for display above line items table
+  const tierBadge = getTierBadge(quoteTier)
 
   return (
     <div style={{ padding: 24, maxWidth: 920, margin: '0 auto' }}>
@@ -529,7 +556,19 @@ function FormView({
       {/* LINE ITEMS */}
       <div style={S.section}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-          <div style={S.label}>Line Items</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={S.label}>Line Items</div>
+            {/* EDIT 6: tier badge shown inline next to "Line Items" label */}
+            {tierBadge && (
+              <div style={{
+                padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+                background: tierBadge.color + '22', color: tierBadge.color,
+                border: `1px solid ${tierBadge.color}55`,
+              }}>
+                {tierBadge.label}
+              </div>
+            )}
+          </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => setShowProductPicker(v => !v)} style={{
               padding: '7px 14px', borderRadius: 8, border: '1px solid #0d7ea3',
@@ -605,50 +644,77 @@ function FormView({
                 </tr>
               </thead>
               <tbody>
-                {lineItems.map((li: DraftLineItem, idx: number) => (
-                  <tr key={li._key}>
-                    <td style={{ ...S.td, width: 28 }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <button onClick={() => onMoveLine(li._key, 'up')} disabled={idx === 0}
-                          style={{ background: 'none', border: 'none', cursor: idx === 0 ? 'default' : 'pointer', color: idx === 0 ? '#1e3a4f' : '#64748b', lineHeight: 1, padding: 0 }}>▲</button>
-                        <button onClick={() => onMoveLine(li._key, 'down')} disabled={idx === lineItems.length - 1}
-                          style={{ background: 'none', border: 'none', cursor: idx === lineItems.length - 1 ? 'default' : 'pointer', color: idx === lineItems.length - 1 ? '#1e3a4f' : '#64748b', lineHeight: 1, padding: 0 }}>▼</button>
-                      </div>
-                    </td>
-                    <td style={S.td}>
-                      {li.sku && <div style={{ color: '#0d7ea3', fontSize: 11, fontWeight: 700, marginBottom: 3 }}>{li.sku}</div>}
-                      {li.item_type === 'install_fee' && (
-                        <div style={{ color: '#f59e0b', fontSize: 10, fontWeight: 700, marginBottom: 3, textTransform: 'uppercase' }}>One-time — charged after installation</div>
-                      )}
-                      <textarea value={li.description} onChange={e => onUpdateLine(li._key, 'description', e.target.value)}
-                        rows={4} style={{ ...S.input, width: '100%', resize: 'vertical', fontSize: 12, padding: '6px 8px' }} />
-                      <div style={{ marginTop: 4 }}>
-                        <select value={li.item_type} onChange={e => onUpdateLine(li._key, 'item_type', e.target.value)}
-                          style={{ ...S.input, fontSize: 11, padding: '4px 8px', width: 'auto' }}>
-                          {['product', 'install_fee', 'maintenance', 'discount', 'custom'].map(t => (
-                            <option key={t} value={t}>{t}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </td>
-                    <td style={{ ...S.td, textAlign: 'center' as const }}>
-                      <input type="number" min={1} value={li.quantity} onChange={e => onUpdateLine(li._key, 'quantity', Number(e.target.value))}
-                        style={{ ...S.input, textAlign: 'center', width: 56 }} />
-                    </td>
-                    <td style={{ ...S.td, textAlign: 'right' as const }}>
-                      <input type="number" step="0.01" min={0} value={li.unit_price} onChange={e => onUpdateLine(li._key, 'unit_price', parseFloat(e.target.value) || 0)}
-                        style={{ ...S.input, textAlign: 'right', width: 96 }} />
-                    </td>
-                    <td style={{ ...S.td, textAlign: 'center' as const }}>
-                      <input type="number" min={0} max={100} step={0.5} value={li.discount_pct} onChange={e => onUpdateLine(li._key, 'discount_pct', parseFloat(e.target.value) || 0)}
-                        style={{ ...S.input, textAlign: 'center', width: 60 }} />
-                    </td>
-                    <td style={{ ...S.td, textAlign: 'right' as const, color: '#e2e8f0', fontWeight: 700, fontSize: 13 }}>{fmt(li.total)}</td>
-                    <td style={S.td}>
-                      <button onClick={() => onRemoveLine(li._key)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', fontSize: 16, padding: 2 }}>×</button>
-                    </td>
-                  </tr>
-                ))}
+                {lineItems.map((li: DraftLineItem, idx: number) => {
+                  // EDIT 6: compute per-row limit for input enforcement + visual feedback
+                  const limit = getLineDiscountLimit(li, commercialType, quoteTier, isAdmin)
+                  const discOver = !limit.blocked && li.discount_pct > limit.allowed
+                  return (
+                    <tr key={li._key}>
+                      <td style={{ ...S.td, width: 28 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <button onClick={() => onMoveLine(li._key, 'up')} disabled={idx === 0}
+                            style={{ background: 'none', border: 'none', cursor: idx === 0 ? 'default' : 'pointer', color: idx === 0 ? '#1e3a4f' : '#64748b', lineHeight: 1, padding: 0 }}>▲</button>
+                          <button onClick={() => onMoveLine(li._key, 'down')} disabled={idx === lineItems.length - 1}
+                            style={{ background: 'none', border: 'none', cursor: idx === lineItems.length - 1 ? 'default' : 'pointer', color: idx === lineItems.length - 1 ? '#1e3a4f' : '#64748b', lineHeight: 1, padding: 0 }}>▼</button>
+                        </div>
+                      </td>
+                      <td style={S.td}>
+                        {li.sku && <div style={{ color: '#0d7ea3', fontSize: 11, fontWeight: 700, marginBottom: 3 }}>{li.sku}</div>}
+                        {li.item_type === 'install_fee' && (
+                          <div style={{ color: '#f59e0b', fontSize: 10, fontWeight: 700, marginBottom: 3, textTransform: 'uppercase' }}>One-time — charged after installation</div>
+                        )}
+                        <textarea value={li.description} onChange={e => onUpdateLine(li._key, 'description', e.target.value)}
+                          rows={4} style={{ ...S.input, width: '100%', resize: 'vertical', fontSize: 12, padding: '6px 8px' }} />
+                        <div style={{ marginTop: 4 }}>
+                          <select value={li.item_type} onChange={e => onUpdateLine(li._key, 'item_type', e.target.value)}
+                            style={{ ...S.input, fontSize: 11, padding: '4px 8px', width: 'auto' }}>
+                            {['product', 'install_fee', 'maintenance', 'discount', 'custom'].map(t => (
+                              <option key={t} value={t}>{t}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </td>
+                      <td style={{ ...S.td, textAlign: 'center' as const }}>
+                        <input type="number" min={1} value={li.quantity} onChange={e => onUpdateLine(li._key, 'quantity', Number(e.target.value))}
+                          style={{ ...S.input, textAlign: 'center', width: 56 }} />
+                      </td>
+                      <td style={{ ...S.td, textAlign: 'right' as const }}>
+                        <input type="number" step="0.01" min={0} value={li.unit_price} onChange={e => onUpdateLine(li._key, 'unit_price', parseFloat(e.target.value) || 0)}
+                          style={{ ...S.input, textAlign: 'right', width: 96 }} />
+                      </td>
+                      <td style={{ ...S.td, textAlign: 'center' as const }}>
+                        {/* EDIT 6: input capped by policy max; red border + tooltip if over limit */}
+                        <div style={{ position: 'relative' }}>
+                          <input
+                            type="number" min={0} max={limit.blocked ? 0 : limit.allowed} step={0.5}
+                            value={li.discount_pct}
+                            disabled={limit.blocked}
+                            title={limit.message}
+                            onChange={e => onUpdateLine(li._key, 'discount_pct', parseFloat(e.target.value) || 0)}
+                            style={{
+                              ...S.input, textAlign: 'center', width: 60,
+                              border: discOver ? '1px solid #ef4444' : limit.blocked ? '1px solid #1e3a4f' : '1px solid #1e3a4f',
+                              opacity: limit.blocked ? 0.4 : 1,
+                              cursor: limit.blocked ? 'not-allowed' : 'auto',
+                            }}
+                          />
+                          {limit.blocked && (
+                            <div style={{ fontSize: 9, color: '#64748b', marginTop: 2, lineHeight: 1.2, maxWidth: 60 }}>locked</div>
+                          )}
+                          {!limit.blocked && (
+                            <div style={{ fontSize: 9, color: discOver ? '#ef4444' : '#64748b', marginTop: 2, lineHeight: 1.2 }}>
+                              max {limit.allowed}%
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td style={{ ...S.td, textAlign: 'right' as const, color: '#e2e8f0', fontWeight: 700, fontSize: 13 }}>{fmt(li.total)}</td>
+                      <td style={S.td}>
+                        <button onClick={() => onRemoveLine(li._key)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', fontSize: 16, padding: 2 }}>×</button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           )
