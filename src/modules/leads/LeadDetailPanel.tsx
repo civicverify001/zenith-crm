@@ -436,6 +436,18 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                   <QualifyingChecklist lead={lead} onLeadUpdated={handleLeadUpdated} onCompletionChange={setQualifyingComplete} />
                 )}
 
+                {lead.stage === 'site_visit_scheduled' && (
+                  <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14, overflow: 'hidden' }}>
+                    <div style={{ padding: '10px 14px', borderBottom: '1px solid #1e3a4f', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 13 }}>📋</span>
+                      <span style={{ color: '#94a3b8', fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Qualifying Notes (from office)</span>
+                    </div>
+                    <div style={{ padding: '10px 14px' }}>
+                      <QualifyingChecklist lead={lead} onLeadUpdated={handleLeadUpdated} onCompletionChange={setQualifyingComplete} readOnly />
+                    </div>
+                  </div>
+                )}
+
                 {/* Site Visit Info */}
                 {visitInfo && ['site_visit_scheduled', 'proposal_in_progress', 'quote_sent', 'agreement_signed'].includes(lead.stage) && (
                   <div className="rounded-xl p-4" style={{ backgroundColor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)' }}>
@@ -624,9 +636,15 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                 </div>
 
                 {lead.notes && (
-                  <div>
-                    <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Notes</div>
-                    <div className="text-sm text-slate-300 bg-card border border-border rounded-lg p-3 whitespace-pre-wrap">{lead.notes}</div>
+                  <div style={{
+                    background: lead.stage === 'site_visit_scheduled' ? 'rgba(251,191,36,0.08)' : undefined,
+                    border: lead.stage === 'site_visit_scheduled' ? '1px solid rgba(251,191,36,0.3)' : '1px solid #1e3a4f',
+                    borderRadius: 12, padding: '10px 14px',
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, color: lead.stage === 'site_visit_scheduled' ? '#fbbf24' : '#64748b' }}>
+                      {lead.stage === 'site_visit_scheduled' ? '📝 Office Notes for Rep' : 'Notes'}
+                    </div>
+                    <div className="text-sm text-slate-300 whitespace-pre-wrap">{lead.notes}</div>
                   </div>
                 )}
               </div>
