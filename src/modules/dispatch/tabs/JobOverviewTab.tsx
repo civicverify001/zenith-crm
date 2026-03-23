@@ -48,8 +48,8 @@ const DISPATCH_STATUS_ACTIONS: Partial<Record<JobStatus, { label: string; target
     { label: 'Unschedule — Back to Ready', target: 'ready_to_schedule', variant: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
   ],
   waiting_for_stock: [
-    { label: '✅ Stock In — Ready', target: 'ready_to_schedule', variant: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
-    { label: 'Back to Scheduled', target: 'scheduled', variant: 'bg-border text-slate-300 border-border' },
+    { label: '✅ Stock In — Ready', target: 'ready_to_schedule' },
+    { label: 'Back to Scheduled', target: 'scheduled' },
   ],
 }
 
