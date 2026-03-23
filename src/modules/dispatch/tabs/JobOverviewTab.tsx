@@ -54,8 +54,6 @@ const DISPATCH_STATUS_ACTIONS: Partial<Record<JobStatus, { label: string; target
 }
 
 // ── Install Scheduler Calendar ────────────────────────────────
-// Week-view calendar for scheduling install jobs. Techs instead of reps,
-// jobs table for busy slots instead of site_visits.
 
 const SCHED_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 const HOUR_LABELS: Record<number, string> = {
@@ -67,7 +65,7 @@ const HOUR_LABELS: Record<number, string> = {
 function getWeekDates(offset: number): Date[] {
   const today = new Date()
   const start = new Date(today)
-  start.setDate(today.getDate() + offset * 7 - today.getDay() + 1) // Monday
+  start.setDate(today.getDate() + offset * 7 - today.getDay() + 1)
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(start)
     d.setDate(start.getDate() + i)
@@ -182,7 +180,6 @@ function InstallSchedulerCalendar({ currentJobId, techs, preselectedTechId, onCo
   const selectedTechName = techs.find(t => t.id === activeTechId)?.full_name || ''
   const canConfirm = !!selectedDate && selectedHour !== null && !!activeTechId && !confirming
 
-  // ── Full-screen modal overlay (same pattern as SiteVisitScheduler) ──
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}>
       <div className="w-full max-w-5xl max-h-[90vh] rounded-2xl overflow-hidden flex flex-col" style={{ backgroundColor: '#1e293b', border: '1px solid #334155' }}>
@@ -396,7 +393,6 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
   const { mutateAsync: updateStatus, isPending: statusPending } = useUpdateJobStatus()
   const [showCalendar, setShowCalendar] = useState(false)
 
-  // Read-only completion readiness
   const { data: completionStatus } = useQuery({
     queryKey: ['job_completion', job.id],
     queryFn: () => getCompletionStatus(job.id),
@@ -404,7 +400,6 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
     staleTime: 15_000,
   })
 
-  // ── Products from quote line items ──
   const { data: jobProducts } = useQuery({
     queryKey: ['job_products', job.id],
     queryFn: async () => {
@@ -453,7 +448,6 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
     staleTime: 60_000,
   })
 
-  // ── Inventory readiness detail ──
   const invStatus = (job as any).inventory_status as string | null
   const { data: inventoryDetail } = useQuery({
     queryKey: ['job_inventory_readiness', job.id],
@@ -482,7 +476,7 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
     }
   }
 
-  // ── Calendar confirm handler ──
+  // ── Calendar confirm handler — saves date + fires install scheduled SMS ──
   async function handleCalendarConfirm(date: string, hour: number, techId: string, notes: string) {
     const datetime = `${date}T${String(hour).padStart(2, '0')}:00:00`
     await supabase.from('jobs').update({
@@ -497,6 +491,28 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
       currentJob: { ...job, scheduled_date: datetime, assigned_technician_id: techId },
     })
     onJobUpdated(updated)
+
+    // ── Install scheduled SMS (fire-and-forget) ────────────────
+    if (job.phone_snapshot) {
+      const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString('en-US', {
+        weekday: 'long', month: 'long', day: 'numeric',
+      })
+      fetch('/api/automations/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: 'install_scheduled_sms',
+          to: job.phone_snapshot,
+          entity_type: 'lead',
+          entity_id: job.lead_id,
+          variables: {
+            name: job.customer_name_snapshot.split(' ')[0],
+            date: dateLabel,
+            time: HOUR_LABELS[hour],
+          },
+        }),
+      }).catch(() => {})
+    }
   }
 
   const invConfig = invStatus ? INVENTORY_STATUS_CONFIG[invStatus] : null
@@ -539,6 +555,7 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
           })}
         </div>
       )}
+
       {/* ── Schedule Install trigger button ── */}
       {job.status === 'ready_to_schedule' && (
         <div style={{
@@ -566,7 +583,7 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
         </div>
       )}
 
-      {/* ── Calendar modal (portal-style overlay) ── */}
+      {/* ── Calendar modal ── */}
       {showCalendar && techs && techs.length > 0 && (
         <InstallSchedulerCalendar
           currentJobId={job.id}
@@ -581,7 +598,7 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
         />
       )}
 
-      {/* ── Products Being Installed (Gap 6) ── */}
+      {/* ── Products Being Installed ── */}
       {jobProducts && jobProducts.length > 0 && (
         <div style={{
           background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14,
@@ -626,7 +643,7 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
         </div>
       )}
 
-      {/* ── Inventory Status (Gap 4) ── */}
+      {/* ── Inventory Status ── */}
       {invConfig && invStatus !== 'not_required' && invStatus !== 'n_a' && (
         <div style={{
           background: invConfig.bg, border: `1px solid ${invConfig.border}`,
@@ -759,7 +776,7 @@ export function JobOverviewTab({ job, onJobUpdated }: Props) {
       {job.started_at && <InfoRow label="Started" value={formatDate(job.started_at)} />}
       {job.serial_number && <InfoRow label="Serial Number" value={job.serial_number} />}
 
-      {/* Technician assignment (read/reassign after scheduling) */}
+      {/* Technician assignment */}
       <div>
         <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Assigned Technician</div>
         {techs ? (
