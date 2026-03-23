@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { useLeadsKanban, usePipelineCounts } from './useLeads'
+import { LEAD_KEYS } from './useLeads'
 import { LeadCard } from './LeadCard'
 import { CreateLeadModal } from './CreateLeadModal'
 import { LeadDetailPanel } from './LeadDetailPanel'
@@ -9,6 +11,7 @@ import { PIPELINE_COLUMNS, LEAD_STAGE_LABELS } from '../../types/domain.types'
 import type { LeadStage } from '../../types/domain.types'
 import { useAuth } from '../../hooks/useAuth'
 import { usePermissions } from '../../hooks/usePermissions'
+import { supabase } from '../../lib/supabase'
 
 const STAGE_COLORS: Record<string, string> = {
   new_lead:             'border-t-muted',
@@ -36,12 +39,14 @@ export function LeadPipelinePage() {
   const { data: leadsByStage, isLoading, error } = useLeadsKanban()
   const { data: counts } = usePipelineCounts()
   const [searchParams, setSearchParams] = useSearchParams()
+  const queryClient = useQueryClient()
 
   const [showCreate, setShowCreate] = useState(false)
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [mobileStage, setMobileStage] = useState<string>(PIPELINE_COLUMNS[0])
 
+  // Open lead from URL param (e.g. from notification link)
   useEffect(() => {
     const leadId = searchParams.get('lead')
     if (!leadId || !leadsByStage) return
@@ -52,6 +57,19 @@ export function LeadPipelinePage() {
       setSearchParams({}, { replace: true })
     }
   }, [searchParams, leadsByStage])
+
+  // Real-time subscription — invalidate kanban whenever any lead row changes
+  // Catches: stage changes, quote signed, agreement signed, all lead updates
+  useEffect(() => {
+    const channel = supabase
+      .channel('pipeline_leads_realtime')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'leads' }, () => {
+        queryClient.invalidateQueries({ queryKey: LEAD_KEYS.kanban() })
+        queryClient.invalidateQueries({ queryKey: LEAD_KEYS.counts })
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [queryClient])
 
   const totalActive = Object.values(counts || {}).reduce((a, b) => a + b, 0)
   const totalCols = PIPELINE_COLUMNS.length + 1
