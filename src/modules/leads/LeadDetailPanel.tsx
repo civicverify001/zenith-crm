@@ -63,6 +63,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   const [showSmsModal, setShowSmsModal] = useState(false)
   const [smsMessage, setSmsMessage] = useState('')
   const [smsSending, setSmsSending] = useState(false)
+  const [smsTemplates, setSmsTemplates] = useState<any[]>([])
 
   const [showQuoteBuilder, setShowQuoteBuilder] = useState(false)
   const [pendingCustomerId, setPendingCustomerId] = useState<string | null>(null)
@@ -78,6 +79,12 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   const [showWaterTestForm, setShowWaterTestForm] = useState(false)
   const [editingWaterTest, setEditingWaterTest] = useState<WaterTest | null>(null)
   const [waterTestsLoaded, setWaterTestsLoaded] = useState(false)
+
+  // Load SMS templates
+  useEffect(() => {
+    supabase.from('sms_templates').select('*').eq('is_active', true).order('stage').order('name')
+      .then(({ data }) => setSmsTemplates(data || []))
+  }, [])
 
   const { mutateAsync: assignRep } = useAssignRep()
   const { mutateAsync: logCall, isPending: callPending } = useLogCallAttempt()
@@ -697,6 +704,35 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                 <h3 className="font-bold text-white mb-1">Send Text</h3>
                 <p className="text-xs text-muted mb-4">To: {lead.phone}</p>
                 <div>
+                  {smsTemplates.length > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Use Template</label>
+                      <select
+                        defaultValue=""
+                        onChange={e => {
+                          const t = smsTemplates.find(t => t.id === e.target.value)
+                          if (!t) return
+                          const firstName = lead.full_name?.split(' ')[0] || lead.full_name || ''
+                          setSmsMessage(
+                            t.body
+                              .replace(/{first_name}/g, firstName)
+                              .replace(/{rep_name}/g, profile?.full_name || 'Your Zenith Rep')
+                              .replace(/{company}/g, 'Zenith Pure Solutions')
+                              .replace(/{review_url}/g, import.meta.env.VITE_GOOGLE_REVIEW_URL || '')
+                              .replace(/{visit_date}/g, visitInfo?.date ? new Date(visitInfo.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '')
+                              .replace(/{install_date}/g, '')
+                          )
+                          e.target.value = ''
+                        }}
+                        className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-accent"
+                      >
+                        <option value="">— Pick a template —</option>
+                        {smsTemplates.map(t => (
+                          <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Message</label>
                   <textarea
                     value={smsMessage}
