@@ -431,6 +431,177 @@ export default async function handler(req, res) {
 
     console.log(`[lifecycle] Section 3 complete: ${results.service_reminders_sent} sent, ${results.service_reminders_skipped} skipped`)
 
+    // ══════════════════════════════════════════════════════════
+    // SECTION 4: FILTER DUE — 45-DAY ADVANCE REMINDER SMS
+    // Active shipment plans where next_fulfillment_date = 45 days out
+    // ══════════════════════════════════════════════════════════
+
+    try {
+      const { data: filterSetting } = await supabase
+        .from('automation_settings')
+        .select('enabled, sms_template')
+        .eq('key', 'filter_due_reminder')
+        .single()
+
+      if (filterSetting?.enabled === false) {
+        console.log('[lifecycle] Section 4: filter_due_reminder disabled — skipping')
+      } else {
+        const fortyFiveDaysOut = new Date(Date.now() + 45 * 86400000).toISOString().split('T')[0]
+
+        const { data: filterPlans } = await supabase
+          .from('customer_service_plans')
+          .select('id, customer_id, plan_id, next_fulfillment_date')
+          .eq('status', 'active')
+          .eq('next_fulfillment_date', fortyFiveDaysOut)
+
+        const { data: planTemplates } = await supabase
+          .from('service_plans')
+          .select('id, fulfillment_type')
+          .eq('fulfillment_type', 'shipment')
+
+        const shipmentPlanIds = new Set((planTemplates || []).map(p => p.id))
+
+        const shipmentPlans = (filterPlans || []).filter(p => shipmentPlanIds.has(p.plan_id))
+
+        console.log(`[lifecycle] Section 4: ${shipmentPlans.length} filter reminders due`)
+
+        const customersSeen4 = new Set()
+
+        for (const plan of shipmentPlans) {
+          if (customersSeen4.has(plan.customer_id)) continue
+          customersSeen4.add(plan.customer_id)
+
+          try {
+            const { data: customer } = await supabase
+              .from('customers')
+              .select('id, full_name, phone, lead_id')
+              .eq('id', plan.customer_id)
+              .single()
+
+            if (!customer?.phone) continue
+
+            // DND check
+            if (customer.lead_id) {
+              const { data: lead } = await supabase
+                .from('leads').select('stage').eq('id', customer.lead_id).single()
+              if (lead?.stage === 'dnd') continue
+            }
+
+            const firstName = (customer.full_name || 'there').split(' ')[0]
+            const dateLabel = new Date(fortyFiveDaysOut + 'T12:00:00').toLocaleDateString('en-US', {
+              month: 'long', day: 'numeric',
+            })
+
+            fetch(`${APP_URL}/api/automations/trigger`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                key: 'filter_due_reminder',
+                to: customer.phone,
+                entity_type: 'customer',
+                entity_id: customer.id,
+                variables: { name: firstName, date: dateLabel },
+              }),
+            }).then(r => {
+              if (r.ok) console.log(`[lifecycle] S4 filter reminder sent: ${customer.full_name}`)
+            }).catch(e => console.error('[lifecycle] S4 trigger error:', e.message))
+
+          } catch (custErr) {
+            console.error('[lifecycle] S4 customer error:', custErr.message)
+          }
+        }
+
+        // Brief pause for fire-and-forget requests
+        if (shipmentPlans.length > 0) await new Promise(r => setTimeout(r, 300))
+      }
+    } catch (s4Err) {
+      console.error('[lifecycle] Section 4 error:', s4Err.message)
+    }
+
+    console.log('[lifecycle] Section 4 complete')
+
+    // ══════════════════════════════════════════════════════════
+    // SECTION 4: FILTER DUE — 45-DAY ADVANCE REMINDER SMS
+    // Shipment-type plans where next_fulfillment_date = 45 days out
+    // ══════════════════════════════════════════════════════════
+
+    try {
+      const { data: filterSetting } = await supabase
+        .from('automation_settings')
+        .select('enabled')
+        .eq('key', 'filter_due_reminder')
+        .single()
+
+      if (filterSetting?.enabled === false) {
+        console.log('[lifecycle] Section 4: filter_due_reminder disabled — skipping')
+      } else {
+        const fortyFiveDaysOut = new Date(Date.now() + 45 * 86400000).toISOString().split('T')[0]
+
+        const { data: filterDuePlans } = await supabase
+          .from('customer_service_plans')
+          .select('id, customer_id, plan_id, next_fulfillment_date')
+          .eq('status', 'active')
+          .eq('next_fulfillment_date', fortyFiveDaysOut)
+
+        // Filter to shipment-type plans only
+        let shipmentPlanIds: string[] = []
+        if (filterDuePlans && filterDuePlans.length > 0) {
+          const planIds = [...new Set(filterDuePlans.map((p: any) => p.plan_id))]
+          const { data: planTypes } = await supabase
+            .from('service_plans').select('id, fulfillment_type').in('id', planIds)
+          const shipmentIds = new Set((planTypes || []).filter((p: any) => p.fulfillment_type === 'shipment').map((p: any) => p.id))
+          shipmentPlanIds = (filterDuePlans || []).filter((p: any) => shipmentIds.has(p.plan_id)).map((p: any) => p.customer_id)
+        }
+
+        const duePlans = (filterDuePlans || []).filter((p: any) => shipmentPlanIds.includes(p.customer_id))
+        console.log(`[lifecycle] Section 4: ${duePlans.length} filter due reminders`)
+
+        const filterCustomersSeen = new Set()
+        for (const plan of duePlans) {
+          if (filterCustomersSeen.has(plan.customer_id)) continue
+          filterCustomersSeen.add(plan.customer_id)
+
+          try {
+            const { data: customer } = await supabase
+              .from('customers').select('id, full_name, phone, lead_id').eq('id', plan.customer_id).single()
+
+            if (!customer?.phone) continue
+
+            const leadId = customer.lead_id
+            if (leadId) {
+              const { data: lead } = await supabase.from('leads').select('stage').eq('id', leadId).single()
+              if (lead?.stage === 'dnd') continue
+            }
+
+            const firstName = (customer.full_name || 'there').split(' ')[0]
+            const dateLabel = new Date(fortyFiveDaysOut + 'T12:00:00').toLocaleDateString('en-US', {
+              weekday: 'long', month: 'long', day: 'numeric',
+            })
+
+            fetch(`${APP_URL}/api/automations/trigger`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                key: 'filter_due_reminder',
+                to: customer.phone,
+                entity_type: 'customer',
+                entity_id: customer.id,
+                variables: { name: firstName, date: dateLabel },
+              }),
+            }).then(() => {}).catch(e => console.error('[lifecycle] S4 trigger error:', e.message))
+
+          } catch (err: any) {
+            console.error('[lifecycle] S4 customer error:', err.message)
+          }
+        }
+
+        await new Promise(r => setTimeout(r, 300))
+        console.log(`[lifecycle] Section 4 complete: ${duePlans.length} filter reminders queued`)
+      }
+    } catch (s4Err: any) {
+      console.error('[lifecycle] Section 4 error:', s4Err.message)
+    }
+
     // ── Summary log ──────────────────────────────────────────
     if (results.customers_updated > 0 || results.pos_created > 0 || results.service_reminders_sent > 0) {
       const subject = [
