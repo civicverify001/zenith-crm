@@ -2,6 +2,7 @@
 // Vercel Cron Job — runs daily at 7 AM EST (12 UTC)
 // Section 1: Updates customer lifecycle_status for Kanban board
 // Section 2: Auto-creates draft POs for products below reorder point
+// Section 3: 14-day service due reminder SMS (gated by automation_settings)
 //
 // Add to vercel.json crons array:
 // { "path": "/api/cron/lifecycle", "schedule": "0 12 * * *" }
@@ -12,6 +13,8 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
+
+const APP_URL = process.env.VITE_APP_URL || 'https://zenith-crm-ten.vercel.app'
 
 export default async function handler(req, res) {
   const authHeader = req.headers.authorization
@@ -32,6 +35,10 @@ export default async function handler(req, res) {
     products_checked: 0,
     pos_created: 0,
     auto_po_errors: [],
+    // Section 3: Service reminders
+    service_reminders_sent: 0,
+    service_reminders_skipped: 0,
+    service_reminder_errors: [],
   }
 
   try {
@@ -157,10 +164,8 @@ export default async function handler(req, res) {
         } else if (isInactive) {
           newStatus = 'inactive'
         } else if (hasActiveSystem && !hasActivePlan && hasActiveContract) {
-          // Has system + contract but no plan = upsell opportunity
           newStatus = 'upsell'
         }
-        // else stays 'active'
 
         if (newStatus !== cust.lifecycle_status) {
           updates.push({ id: cust.id, oldStatus: cust.lifecycle_status, newStatus })
@@ -181,7 +186,6 @@ export default async function handler(req, res) {
           })
           .eq('id', upd.id)
 
-        // Best-effort activity log
         await supabase.from('customer_activity_log').insert({
           customer_id: upd.id,
           event_type: 'lifecycle_changed',
@@ -205,19 +209,16 @@ export default async function handler(req, res) {
     // create a draft PO if no open PO already exists.
     // ══════════════════════════════════════════════════════════
 
-    // 2a. Fetch all tracked products with inventory
     const { data: inventoryRows } = await supabase
       .from('inventory')
       .select('product_id, quantity_available, reorder_point')
 
     if (inventoryRows && inventoryRows.length > 0) {
-      // Filter to products below reorder point
       const belowReorder = inventoryRows.filter(
         inv => inv.reorder_point > 0 && inv.quantity_available <= inv.reorder_point
       )
 
       if (belowReorder.length > 0) {
-        // 2b. Check which products already have open POs (draft or submitted)
         const productIds = belowReorder.map(inv => inv.product_id)
 
         const { data: openPOItems } = await supabase
@@ -225,7 +226,6 @@ export default async function handler(req, res) {
           .select('product_id, purchase_order_id, purchase_orders!inner(status)')
           .in('product_id', productIds)
 
-        // Filter to items on draft/submitted POs
         const productsWithOpenPO = new Set()
         for (const item of (openPOItems || [])) {
           const poStatus = item.purchase_orders?.status
@@ -234,13 +234,11 @@ export default async function handler(req, res) {
           }
         }
 
-        // 2c. Products that need a new PO
         const needPO = belowReorder.filter(inv => !productsWithOpenPO.has(inv.product_id))
 
         if (needPO.length > 0) {
           results.products_checked = needPO.length
 
-          // Fetch product details for PO
           const needIds = needPO.map(inv => inv.product_id)
           const { data: products } = await supabase
             .from('products')
@@ -250,12 +248,10 @@ export default async function handler(req, res) {
           const productMap = {}
           for (const p of (products || [])) productMap[p.id] = p
 
-          // 2d. Create one draft PO with all needed items
           const poNumber = `PO-${new Date().getFullYear()}-AUTO-${String(Math.floor(Math.random() * 9000) + 1000)}`
 
           const poItems = needPO.map(inv => {
             const prod = productMap[inv.product_id]
-            // Order up to 2x reorder point
             const qtyNeeded = Math.max(1, (inv.reorder_point * 2) - Math.max(0, inv.quantity_available))
             return {
               product_id: inv.product_id,
@@ -282,7 +278,6 @@ export default async function handler(req, res) {
               console.error('[lifecycle] Auto-PO creation failed:', poErr.message)
               results.auto_po_errors.push({ reason: poErr.message })
             } else if (newPO) {
-              // Insert PO line items
               const itemsWithPO = poItems.map(i => ({
                 ...i,
                 purchase_order_id: newPO.id,
@@ -314,11 +309,134 @@ export default async function handler(req, res) {
 
     console.log(`[lifecycle] Section 2 complete: ${results.products_checked} products need reorder, ${results.pos_created} PO(s) created`)
 
+    // ══════════════════════════════════════════════════════════
+    // SECTION 3: 14-DAY SERVICE DUE REMINDER SMS
+    // Find active plans where service is due in exactly 14 days.
+    // Check automation_settings + DND before sending.
+    // Uses /api/automations/trigger (fire-and-forget per customer).
+    // ══════════════════════════════════════════════════════════
+
+    try {
+      // Check automation setting first — skip entire section if disabled
+      const { data: reminderSetting } = await supabase
+        .from('automation_settings')
+        .select('enabled, sms_template')
+        .eq('key', 'service_due_14day_reminder')
+        .single()
+
+      if (reminderSetting?.enabled === false) {
+        console.log('[lifecycle] Section 3: service_due_14day_reminder disabled — skipping')
+      } else {
+        // Target date: 14 days from today
+        const fourteenDaysOut = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]
+
+        // Find plans due on that exact date
+        const { data: duePlans14 } = await supabase
+          .from('customer_service_plans')
+          .select('id, customer_id, plan_id, next_service, next_fulfillment_date')
+          .eq('status', 'active')
+          .or(`next_service.eq.${fourteenDaysOut},next_fulfillment_date.eq.${fourteenDaysOut}`)
+
+        console.log(`[lifecycle] Section 3: ${duePlans14?.length || 0} plans due in 14 days`)
+
+        if (duePlans14 && duePlans14.length > 0) {
+          // Load plan names
+          const planIds14 = [...new Set(duePlans14.map(p => p.plan_id))]
+          const { data: planTemplates14 } = await supabase
+            .from('service_plans')
+            .select('id, name')
+            .in('id', planIds14)
+          const planNameMap14 = {}
+          for (const t of (planTemplates14 || [])) planNameMap14[t.id] = t.name
+
+          // Deduplicate: one reminder per customer per day (multiple plans = one SMS)
+          const customersSeen = new Set()
+
+          for (const plan of duePlans14) {
+            if (customersSeen.has(plan.customer_id)) continue
+            customersSeen.add(plan.customer_id)
+
+            try {
+              // Load customer + phone
+              const { data: customer } = await supabase
+                .from('customers')
+                .select('id, full_name, phone, lead_id')
+                .eq('id', plan.customer_id)
+                .single()
+
+              if (!customer?.phone) {
+                results.service_reminders_skipped++
+                continue
+              }
+
+              // DND check via lead
+              const leadId = customer.lead_id
+              if (leadId) {
+                const { data: lead } = await supabase
+                  .from('leads').select('stage').eq('id', leadId).single()
+                if (lead?.stage === 'dnd') {
+                  console.log(`[lifecycle] S3 skipped DND: ${customer.full_name}`)
+                  results.service_reminders_skipped++
+                  continue
+                }
+              }
+
+              const firstName = (customer.full_name || 'there').split(' ')[0]
+              const planName = planNameMap14[plan.plan_id] || 'service visit'
+              const serviceDateLabel = new Date(fourteenDaysOut + 'T12:00:00').toLocaleDateString('en-US', {
+                weekday: 'long', month: 'long', day: 'numeric',
+              })
+
+              // Call trigger endpoint (fire-and-forget)
+              fetch(`${APP_URL}/api/automations/trigger`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  key: 'service_due_14day_reminder',
+                  to: customer.phone,
+                  entity_type: 'customer',
+                  entity_id: customer.id,
+                  variables: {
+                    name: firstName,
+                    plan_name: planName,
+                    date: serviceDateLabel,
+                  },
+                }),
+              }).then(r => {
+                if (r.ok) {
+                  results.service_reminders_sent++
+                  console.log(`[lifecycle] S3 reminder sent: ${customer.full_name}`)
+                } else {
+                  results.service_reminders_skipped++
+                }
+              }).catch(e => {
+                console.error('[lifecycle] S3 trigger error:', e.message)
+                results.service_reminder_errors.push({ customer_id: customer.id, reason: e.message })
+              })
+
+            } catch (custErr) {
+              console.error('[lifecycle] S3 customer error:', custErr.message)
+              results.service_reminder_errors.push({ customer_id: plan.customer_id, reason: custErr.message })
+            }
+          }
+
+          // Brief pause to let fire-and-forget requests initiate
+          await new Promise(r => setTimeout(r, 500))
+        }
+      }
+    } catch (s3Err) {
+      console.error('[lifecycle] Section 3 error:', s3Err.message)
+      results.service_reminder_errors.push({ reason: s3Err.message })
+    }
+
+    console.log(`[lifecycle] Section 3 complete: ${results.service_reminders_sent} sent, ${results.service_reminders_skipped} skipped`)
+
     // ── Summary log ──────────────────────────────────────────
-    if (results.customers_updated > 0 || results.pos_created > 0) {
+    if (results.customers_updated > 0 || results.pos_created > 0 || results.service_reminders_sent > 0) {
       const subject = [
         results.customers_updated > 0 ? `${results.customers_updated} lifecycle updates` : null,
         results.pos_created > 0 ? `${results.pos_created} auto-PO created` : null,
+        results.service_reminders_sent > 0 ? `${results.service_reminders_sent} service reminders sent` : null,
       ].filter(Boolean).join(', ')
 
       await supabase.from('email_log').insert({
