@@ -54,7 +54,6 @@ export function CustomerDetailPage() {
 
         if (!spErr && data) {
           setServicePlanCount(data.length)
-          // Pick the first active one for the summary card
           const active = data.find((p: any) => p.status === 'active') || data[0] || null
           setActiveServicePlan(active)
         }
@@ -92,7 +91,6 @@ export function CustomerDetailPage() {
   const voidWarranties = warrantyIssues.filter((w: any) => w.warranty_status === 'void')
   const warningWarranties = warrantyIssues.filter((w: any) => w.warranty_status === 'warning')
 
-  // Use customer_service_plans for the summary card (not deprecated maintenance_plans)
   const hasActiveServicePlan = !!activeServicePlan
   const activeContract = (contracts || []).find((c: any) => c.status === 'active')
   const hasRentals = (contracts || []).length > 0
@@ -155,6 +153,19 @@ export function CustomerDetailPage() {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* ── Quick Invoice button ── */}
+          <button
+            onClick={() => navigate(`/invoices/quick?customerId=${customer.id}`)}
+            style={{
+              padding: '7px 16px', borderRadius: 8,
+              border: '1px solid rgba(74,222,128,0.3)',
+              background: 'rgba(74,222,128,0.1)',
+              color: '#4ade80', fontSize: 13, fontWeight: 600,
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            💰 Quick Invoice
+          </button>
           <button onClick={() => { setShowSMS(true); setSmsResult(null); setSmsBody('') }}
             style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid rgba(6,182,212,0.3)', background: 'rgba(6,182,212,0.1)', color: '#06b6d4', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
             💬 Send Text
