@@ -64,7 +64,7 @@ const FIELD_TYPE_LABELS: Record<string, string> = {
   prefill_source:        'Auto-fill: Lead Source',
 }
 
-type AdminTab = 'qualifying' | 'site_visit' | 'terms' | 'service_plans' | 'email_templates' | 'checklists' | 'sms_templates' | 'products'
+type AdminTab = 'qualifying' | 'site_visit' | 'terms' | 'service_plans' | 'email_templates' | 'checklists' | 'sms_templates'
 
 const TABS: { key: AdminTab; label: string; icon: string; color: string }[] = [
   { key: 'qualifying',       label: 'Qualifying Checklist', icon: '✅', color: '#4ade80' },
@@ -74,7 +74,6 @@ const TABS: { key: AdminTab; label: string; icon: string; color: string }[] = [
   { key: 'email_templates',  label: 'Email Templates',      icon: '✉️', color: '#f472b6' },
   { key: 'checklists',       label: 'Checklists',           icon: '📋', color: '#8b5cf6' },
   { key: 'sms_templates',    label: 'SMS Templates',        icon: '💬', color: '#22c55e' },
-  { key: 'products',         label: 'Products',             icon: '📦', color: '#f87171' },
 ]
 
 export default function AdminSettingsPage() {
@@ -151,7 +150,6 @@ export default function AdminSettingsPage() {
         {activeTab === 'email_templates' && <EmailTemplatesTab />}
         {activeTab === 'checklists'      && <ChecklistTemplatesTab />}
         {activeTab === 'sms_templates'   && <SmsTemplatesTab />}
-        {activeTab === 'products'        && <ProductsDiscountTab />}
       </div>
     </div>
   )
@@ -1437,221 +1435,6 @@ function ServicePlansTemplateTab() {
               })}
             </tbody>
           </table>
-        </div>
-      )}
-    </div>
-  )
-}
-// ════════════════════════════════════════════════════════════════
-// TAB 8: PRODUCTS — Discount Category Management
-// ════════════════════════════════════════════════════════════════
-
-const DISCOUNT_CATEGORY_OPTIONS = [
-  { value: 'softener',   label: 'Water Softener',          color: '#22d3ee', desc: 'Tier 1/2/3 qualifying — core bundle' },
-  { value: 'filtration', label: 'Filtration / Well Water', color: '#4ade80', desc: 'Tier 1/2/3 qualifying — core bundle' },
-  { value: 'ro',         label: 'RO System',               color: '#a78bfa', desc: 'Tier 1/2/3 qualifying — core bundle' },
-  { value: 'addon_5pct', label: 'Add-On (5% cap)',         color: '#f59e0b', desc: 'Hard-capped at 5% even in Tier 3 bundle' },
-  { value: 'zero',       label: 'Zero Discount',           color: '#f87171', desc: 'Cannot be discounted — rentals, filters, labour' },
-  { value: 'standard',   label: 'Standard',                color: '#64748b', desc: 'Follows quote tier max, min 5%' },
-]
-
-interface Product {
-  id: string
-  name: string
-  sku: string
-  category: string
-  discount_category: string
-  is_active: boolean
-  retail_price: number | null
-}
-
-function ProductsDiscountTab() {
-  const [products, setProducts] = useState<Product[]>([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
-  const [filterCat, setFilterCat] = useState('all')
-  const [saved, setSaved] = useState<string | null>(null)
-
-  useEffect(() => { fetchProducts() }, [])
-
-  async function fetchProducts() {
-    setLoading(true)
-    const { data } = await supabase
-      .from('products')
-      .select('id, name, sku, category, discount_category, is_active, retail_price')
-      .order('category')
-      .order('name')
-    setProducts(data || [])
-    setLoading(false)
-  }
-
-  async function updateDiscountCategory(productId: string, value: string) {
-    setSaving(productId)
-    const { error } = await supabase
-      .from('products')
-      .update({ discount_category: value })
-      .eq('id', productId)
-    if (!error) {
-      setProducts(prev => prev.map(p => p.id === productId ? { ...p, discount_category: value } : p))
-      setSaved(productId)
-      setTimeout(() => setSaved(null), 2000)
-    }
-    setSaving(null)
-  }
-
-  const filtered = products.filter(p => {
-    const matchSearch = !search ||
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      (p.sku || '').toLowerCase().includes(search.toLowerCase())
-    const matchCat = filterCat === 'all' || p.discount_category === filterCat
-    return matchSearch && matchCat
-  })
-
-  const counts = DISCOUNT_CATEGORY_OPTIONS.reduce((acc, opt) => {
-    acc[opt.value] = products.filter(p => p.discount_category === opt.value).length
-    return acc
-  }, {} as Record<string, number>)
-
-  return (
-    <div style={{ height: '100%', overflowY: 'auto' }}>
-      {/* Header */}
-      <div style={{ marginBottom: 16 }}>
-        <h2 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 16, margin: 0 }}>Product Discount Categories</h2>
-        <p style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>
-          Set the discount tier for each product. This controls max discount % in QuoteBuilder.
-        </p>
-      </div>
-
-      {/* Policy summary */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 16 }}>
-        {[
-          { label: 'Tier 3 Bundle', desc: 'Softener + Filtration + RO on same quote', max: '20%', color: '#4ade80' },
-          { label: 'Tier 2 Dual', desc: 'Any two core categories on same quote', max: '10%', color: '#22d3ee' },
-          { label: 'Tier 1 Single', desc: 'One core category only', max: '5%', color: '#f59e0b' },
-        ].map(t => (
-          <div key={t.label} style={{
-            background: `${t.color}10`, border: `1px solid ${t.color}30`,
-            borderRadius: 10, padding: '10px 14px',
-          }}>
-            <div style={{ color: t.color, fontWeight: 700, fontSize: 13 }}>{t.label} — {t.max} max</div>
-            <div style={{ color: '#64748b', fontSize: 11, marginTop: 3 }}>{t.desc}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Category filter pills */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
-        <button onClick={() => setFilterCat('all')} style={{
-          padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer',
-          background: filterCat === 'all' ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
-          color: filterCat === 'all' ? '#e2e8f0' : '#64748b',
-          border: `1px solid ${filterCat === 'all' ? 'rgba(255,255,255,0.2)' : '#1e3a4f'}`,
-        }}>
-          All ({products.length})
-        </button>
-        {DISCOUNT_CATEGORY_OPTIONS.map(opt => (
-          <button key={opt.value} onClick={() => setFilterCat(opt.value)} style={{
-            padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer',
-            background: filterCat === opt.value ? `${opt.color}18` : 'rgba(255,255,255,0.04)',
-            color: filterCat === opt.value ? opt.color : '#64748b',
-            border: `1px solid ${filterCat === opt.value ? `${opt.color}40` : '#1e3a4f'}`,
-          }}>
-            {opt.label} ({counts[opt.value] || 0})
-          </button>
-        ))}
-      </div>
-
-      {/* Search */}
-      <div style={{ marginBottom: 14 }}>
-        <input
-          type="text" value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Search by name or SKU..."
-          style={{
-            width: '100%', boxSizing: 'border-box',
-            background: 'rgba(255,255,255,0.05)', border: '1px solid #1e3a4f',
-            borderRadius: 10, padding: '9px 14px', color: '#e2e8f0', fontSize: 13, outline: 'none',
-          }}
-        />
-      </div>
-
-      {/* Table */}
-      {loading ? (
-        <div style={{ textAlign: 'center', color: '#64748b', padding: '48px 0' }}>Loading...</div>
-      ) : (
-        <div style={{ ...tableCardStyle, overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
-            <thead>
-              <tr>
-                <th style={thStyle}>Product</th>
-                <th style={{ ...thStyle, width: 120 }}>SKU</th>
-                <th style={{ ...thStyle, width: 90, textAlign: 'right' }}>Price</th>
-                <th style={{ ...thStyle, width: 220 }}>Discount Category</th>
-                <th style={{ ...thStyle, width: 80, textAlign: 'center' }}>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(p => {
-                const opt = DISCOUNT_CATEGORY_OPTIONS.find(o => o.value === (p.discount_category || 'standard'))
-                const isSaving = saving === p.id
-                const isSaved = saved === p.id
-                return (
-                  <tr key={p.id} style={{ opacity: p.is_active ? 1 : 0.4 }}>
-                    <td style={tdStyle}>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
-                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{p.category}</div>
-                    </td>
-                    <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 12, color: '#0d7ea3' }}>
-                      {p.sku || '—'}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'monospace' }}>
-                      {p.retail_price != null ? `$${Number(p.retail_price).toFixed(2)}` : '—'}
-                    </td>
-                    <td style={tdStyle}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <select
-                          value={p.discount_category || 'standard'}
-                          onChange={e => updateDiscountCategory(p.id, e.target.value)}
-                          disabled={isSaving}
-                          style={{
-                            flex: 1, background: '#0f1923', border: `1px solid ${opt?.color || '#64748b'}40`,
-                            borderRadius: 8, padding: '6px 10px', color: opt?.color || '#e2e8f0',
-                            fontSize: 12, fontWeight: 600, outline: 'none', cursor: 'pointer',
-                          }}
-                        >
-                          {DISCOUNT_CATEGORY_OPTIONS.map(o => (
-                            <option key={o.value} value={o.value} style={{ background: '#0f1923', color: '#e2e8f0' }}>
-                              {o.label}
-                            </option>
-                          ))}
-                        </select>
-                        {isSaving && <span style={{ fontSize: 11, color: '#64748b' }}>saving…</span>}
-                        {isSaved && <span style={{ fontSize: 11, color: '#4ade80' }}>✓</span>}
-                      </div>
-                      {opt && (
-                        <div style={{ fontSize: 10, color: '#475569', marginTop: 4 }}>{opt.desc}</div>
-                      )}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: 'center' }}>
-                      <span style={{
-                        fontSize: 11, padding: '3px 8px', borderRadius: 20, fontWeight: 600,
-                        background: p.is_active ? 'rgba(74,222,128,0.1)' : 'rgba(100,116,139,0.1)',
-                        color: p.is_active ? '#4ade80' : '#64748b',
-                        border: `1px solid ${p.is_active ? 'rgba(74,222,128,0.25)' : 'rgba(100,116,139,0.2)'}`,
-                      }}>
-                        {p.is_active ? 'Active' : 'Off'}
-                      </span>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-          {filtered.length === 0 && (
-            <div style={{ textAlign: 'center', color: '#64748b', padding: '32px 0', fontSize: 13 }}>
-              No products match your search.
-            </div>
-          )}
         </div>
       )}
     </div>
