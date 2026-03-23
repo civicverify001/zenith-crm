@@ -41,7 +41,7 @@ const HOUR_LABELS: Record<number, string> = {
 function getWeekDates(offset: number): Date[] {
   const today = new Date()
   const start = new Date(today)
-  start.setDate(today.getDate() + (offset * 7) - today.getDay() + 1) // Monday
+  start.setDate(today.getDate() + (offset * 7) - today.getDay() + 1)
   const dates: Date[] = []
   for (let i = 0; i < 7; i++) {
     const d = new Date(start)
@@ -80,6 +80,7 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
   const [selectedHour, setSelectedHour] = useState<number | null>(null)
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [tooltip, setTooltip] = useState<{ visit: SiteVisit; x: number; y: number } | null>(null)
   const [activeRepId, setActiveRepId] = useState<string | null>(null)
 
@@ -103,7 +104,6 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
       const filtered = (data || []).filter(r =>
         r.role === 'salesrep' || r.role === 'admin'
       )
-      console.log('Site visit reps loaded:', filtered.map(r => `${r.full_name} (${r.role})`))
       setReps(filtered)
       if (filtered.length > 0) setActiveRepId(filtered[0].id)
     }
@@ -154,7 +154,6 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
     setSubmitting(true)
 
     try {
-      // Insert site visit
       const { error: visitError } = await supabase
         .from('site_visits')
         .insert({
@@ -172,7 +171,6 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
 
       if (visitError) throw visitError
 
-      // Get the inserted visit ID for Google Calendar sync
       const { data: insertedVisit } = await supabase
         .from('site_visits')
         .select('id')
@@ -182,7 +180,6 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
         .eq('visit_hour', selectedHour)
         .maybeSingle()
 
-      // Push to Google Calendar (fire and forget — does not block visit creation)
       if (insertedVisit?.id) {
         syncToCalendar('site_visit', insertedVisit.id).catch(e => console.warn('Google Cal sync failed:', e))
       }
@@ -349,7 +346,7 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
           )}
         </div>
 
-        {/* Footer — confirmation bar */}
+        {/* Footer */}
         <div className="flex items-center justify-between px-6 py-4 flex-shrink-0" style={{ backgroundColor: '#0f172a', borderTop: '1px solid #334155' }}>
           <div>
             {selectedRep && selectedDate && selectedHour !== null ? (
@@ -364,7 +361,6 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
               <div className="text-sm text-slate-500">Click an open (green) slot above to select a time</div>
             )}
           </div>
-
           <div className="flex items-center gap-3">
             {selectedRep && (
               <input
@@ -388,34 +384,36 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
           </div>
         </div>
       </div>
-    {tooltip && (
-          <div style={{
-            position: 'fixed',
-            left: tooltip.x,
-            top: tooltip.y - 8,
-            transform: 'translate(-50%, -100%)',
-            zIndex: 9999,
-            pointerEvents: 'none',
-            minWidth: 200,
-          }}>
-            <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 10, padding: '10px 14px', boxShadow: '0 8px 24px rgba(0,0,0,0.7)' }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>
-                {tooltip.visit.customer_name_snapshot || 'Booked'}
-              </div>
-              {tooltip.visit.address_snapshot ? (
-                <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.4 }}>
-                  📍 {tooltip.visit.address_snapshot}
-                </div>
-              ) : (
-                <div style={{ fontSize: 12, color: '#334155', fontStyle: 'italic' }}>No address on file</div>
-              )}
-              <div style={{ fontSize: 11, color: '#475569', marginTop: 6, paddingTop: 6, borderTop: '1px solid #1e3a4f' }}>
-                {HOUR_LABELS[tooltip.visit.visit_hour]}
-              </div>
+
+      {/* Fixed tooltip — renders above everything */}
+      {tooltip && (
+        <div style={{
+          position: 'fixed',
+          left: tooltip.x,
+          top: tooltip.y - 8,
+          transform: 'translate(-50%, -100%)',
+          zIndex: 9999,
+          pointerEvents: 'none',
+          minWidth: 200,
+        }}>
+          <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 10, padding: '10px 14px', boxShadow: '0 8px 24px rgba(0,0,0,0.7)' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>
+              {tooltip.visit.customer_name_snapshot || 'Booked'}
             </div>
-            <div style={{ width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '6px solid #1e3a4f', margin: '0 auto' }} />
+            {tooltip.visit.address_snapshot ? (
+              <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.4 }}>
+                📍 {tooltip.visit.address_snapshot}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: '#334155', fontStyle: 'italic' }}>No address on file</div>
+            )}
+            <div style={{ fontSize: 11, color: '#475569', marginTop: 6, paddingTop: 6, borderTop: '1px solid #1e3a4f' }}>
+              {HOUR_LABELS[tooltip.visit.visit_hour]}
+            </div>
           </div>
-        )}
+          <div style={{ width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '6px solid #1e3a4f', margin: '0 auto' }} />
+        </div>
+      )}
     </div>
   )
 }
