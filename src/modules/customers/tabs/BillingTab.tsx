@@ -819,13 +819,16 @@ export function BillingTab({ customerId, customer }: Props) {
                   activeContract.status === 'active' ? (
                     <button
                       onClick={async () => {
-                        if (!confirm('Deactivate this contract? Autopay will stop.')) return
-                        await supabase
-                          .from('contracts')
-                          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-                          .eq('id', activeContract.id)
-                        invalidate()
-                      }}
+  if (!confirm('Deactivate this contract? Autopay will stop.')) return
+  await supabase
+    .from('contracts')
+    .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+    .eq('id', activeContract.id)
+  // ── cancellation_at_risk_flag ──────────────────────
+  supabase.from('customers').update({ lifecycle_status: 'at_risk' }).eq('id', customerId).then(() => {}).catch(() => {})
+  fetch('/api/automations/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'cancellation_at_risk_flag', to: '', entity_type: 'customer', entity_id: customerId, variables: {} }) }).catch(() => {})
+  invalidate()
+}}
                       className="text-xs px-2 py-0.5 rounded-lg font-semibold transition-colors"
                       style={{ backgroundColor: 'rgba(239,68,68,0.10)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)' }}>
                       Deactivate
