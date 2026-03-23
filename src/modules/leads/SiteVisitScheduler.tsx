@@ -15,6 +15,7 @@ interface SiteVisit {
   visit_hour: number
   status: string
   customer_name_snapshot: string | null
+  address_snapshot: string | null
 }
 
 interface Rep {
@@ -115,7 +116,7 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
       setLoading(true)
       const { data } = await supabase
         .from('site_visits')
-        .select('id, lead_id, assigned_rep_id, visit_date, visit_hour, status, customer_name_snapshot')
+        .select('id, lead_id, assigned_rep_id, visit_date, visit_hour, status, customer_name_snapshot, address_snapshot')
         .gte('visit_date', weekStart)
         .lte('visit_date', weekEnd)
         .neq('status', 'cancelled')
@@ -305,9 +306,33 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
 
                             if (busy) {
                               return (
-                                <div key={hour} className="px-1.5 py-1 rounded text-center" style={{ backgroundColor: '#7f1d1d', border: '1px solid #991b1b' }}>
-                                  <div className="text-xs font-medium" style={{ color: '#fca5a5' }}>{HOUR_LABELS[hour]}</div>
-                                  <div className="text-xs truncate" style={{ color: '#f87171' }}>{busy.customer_name_snapshot || 'Booked'}</div>
+                                <div key={hour} className="relative group">
+                                  <div className="px-1.5 py-1 rounded text-center cursor-default" style={{ backgroundColor: '#7f1d1d', border: '1px solid #991b1b' }}>
+                                    <div className="text-xs font-medium" style={{ color: '#fca5a5' }}>{HOUR_LABELS[hour]}</div>
+                                    <div className="text-xs truncate" style={{ color: '#f87171' }}>{busy.customer_name_snapshot?.split(' ')[0] || 'Booked'}</div>
+                                  </div>
+                                  {/* Hover tooltip */}
+                                  <div className="absolute z-50 hidden group-hover:block bottom-full left-1/2 mb-2 pointer-events-none"
+                                    style={{ transform: 'translateX(-50%)', minWidth: 180 }}>
+                                    <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 10, padding: '10px 12px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+                                      <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>
+                                        {busy.customer_name_snapshot || 'Booked'}
+                                      </div>
+                                      {busy.address_snapshot && (
+                                        <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.4 }}>
+                                          📍 {busy.address_snapshot}
+                                        </div>
+                                      )}
+                                      {!busy.address_snapshot && (
+                                        <div style={{ fontSize: 11, color: '#334155', fontStyle: 'italic' }}>No address on file</div>
+                                      )}
+                                      <div style={{ fontSize: 10, color: '#1e3a4f', marginTop: 6, borderTop: '1px solid #1e3a4f', paddingTop: 4 }}>
+                                        {HOUR_LABELS[hour]}
+                                      </div>
+                                    </div>
+                                    {/* Arrow */}
+                                    <div style={{ width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '6px solid #1e3a4f', margin: '0 auto' }} />
+                                  </div>
                                 </div>
                               )
                             }
