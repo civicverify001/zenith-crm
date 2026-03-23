@@ -1,6 +1,6 @@
 // src/modules/invoices/QuickInvoicePage.tsx
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 
 interface Product {
@@ -19,9 +19,13 @@ interface LineItem {
 }
 
 type Mode = 'customer' | 'adhoc'
+type PaymentMode = 'link' | 'card' | 'cash'
 
 export default function QuickInvoicePage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const preloadCustomerId = searchParams.get('customerId')
+
   const [mode, setMode] = useState<Mode>('customer')
   const [customerSearch, setCustomerSearch] = useState('')
   const [customerResults, setCustomerResults] = useState<any[]>([])
@@ -33,9 +37,40 @@ export default function QuickInvoicePage() {
   const [productSearch, setProductSearch] = useState('')
   const [lineItems, setLineItems] = useState<LineItem[]>([])
   const [invoiceNotes, setInvoiceNotes] = useState('')
+  const [paymentMode, setPaymentMode] = useState<PaymentMode>('link')
+  const [defaultPaymentMethod, setDefaultPaymentMethod] = useState<any>(null)
   const [sending, setSending] = useState(false)
-  const [result, setResult] = useState<{ paymentLink: string; invoiceNumber: string } | null>(null)
+  const [result, setResult] = useState<{ paymentLink?: string; invoiceNumber: string; mode: PaymentMode } | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // ── Auto-load customer from URL param ──────────────────────
+  useEffect(() => {
+    if (!preloadCustomerId) return
+    supabase
+      .from('customers')
+      .select('id, full_name, phone, email, address, stripe_customer_id')
+      .eq('id', preloadCustomerId)
+      .single()
+      .then(({ data }) => {
+        if (data) {
+          setSelectedCustomer(data)
+          setMode('customer')
+        }
+      })
+  }, [preloadCustomerId])
+
+  // ── Load default payment method when customer selected ─────
+  useEffect(() => {
+    if (!selectedCustomer?.id) { setDefaultPaymentMethod(null); return }
+    supabase
+      .from('payment_methods')
+      .select('id, external_id, last_four, type, exp_month, exp_year')
+      .eq('customer_id', selectedCustomer.id)
+      .eq('is_default', true)
+      .eq('status', 'active')
+      .maybeSingle()
+      .then(({ data }) => setDefaultPaymentMethod(data || null))
+  }, [selectedCustomer?.id])
 
   useEffect(() => {
     supabase.from('products').select('id, name, sku, retail_price, category')
@@ -47,11 +82,10 @@ export default function QuickInvoicePage() {
     if (mode !== 'customer' || customerSearch.length < 2) { setCustomerResults([]); return }
     const t = setTimeout(async () => {
       try {
-        const { data, error: err } = await supabase.from('customers')
-          .select('id, full_name, phone, email, address')
+        const { data } = await supabase.from('customers')
+          .select('id, full_name, phone, email, address, stripe_customer_id')
           .or(`full_name.ilike.%${customerSearch}%,phone.ilike.%${customerSearch}%`)
           .limit(6)
-        if (err) console.error('Customer search error:', err)
         setCustomerResults(data || [])
       } catch (e) { console.error('Search failed:', e) }
     }, 300)
@@ -79,35 +113,157 @@ export default function QuickInvoicePage() {
   const subtotal = lineItems.reduce((s, l) => s + l.qty * l.unit_price, 0)
   const tax = subtotal * 0.07
   const total = subtotal + tax
+  const totalCents = Math.round(total * 100)
 
   const recipientName  = mode === 'customer' ? selectedCustomer?.full_name  : adhocName
   const recipientPhone = mode === 'customer' ? selectedCustomer?.phone       : adhocPhone
   const recipientEmail = mode === 'customer' ? selectedCustomer?.email       : adhocEmail
   const customerId     = mode === 'customer' ? selectedCustomer?.id          : null
 
-  const canSend = lineItems.length > 0 && total > 0 && recipientName && (recipientPhone || recipientEmail)
+  const canSend = lineItems.length > 0 && total > 0 && recipientName
     && lineItems.every(l => l.description.trim())
+    && (paymentMode === 'cash' || recipientPhone || recipientEmail || paymentMode === 'card')
+
+  // ── Generate sequential invoice number ────────────────────
+  async function generateInvoiceNumber(): Promise<string> {
+    const year = new Date().getFullYear()
+    const { count } = await supabase
+      .from('invoices')
+      .select('id', { count: 'exact', head: true })
+      .gte('created_at', `${year}-01-01`)
+    const seq = String((count || 0) + 1).padStart(4, '0')
+    return `INV-${year}-${seq}`
+  }
+
+  // ── Handle Send Link ──────────────────────────────────────
+  async function handleSendLink() {
+    const res = await fetch('/api/stripe/create-payment-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customer_id: customerId,
+        recipient_name: recipientName,
+        recipient_phone: recipientPhone,
+        recipient_email: recipientEmail,
+        line_items: lineItems.map(l => ({ description: l.description, qty: l.qty, unit_price: l.unit_price })),
+        notes: invoiceNotes,
+      }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Failed to create payment link')
+    return { paymentLink: data.payment_link, invoiceNumber: data.invoice_number }
+  }
+
+  // ── Handle Charge Card ────────────────────────────────────
+  async function handleChargeCard() {
+    if (!defaultPaymentMethod || !selectedCustomer?.stripe_customer_id) {
+      throw new Error('No default payment method on file for this customer')
+    }
+    const invoiceNumber = await generateInvoiceNumber()
+    const description = lineItems.map(l => `${l.qty}x ${l.description}`).join(', ')
+
+    // Charge via Stripe
+    const chargeRes = await fetch('/api/stripe/charge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stripe_customer_id: selectedCustomer.stripe_customer_id,
+        payment_method_id: defaultPaymentMethod.external_id,
+        amount_cents: totalCents,
+        description: `Invoice ${invoiceNumber} — ${description}`,
+        metadata: { customer_id: customerId, invoice_number: invoiceNumber },
+      }),
+    })
+    const chargeData = await chargeRes.json()
+    if (!chargeRes.ok) throw new Error(chargeData.error || 'Card charge failed')
+
+    // Log invoice
+    const { data: inv } = await supabase.from('invoices').insert({
+      customer_id: customerId,
+      invoice_number: invoiceNumber,
+      status: 'paid',
+      subtotal,
+      tax,
+      total,
+      notes: invoiceNotes,
+      paid_at: new Date().toISOString(),
+    }).select('id').single()
+
+    // Log transaction
+    await supabase.from('payment_transactions').insert({
+      customer_id: customerId,
+      amount: total,
+      status: 'succeeded',
+      type: 'manual',
+      external_id: chargeData.payment_intent_id || null,
+      description: `Invoice ${invoiceNumber} — ${description}`,
+      attempted_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+    })
+
+    // Fire payment receipt email (fire-and-forget)
+    fetch('/api/automations/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        key: 'payment_receipt_email',
+        to: recipientPhone || '',
+        entity_type: 'customer',
+        entity_id: customerId,
+        variables: { name: recipientName?.split(' ')[0] || recipientName, amount: `$${total.toFixed(2)}`, invoice: invoiceNumber },
+      }),
+    }).catch(() => {})
+
+    return { invoiceNumber }
+  }
+
+  // ── Handle Cash ───────────────────────────────────────────
+  async function handleCash() {
+    const invoiceNumber = await generateInvoiceNumber()
+    const description = lineItems.map(l => `${l.qty}x ${l.description}`).join(', ')
+
+    // Log invoice as paid
+    await supabase.from('invoices').insert({
+      customer_id: customerId,
+      invoice_number: invoiceNumber,
+      status: 'paid',
+      subtotal,
+      tax,
+      total,
+      notes: invoiceNotes ? `${invoiceNotes} [CASH PAYMENT]` : '[CASH PAYMENT]',
+      paid_at: new Date().toISOString(),
+    })
+
+    // Log cash transaction
+    await supabase.from('payment_transactions').insert({
+      customer_id: customerId,
+      amount: total,
+      status: 'succeeded',
+      type: 'cash',
+      external_id: null,
+      description: `Cash — Invoice ${invoiceNumber} — ${description}`,
+      attempted_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+    })
+
+    return { invoiceNumber }
+  }
 
   async function handleSend() {
     if (!canSend) return
     setSending(true)
     setError(null)
     try {
-      const res = await fetch('/api/stripe/create-payment-link', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customer_id:     customerId,
-          recipient_name:  recipientName,
-          recipient_phone: recipientPhone,
-          recipient_email: recipientEmail,
-          line_items: lineItems.map(l => ({ description: l.description, qty: l.qty, unit_price: l.unit_price })),
-          notes: invoiceNotes,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to create invoice')
-      setResult({ paymentLink: data.payment_link, invoiceNumber: data.invoice_number })
+      if (paymentMode === 'link') {
+        const r = await handleSendLink()
+        setResult({ paymentLink: r.paymentLink, invoiceNumber: r.invoiceNumber, mode: 'link' })
+      } else if (paymentMode === 'card') {
+        const r = await handleChargeCard()
+        setResult({ invoiceNumber: r.invoiceNumber, mode: 'card' })
+      } else {
+        const r = await handleCash()
+        setResult({ invoiceNumber: r.invoiceNumber, mode: 'cash' })
+      }
     } catch (e: any) {
       setError(e.message)
     } finally {
@@ -120,39 +276,52 @@ export default function QuickInvoicePage() {
     (p.name.toLowerCase().includes(productSearch.toLowerCase()) || p.sku.toLowerCase().includes(productSearch.toLowerCase()))
   ).slice(0, 8)
 
+  // ── Success screen ────────────────────────────────────────
   if (result) {
+    const modeLabel = result.mode === 'card' ? '💳 Card charged' : result.mode === 'cash' ? '💵 Cash recorded' : '🔗 Payment link sent'
+    const modeColor = result.mode === 'card' ? '#60a5fa' : result.mode === 'cash' ? '#4ade80' : '#22d3ee'
     return (
       <div style={{ minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
         <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 20, padding: 40, maxWidth: 480, width: '100%', textAlign: 'center' }}>
-          <div style={{ fontSize: 52, marginBottom: 16 }}>🎉</div>
-          <div style={{ color: '#e2e8f0', fontWeight: 800, fontSize: 22, marginBottom: 8 }}>Invoice Sent!</div>
-          <div style={{ color: '#475569', fontSize: 14, marginBottom: 24 }}>
-            Invoice <span style={{ color: '#60a5fa', fontFamily: 'monospace' }}>{result.invoiceNumber}</span> created for {recipientName}.
-            {recipientPhone && ' SMS sent.'} {recipientEmail && ' Email sent.'}
+          <div style={{ fontSize: 52, marginBottom: 16 }}>
+            {result.mode === 'card' ? '💳' : result.mode === 'cash' ? '💵' : '🎉'}
           </div>
-          <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: 16, marginBottom: 20 }}>
-            <div style={{ fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Payment Link</div>
-            <div style={{ fontSize: 13, color: '#22d3ee', wordBreak: 'break-all', marginBottom: 12, fontFamily: 'monospace' }}>{result.paymentLink}</div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-              <button
-                onClick={() => navigator.clipboard.writeText(result.paymentLink)}
-                style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid rgba(34,211,238,0.3)', background: 'rgba(34,211,238,0.1)', color: '#22d3ee', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-              >
-                Copy Link
-              </button>
-              <a
-                href={result.paymentLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: '#0d7ea3', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
-              >
-                Pay Now →
-              </a>
+          <div style={{ color: '#e2e8f0', fontWeight: 800, fontSize: 22, marginBottom: 8 }}>
+            {result.mode === 'card' ? 'Payment Collected!' : result.mode === 'cash' ? 'Cash Payment Recorded!' : 'Invoice Sent!'}
+          </div>
+          <div style={{ color: '#475569', fontSize: 14, marginBottom: 8 }}>
+            Invoice <span style={{ color: '#60a5fa', fontFamily: 'monospace' }}>{result.invoiceNumber}</span> for {recipientName}
+          </div>
+          <div style={{ display: 'inline-block', padding: '4px 14px', borderRadius: 20, fontSize: 13, fontWeight: 700, color: modeColor, background: `${modeColor}18`, border: `1px solid ${modeColor}30`, marginBottom: 24 }}>
+            {modeLabel} — ${total.toFixed(2)}
+          </div>
+
+          {result.paymentLink && (
+            <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 12, padding: 16, marginBottom: 20 }}>
+              <div style={{ fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Payment Link</div>
+              <div style={{ fontSize: 13, color: '#22d3ee', wordBreak: 'break-all', marginBottom: 12, fontFamily: 'monospace' }}>{result.paymentLink}</div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                <button
+                  onClick={() => navigator.clipboard.writeText(result.paymentLink!)}
+                  style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid rgba(34,211,238,0.3)', background: 'rgba(34,211,238,0.1)', color: '#22d3ee', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Copy Link
+                </button>
+                <a
+                  href={result.paymentLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: '#0d7ea3', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+                >
+                  Pay Now →
+                </a>
+              </div>
             </div>
-          </div>
+          )}
+
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
             <button
-              onClick={() => { setResult(null); setLineItems([]); setSelectedCustomer(null); setAdhocName(''); setAdhocPhone(''); setAdhocEmail('') }}
+              onClick={() => { setResult(null); setLineItems([]); if (!preloadCustomerId) { setSelectedCustomer(null) }; setAdhocName(''); setAdhocPhone(''); setAdhocEmail(''); setError(null) }}
               style={{ padding: '10px 24px', borderRadius: 10, border: '1px solid #1e3a4f', background: 'transparent', color: '#94a3b8', cursor: 'pointer', fontSize: 14 }}
             >
               New Invoice
@@ -171,6 +340,7 @@ export default function QuickInvoicePage() {
     )
   }
 
+  // ── Main form ─────────────────────────────────────────────
   return (
     <div style={{ minHeight: '100%', maxWidth: 860, margin: '0 auto' }}>
       <div style={{ marginBottom: 24 }}>
@@ -180,7 +350,7 @@ export default function QuickInvoicePage() {
         </button>
         <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0', margin: 0 }}>Quick Invoice</h1>
         <p style={{ fontSize: 13, color: '#475569', marginTop: 4, marginBottom: 0 }}>
-          Create a Stripe payment link and send it via SMS + email
+          Charge a card on file, record cash, or send a Stripe payment link
         </p>
       </div>
 
@@ -211,9 +381,16 @@ export default function QuickInvoicePage() {
                         <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 14 }}>{selectedCustomer.full_name}</div>
                         <div style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>{selectedCustomer.phone}{selectedCustomer.email && ` · ${selectedCustomer.email}`}</div>
                         {selectedCustomer.address && <div style={{ color: '#475569', fontSize: 11, marginTop: 2 }}>{selectedCustomer.address}</div>}
+                        {defaultPaymentMethod && (
+                          <div style={{ marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 20, background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.25)', fontSize: 11, color: '#60a5fa', fontWeight: 600 }}>
+                            💳 {defaultPaymentMethod.type === 'us_bank_account' ? '🏦' : '💳'} •••• {defaultPaymentMethod.last_four} on file
+                          </div>
+                        )}
                       </div>
-                      <button onClick={() => { setSelectedCustomer(null); setCustomerSearch('') }}
-                        style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 16 }}>×</button>
+                      {!preloadCustomerId && (
+                        <button onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setDefaultPaymentMethod(null) }}
+                          style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 16 }}>×</button>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -263,7 +440,7 @@ export default function QuickInvoicePage() {
             <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>Line Items</div>
             <div style={{ position: 'relative', marginBottom: 14 }}>
               <input value={productSearch} onChange={e => setProductSearch(e.target.value)}
-                placeholder="Search products to add… or type a custom item below"
+                placeholder="Search products to add… or add a custom item below"
                 style={{ width: '100%', background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8, color: '#e2e8f0', padding: '10px 14px', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
               {availableProducts.length > 0 && (
                 <div style={{ position: 'absolute', left: 0, right: 0, top: '100%', background: '#162232', border: '1px solid #1e3a4f', borderRadius: 10, zIndex: 20, marginTop: 4, maxHeight: 220, overflowY: 'auto' }}>
@@ -323,10 +500,12 @@ export default function QuickInvoicePage() {
           </div>
         </div>
 
-        {/* Right — summary */}
+        {/* Right — summary + payment mode */}
         <div style={{ position: 'sticky', top: 20 }}>
           <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14, padding: 20 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 16 }}>Invoice Summary</div>
+
+            {/* Recipient */}
             <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #1e3a4f' }}>
               <div style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>Bill to</div>
               {recipientName ? (
@@ -339,6 +518,8 @@ export default function QuickInvoicePage() {
                 <div style={{ color: '#334155', fontSize: 13, fontStyle: 'italic' }}>No recipient yet</div>
               )}
             </div>
+
+            {/* Totals */}
             <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #1e3a4f' }}>
               {[{ label: 'Subtotal', value: subtotal }, { label: 'Tax (7% Indiana)', value: tax }].map(row => (
                 <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -351,32 +532,87 @@ export default function QuickInvoicePage() {
                 <span style={{ fontSize: 18, fontWeight: 800, color: '#4ade80' }}>${total.toFixed(2)}</span>
               </div>
             </div>
+
+            {/* ── Payment Mode ── */}
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 11, color: '#475569', marginBottom: 8 }}>Payment link will be sent via:</div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {recipientPhone && (
-                  <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'rgba(34,197,94,0.12)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.25)', fontWeight: 600 }}>💬 SMS</span>
-                )}
-                {recipientEmail && (
-                  <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'rgba(96,165,250,0.12)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.25)', fontWeight: 600 }}>✉️ Email</span>
-                )}
-                {!recipientPhone && !recipientEmail && (
-                  <span style={{ fontSize: 11, color: '#334155', fontStyle: 'italic' }}>Add phone or email above</span>
-                )}
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>How to collect</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+                {/* Send Link */}
+                <button
+                  onClick={() => setPaymentMode('link')}
+                  style={{
+                    padding: '10px 14px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+                    border: paymentMode === 'link' ? '1px solid rgba(34,211,238,0.4)' : '1px solid #1e3a4f',
+                    background: paymentMode === 'link' ? 'rgba(34,211,238,0.08)' : '#0f1923',
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 700, color: paymentMode === 'link' ? '#22d3ee' : '#94a3b8' }}>🔗 Send Payment Link</div>
+                  <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>SMS + email with Stripe link</div>
+                </button>
+
+                {/* Charge Card */}
+                <button
+                  onClick={() => setPaymentMode('card')}
+                  disabled={!defaultPaymentMethod && mode === 'customer' && !!selectedCustomer}
+                  style={{
+                    padding: '10px 14px', borderRadius: 10, cursor: defaultPaymentMethod ? 'pointer' : 'not-allowed', textAlign: 'left',
+                    border: paymentMode === 'card' ? '1px solid rgba(96,165,250,0.4)' : '1px solid #1e3a4f',
+                    background: paymentMode === 'card' ? 'rgba(96,165,250,0.08)' : '#0f1923',
+                    opacity: mode === 'customer' && selectedCustomer && !defaultPaymentMethod ? 0.45 : 1,
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 700, color: paymentMode === 'card' ? '#60a5fa' : '#94a3b8' }}>
+                    💳 Charge Card on File
+                    {defaultPaymentMethod && (
+                      <span style={{ fontSize: 11, fontWeight: 400, color: '#64748b', marginLeft: 8 }}>•••• {defaultPaymentMethod.last_four}</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+                    {defaultPaymentMethod ? 'Charge default card immediately' : 'No card on file for this customer'}
+                  </div>
+                </button>
+
+                {/* Cash */}
+                <button
+                  onClick={() => setPaymentMode('cash')}
+                  style={{
+                    padding: '10px 14px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+                    border: paymentMode === 'cash' ? '1px solid rgba(74,222,128,0.4)' : '1px solid #1e3a4f',
+                    background: paymentMode === 'cash' ? 'rgba(74,222,128,0.08)' : '#0f1923',
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 700, color: paymentMode === 'cash' ? '#4ade80' : '#94a3b8' }}>💵 Cash Payment</div>
+                  <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>Walk-in customer, paid now</div>
+                </button>
               </div>
             </div>
+
             {error && (
               <div style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 13, color: '#f87171' }}>
                 {error}
               </div>
             )}
+
             <button onClick={handleSend} disabled={!canSend || sending}
-              style={{ width: '100%', padding: '14px 0', borderRadius: 10, border: 'none', background: canSend ? '#0d7ea3' : '#334155', color: '#fff', fontWeight: 700, fontSize: 15, cursor: canSend ? 'pointer' : 'not-allowed', opacity: sending ? 0.6 : 1, transition: 'background 0.2s' }}>
-              {sending ? 'Creating invoice…' : '⚡ Send Invoice'}
+              style={{
+                width: '100%', padding: '14px 0', borderRadius: 10, border: 'none',
+                background: !canSend ? '#334155' : paymentMode === 'card' ? '#1d4ed8' : paymentMode === 'cash' ? '#15803d' : '#0d7ea3',
+                color: '#fff', fontWeight: 700, fontSize: 15,
+                cursor: canSend ? 'pointer' : 'not-allowed',
+                opacity: sending ? 0.6 : 1, transition: 'background 0.2s',
+              }}>
+              {sending ? 'Processing…' : paymentMode === 'card' ? '💳 Charge Card' : paymentMode === 'cash' ? '💵 Record Cash Payment' : '⚡ Send Invoice'}
             </button>
+
             {!canSend && (
               <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', marginTop: 8 }}>
-                {lineItems.length === 0 ? 'Add at least one item' : !recipientName ? 'Add recipient name' : !lineItems.every(l => l.description.trim()) ? 'Fill in all item descriptions' : 'Add phone or email to send'}
+                {lineItems.length === 0 ? 'Add at least one item'
+                  : !recipientName ? 'Add recipient name'
+                  : !lineItems.every(l => l.description.trim()) ? 'Fill in all item descriptions'
+                  : paymentMode === 'card' && !defaultPaymentMethod ? 'No card on file — use Send Link or Cash'
+                  : paymentMode === 'link' && !recipientPhone && !recipientEmail ? 'Add phone or email to send link'
+                  : ''}
               </div>
             )}
           </div>
