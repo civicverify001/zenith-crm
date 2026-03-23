@@ -30,6 +30,10 @@
     {
       "path": "/api/cron/sms-reminders",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/quote-followup",
+      "schedule": "0 9 * * *"
     }
   ]
 }
