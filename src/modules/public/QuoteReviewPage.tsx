@@ -118,7 +118,7 @@ function today() {
 }
 
 // ─── Generate printable agreement HTML ───────────────────────────
-function generateAgreementHTML(agreement: Agreement, customer: Customer | undefined, terms: TermBlock[]): string {
+function generateAgreementHTML(agreement: Agreement, customer: Customer | undefined, terms: TermBlock[], signatureImageUrl?: string): string {
   const termBlocksHTML = terms.map(block => `
     <div class="section">
       <h3>${block.display_title || ''}</h3>
@@ -217,7 +217,10 @@ function generateAgreementHTML(agreement: Agreement, customer: Customer | undefi
       </div>
       <div class="sig-box">
         <div class="sig-party-label">CUSTOMER</div>
-        <div class="sig-name">${agreement.signed_name || customer?.full_name || ''}</div>
+        ${signatureImageUrl
+          ? `<img src="${signatureImageUrl}" style="height:36px;max-width:200px;object-fit:contain;margin-bottom:4px;" />`
+          : `<div class="sig-name">${agreement.signed_name || customer?.full_name || ''}</div>`
+        }
         <div class="sig-meta">${customer?.full_name || ''} · Signed ${agreement.signed_at ? new Date(agreement.signed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : today()}</div>
       </div>
     </div>
@@ -232,7 +235,7 @@ function generateAgreementHTML(agreement: Agreement, customer: Customer | undefi
 }
 
 // ─── Generate printable invoice HTML ─────────────────────────────
-function generateInvoiceHTML(invoice: Invoice, customer: Customer | undefined, terms: TermBlock[]): string {
+function generateInvoiceHTML(invoice: Invoice, customer: Customer | undefined, terms: TermBlock[], signatureImageUrl?: string): string {
   const items: LineItem[] = invoice.line_items_snapshot || []
 
   const rowsHTML = items.map(item => `
@@ -332,7 +335,10 @@ function generateInvoiceHTML(invoice: Invoice, customer: Customer | undefined, t
       </div>
       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;">
         <div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">CUSTOMER</div>
-        <div style="font-size:22px;font-style:italic;font-family:Georgia,serif;color:#0a2540;border-bottom:1px solid #334155;padding-bottom:6px;margin-bottom:8px;">${invoice.signed_name || customer?.full_name || ''}</div>
+        ${signatureImageUrl
+          ? `<img src="${signatureImageUrl}" style="height:36px;max-width:200px;object-fit:contain;display:block;margin-bottom:8px;" />`
+          : `<div style="font-size:22px;font-style:italic;font-family:Georgia,serif;color:#0a2540;border-bottom:1px solid #334155;padding-bottom:6px;margin-bottom:8px;">${invoice.signed_name || customer?.full_name || ''}</div>`
+        }
         <div style="font-size:11px;color:#64748b;">${customer?.full_name || ''} · Signed ${invoice.signed_at ? new Date(invoice.signed_at).toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' }) : today()}</div>
       </div>
     </div>
@@ -851,7 +857,7 @@ export function QuoteReviewPage() {
       }
 
       const terms: TermBlock[] = ag.terms_snapshot?.blocks || rentalTerms
-      const html = generateAgreementHTML(ag, quote?.customer, terms)
+      const html = generateAgreementHTML(ag, quote?.customer, terms, signatureImageUrl)
 
       const iframe = document.createElement('iframe')
       iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;height:3000px;border:none;visibility:hidden;'
@@ -924,7 +930,7 @@ export function QuoteReviewPage() {
       }
 
       const terms: TermBlock[] = inv.terms_snapshot?.blocks || purchaseTerms
-      const html = generateInvoiceHTML(inv, quote?.customer, terms)
+      const html = generateInvoiceHTML(inv, quote?.customer, terms, signatureImageUrl)
 
       const iframe = document.createElement('iframe')
       iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;height:3000px;border:none;visibility:hidden;'
