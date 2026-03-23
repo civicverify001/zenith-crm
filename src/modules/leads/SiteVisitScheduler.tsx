@@ -80,7 +80,7 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
   const [selectedHour, setSelectedHour] = useState<number | null>(null)
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [tooltip, setTooltip] = useState<{ visit: SiteVisit; x: number; y: number } | null>(null)
   const [activeRepId, setActiveRepId] = useState<string | null>(null)
 
   const weekDates = useMemo(() => getWeekDates(weekOffset), [weekOffset])
@@ -306,32 +306,16 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
 
                             if (busy) {
                               return (
-                                <div key={hour} className="relative group">
+                                <div key={hour}
+                                  onMouseEnter={e => {
+                                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                                    setTooltip({ visit: busy, x: rect.left + rect.width / 2, y: rect.top })
+                                  }}
+                                  onMouseLeave={() => setTooltip(null)}
+                                >
                                   <div className="px-1.5 py-1 rounded text-center cursor-default" style={{ backgroundColor: '#7f1d1d', border: '1px solid #991b1b' }}>
                                     <div className="text-xs font-medium" style={{ color: '#fca5a5' }}>{HOUR_LABELS[hour]}</div>
                                     <div className="text-xs truncate" style={{ color: '#f87171' }}>{busy.customer_name_snapshot?.split(' ')[0] || 'Booked'}</div>
-                                  </div>
-                                  {/* Hover tooltip */}
-                                  <div className="absolute z-50 hidden group-hover:block bottom-full left-1/2 mb-2 pointer-events-none"
-                                    style={{ transform: 'translateX(-50%)', minWidth: 180 }}>
-                                    <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 10, padding: '10px 12px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
-                                      <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>
-                                        {busy.customer_name_snapshot || 'Booked'}
-                                      </div>
-                                      {busy.address_snapshot && (
-                                        <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.4 }}>
-                                          📍 {busy.address_snapshot}
-                                        </div>
-                                      )}
-                                      {!busy.address_snapshot && (
-                                        <div style={{ fontSize: 11, color: '#334155', fontStyle: 'italic' }}>No address on file</div>
-                                      )}
-                                      <div style={{ fontSize: 10, color: '#1e3a4f', marginTop: 6, borderTop: '1px solid #1e3a4f', paddingTop: 4 }}>
-                                        {HOUR_LABELS[hour]}
-                                      </div>
-                                    </div>
-                                    {/* Arrow */}
-                                    <div style={{ width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '6px solid #1e3a4f', margin: '0 auto' }} />
                                   </div>
                                 </div>
                               )
@@ -404,6 +388,34 @@ export default function SiteVisitScheduler({ leadId, leadName, leadPhone, leadAd
           </div>
         </div>
       </div>
+    {tooltip && (
+          <div style={{
+            position: 'fixed',
+            left: tooltip.x,
+            top: tooltip.y - 8,
+            transform: 'translate(-50%, -100%)',
+            zIndex: 9999,
+            pointerEvents: 'none',
+            minWidth: 200,
+          }}>
+            <div style={{ background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 10, padding: '10px 14px', boxShadow: '0 8px 24px rgba(0,0,0,0.7)' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>
+                {tooltip.visit.customer_name_snapshot || 'Booked'}
+              </div>
+              {tooltip.visit.address_snapshot ? (
+                <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.4 }}>
+                  📍 {tooltip.visit.address_snapshot}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: '#334155', fontStyle: 'italic' }}>No address on file</div>
+              )}
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 6, paddingTop: 6, borderTop: '1px solid #1e3a4f' }}>
+                {HOUR_LABELS[tooltip.visit.visit_hour]}
+              </div>
+            </div>
+            <div style={{ width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '6px solid #1e3a4f', margin: '0 auto' }} />
+          </div>
+        )}
     </div>
   )
 }
