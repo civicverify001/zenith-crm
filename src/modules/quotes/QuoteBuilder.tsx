@@ -101,11 +101,8 @@ export function QuoteBuilder({
   const [quoteNumber] = useState(existingQuote?.quote_number || '(auto-assigned)')
   const [savedQuoteId, setSavedQuoteId] = useState<string | null>(existingQuote?.id || null)
   const [serviceAddress, setServiceAddress] = useState(customerAddress || existingQuote?.customer_address || '')
-
-  // Service plans selected for this quote
   const [selectedPlans, setSelectedPlans] = useState<SelectedServicePlan[]>([])
 
-  // Load existing line items if existingQuote was passed without them
   useEffect(() => {
     if (!existingQuote?.id) return
     if (existingQuote.line_items && existingQuote.line_items.length > 0) return
@@ -137,7 +134,6 @@ export function QuoteBuilder({
     })
   }, [existingQuote?.id])
 
-  // Auto-fetch address from leads
   useEffect(() => {
     if (serviceAddress || !customerId) return
     import('../../lib/supabase').then(({ supabase }) => {
@@ -152,17 +148,13 @@ export function QuoteBuilder({
     })
   }, [customerId])
 
-  // Load products
   useEffect(() => {
     fetchProducts().then(setProducts).catch(console.error).finally(() => setLoadingProducts(false))
   }, [])
 
-  // Load plan templates
   useEffect(() => {
     fetchPlanTemplates(true).then(setPlanTemplates).catch(console.error)
   }, [])
-
-  // ─── Line item helpers ─────────────────────────────────────
 
   function addProduct(product: Product) {
     let unitPrice: number
@@ -201,10 +193,8 @@ export function QuoteBuilder({
   function buildProductDescription(p: Product): string {
     let desc = p.name
     if (p.description) desc += `\n${p.description}`
-
     const hasPartsWarranty = p.parts_warranty && p.parts_warranty.trim()
     const hasLabourWarranty = p.labour_warranty && p.labour_warranty.trim()
-
     if (hasPartsWarranty || hasLabourWarranty) {
       desc += '\n'
       if (hasPartsWarranty) desc += `\nParts Warranty – ${p.parts_warranty}`
@@ -253,8 +243,6 @@ export function QuoteBuilder({
     })
   }
 
-  // ─── Service plan helpers ──────────────────────────────────
-
   function addServicePlan(template: ServicePlanTemplate) {
     if (selectedPlans.some(p => p.template_id === template.id)) {
       alert(`"${template.name}" is already added to this quote.`)
@@ -280,7 +268,6 @@ export function QuoteBuilder({
     setSelectedPlans(prev => prev.map(p => p._key === key ? { ...p, price } : p))
   }
 
-  // ─── Totals ────────────────────────────────────────────────
   const recurringItems = lineItems.filter(li => li.item_type !== 'install_fee')
   const installFeeItems = lineItems.filter(li => li.item_type === 'install_fee')
   const monthlySubtotal = recurringItems.reduce((s, li) => s + li.total, 0)
@@ -289,12 +276,10 @@ export function QuoteBuilder({
   const taxAmount = parseFloat((subtotal * 0.07).toFixed(2))
   const total = parseFloat((subtotal + taxAmount).toFixed(2))
 
-  // ─── Save ──────────────────────────────────────────────────
   async function handleSave(): Promise<string | null> {
     if (!customerId) return null
     setSaving(true)
     try {
-      // Combine regular line items + service plan line items
       const items = [
         ...lineItems.map((li, i) => ({
           product_id: li.product_id || null,
@@ -370,7 +355,6 @@ export function QuoteBuilder({
       const data = await res.json()
       if (res.ok) emailTo = data.to
     } catch (_) {}
-
     try {
       await sendQuote(qId)
       const { data: updatedQuote } = await supabase.from('quotes').select('*').eq('id', qId).single()
@@ -412,7 +396,6 @@ export function QuoteBuilder({
 
   return (
     <div style={{ background: '#0f1923', minHeight: '100vh', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-      {/* Header */}
       <div style={{ background: '#162232', borderBottom: '1px solid #1e3a4f', padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 12 }}>
         <button onClick={onCancel} style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>← Back</button>
         <div style={{ flex: 1 }}>
@@ -491,7 +474,6 @@ function FormView({
   const [showProductPicker, setShowProductPicker] = useState(false)
   const [showPlanPicker, setShowPlanPicker] = useState(false)
   const isRental = commercialType === 'rental'
-  const isAdmin = true // price override shown for all in builder, admin check happens at activation
 
   const filtered = products.filter((p: Product) =>
     !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase())
@@ -544,7 +526,7 @@ function FormView({
         </div>
       </div>
 
-      {/* ═══ LINE ITEMS SECTION ═══ */}
+      {/* LINE ITEMS */}
       <div style={S.section}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <div style={S.label}>Line Items</div>
@@ -634,7 +616,6 @@ function FormView({
                       </div>
                     </td>
                     <td style={S.td}>
-                      <td style={S.td}>
                       {li.sku && <div style={{ color: '#0d7ea3', fontSize: 11, fontWeight: 700, marginBottom: 3 }}>{li.sku}</div>}
                       {li.item_type === 'install_fee' && (
                         <div style={{ color: '#f59e0b', fontSize: 10, fontWeight: 700, marginBottom: 3, textTransform: 'uppercase' }}>One-time — charged after installation</div>
@@ -710,14 +691,12 @@ function FormView({
         )}
       </div>
 
-      {/* ═══ SERVICE PLANS SECTION ═══ */}
+      {/* SERVICE PLANS */}
       <div style={S.section}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <div>
             <div style={S.label}>Service Plans</div>
-            <div style={{ color: '#64748b', fontSize: 11, marginTop: -2 }}>
-              Optional — plans activate after installation is complete
-            </div>
+            <div style={{ color: '#64748b', fontSize: 11, marginTop: -2 }}>Optional — plans activate after installation is complete</div>
           </div>
           <button onClick={() => setShowPlanPicker(v => !v)} style={{
             padding: '7px 14px', borderRadius: 8, border: '1px solid #f59e0b',
@@ -728,7 +707,6 @@ function FormView({
           </button>
         </div>
 
-        {/* Plan picker */}
         {showPlanPicker && (
           <div style={{ background: '#0f1923', borderRadius: 10, border: '1px solid #1e3a4f', marginBottom: 12, overflow: 'hidden' }}>
             <div style={{ padding: '10px 14px', borderBottom: '1px solid #1e3a4f', fontSize: 11, color: '#64748b' }}>
@@ -745,23 +723,19 @@ function FormView({
                         style={{
                           display: 'flex', width: '100%', padding: '10px 14px', gap: 12,
                           background: 'none', border: 'none', cursor: alreadyAdded ? 'not-allowed' : 'pointer',
-                          textAlign: 'left', borderBottom: '1px solid #1a2e42',
-                          opacity: alreadyAdded ? 0.4 : 1,
+                          textAlign: 'left', borderBottom: '1px solid #1a2e42', opacity: alreadyAdded ? 0.4 : 1,
                         }}
                         onMouseEnter={e => { if (!alreadyAdded) e.currentTarget.style.background = '#162232' }}
                         onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
                       >
                         <div style={{ flex: 1 }}>
                           <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>
-                            {t.name}
-                            {alreadyAdded && <span style={{ color: '#64748b', fontWeight: 400 }}> (added)</span>}
+                            {t.name}{alreadyAdded && <span style={{ color: '#64748b', fontWeight: 400 }}> (added)</span>}
                           </div>
                           {t.description && <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>{t.description.slice(0, 80)}{t.description.length > 80 ? '...' : ''}</div>}
                         </div>
                         <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                          <div style={{ color: '#f59e0b', fontSize: 12, fontWeight: 700 }}>
-                            {fmt(Number(t.price))}{BILLING_CYCLE_LABELS[t.billing_cycle] || ''}
-                          </div>
+                          <div style={{ color: '#f59e0b', fontSize: 12, fontWeight: 700 }}>{fmt(Number(t.price))}{BILLING_CYCLE_LABELS[t.billing_cycle] || ''}</div>
                           <div style={{ color: '#64748b', fontSize: 10 }}>{FULFILLMENT_TYPE_LABELS[t.fulfillment_type] || t.fulfillment_type}</div>
                         </div>
                       </button>
@@ -772,33 +746,22 @@ function FormView({
           </div>
         )}
 
-        {/* Selected plans */}
         {selectedPlans.length === 0
-          ? <div style={{ textAlign: 'center', padding: '20px 0', color: '#334155', fontSize: 13 }}>
-              No service plans added. These are optional recurring services.
-            </div>
+          ? <div style={{ textAlign: 'center', padding: '20px 0', color: '#334155', fontSize: 13 }}>No service plans added. These are optional recurring services.</div>
           : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {selectedPlans.map((sp: SelectedServicePlan) => (
-                <div key={sp._key} style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  background: '#0f1923', borderRadius: 10, border: '1px solid #1e3a4f', padding: '10px 14px',
-                }}>
+                <div key={sp._key} style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#0f1923', borderRadius: 10, border: '1px solid #1e3a4f', padding: '10px 14px' }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>{sp.name}</div>
-                    <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>
-                      {FULFILLMENT_TYPE_LABELS[sp.fulfillment_type] || sp.fulfillment_type} · Billed {sp.billing_cycle}
-                    </div>
+                    <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>{FULFILLMENT_TYPE_LABELS[sp.fulfillment_type] || sp.fulfillment_type} · Billed {sp.billing_cycle}</div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <input type="number" step="0.01" min={0} value={sp.price}
                       onChange={e => onUpdatePlanPrice(sp._key, parseFloat(e.target.value) || 0)}
                       style={{ ...S.input, width: 90, textAlign: 'right', padding: '6px 8px' }} />
-                    <span style={{ color: '#f59e0b', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                      {BILLING_CYCLE_LABELS[sp.billing_cycle] || ''}
-                    </span>
-                    <button onClick={() => onRemoveServicePlan(sp._key)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', fontSize: 16, padding: '0 4px' }}>×</button>
+                    <span style={{ color: '#f59e0b', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>{BILLING_CYCLE_LABELS[sp.billing_cycle] || ''}</span>
+                    <button onClick={() => onRemoveServicePlan(sp._key)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', fontSize: 16, padding: '0 4px' }}>×</button>
                   </div>
                 </div>
               ))}
@@ -827,8 +790,6 @@ function PreviewView({
         color: Z.text, fontSize: 13,
       }}>
         <div style={{ padding: '32px 40px' }}>
-
-          {/* Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ width: 48, height: 48, borderRadius: 4, background: Z.navy, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -845,7 +806,6 @@ function PreviewView({
             </div>
           </div>
 
-          {/* Bill To / Install */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 28 }}>
             <div>
               <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 6 }}>BILL TO:</div>
@@ -866,7 +826,6 @@ function PreviewView({
             </div>
           </div>
 
-          {/* Quote title */}
           <div style={{ marginBottom: 20 }}>
             <h1 style={{ fontSize: 28, fontWeight: 900, color: Z.navy, margin: '0 0 14px' }}>QUOTATION # {quoteNumber}</h1>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
@@ -890,7 +849,6 @@ function PreviewView({
             </div>
           )}
 
-          {/* Line items */}
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
             <thead>
               <tr style={{ borderBottom: '2px solid ' + Z.navy }}>
@@ -931,7 +889,6 @@ function PreviewView({
             </tbody>
           </table>
 
-          {/* Totals */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 28 }}>
             <div style={{ minWidth: 280 }}>
               {isRental ? (
@@ -964,7 +921,6 @@ function PreviewView({
             </div>
           </div>
 
-          {/* ═══ INCLUDED SERVICE PLANS ═══ */}
           {selectedPlans.length > 0 && (
             <div style={{ marginBottom: 24, borderTop: '1px solid ' + Z.border, paddingTop: 18 }}>
               <div style={{ fontWeight: 700, fontSize: 13, color: Z.navy, marginBottom: 10 }}>INCLUDED SERVICE PLANS</div>
@@ -983,9 +939,7 @@ function PreviewView({
                   {selectedPlans.map((sp: SelectedServicePlan) => (
                     <tr key={sp._key} style={{ borderBottom: '1px solid ' + Z.border, background: '#fefbf3' }}>
                       <td style={{ padding: '8px 8px', fontSize: 12, fontWeight: 600 }}>{sp.name}</td>
-                      <td style={{ padding: '8px 8px', fontSize: 11, color: Z.muted }}>
-                        {FULFILLMENT_TYPE_LABELS[sp.fulfillment_type] || sp.fulfillment_type}
-                      </td>
+                      <td style={{ padding: '8px 8px', fontSize: 11, color: Z.muted }}>{FULFILLMENT_TYPE_LABELS[sp.fulfillment_type] || sp.fulfillment_type}</td>
                       <td style={{ padding: '8px 8px', fontSize: 12, fontWeight: 700, textAlign: 'right', color: '#b45309' }}>
                         $ {sp.price.toFixed(2)}{BILLING_CYCLE_LABELS[sp.billing_cycle] || ''}
                       </td>
@@ -996,7 +950,6 @@ function PreviewView({
             </div>
           )}
 
-          {/* Customer Authorization */}
           <div style={{ borderTop: '1px solid ' + Z.border, paddingTop: 20, marginBottom: 20 }}>
             <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>CUSTOMER AUTHORIZATION</div>
             <div style={{ fontSize: 11.5, lineHeight: 1.8, color: Z.text, whiteSpace: 'pre-wrap' }}>{AUTH_TEXT}</div>
@@ -1020,7 +973,6 @@ function PreviewView({
             </div>
           )}
 
-          {/* ACH */}
           <div style={{ borderTop: '1px solid ' + Z.border, paddingTop: 20, marginBottom: 20 }}>
             <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>DIRECT TRANSFER / ACH DETAILS</div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -1042,7 +994,6 @@ function PreviewView({
             </div>
           </div>
 
-          {/* Signature */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40, paddingTop: 8 }}>
             {['Sign here', 'Date'].map(label => (
               <div key={label}>
@@ -1051,7 +1002,6 @@ function PreviewView({
               </div>
             ))}
           </div>
-
         </div>
 
         <div style={{ borderTop: '1px solid ' + Z.border, padding: '12px 40px', display: 'flex', justifyContent: 'space-between' }}>
@@ -1063,7 +1013,7 @@ function PreviewView({
   )
 }
 
-// ─── Rental Agreement Modal (unchanged) ───────────────────────
+// ─── Rental Agreement Modal ───────────────────────────────────
 
 function RentalAgreementModal({ quoteNumber, customerName, customerAddress, lineItems, monthlySubtotal, installFeeTotal, onClose }: any) {
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
