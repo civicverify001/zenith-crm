@@ -1291,10 +1291,10 @@ function ServicePlansTemplateTab() {
               </tr>
             </thead>
             <tbody>
-              {templates.map((t, idx) => (
-                <React.Fragment key={t.id}>
+              {templates.map((t, idx) => {
                 const productName = products.find(p => p.id === (t as any).product_id)?.name
                 return (
+                  <React.Fragment key={t.id}>
                   <tr key={t.id} style={{ opacity: t.is_active ? 1 : 0.4 }}>
                     <td style={{ ...tdStyle, color: '#64748b', fontFamily: 'monospace' }}>{idx + 1}</td>
                     <td style={tdStyle}>
@@ -1429,6 +1429,7 @@ function ServicePlansTemplateTab() {
                       </td>
                     </tr>
                   )}
+                </React.Fragment>
                 )
               })}
             </tbody>
