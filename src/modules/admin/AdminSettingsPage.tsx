@@ -1,5 +1,5 @@
 // src/modules/admin/AdminSettingsPage.tsx
-// Admin Settings — tabbed page: Qualifying Checklist | Site Visit Checklist | Term Blocks | Service Plans | Email Templates
+// Admin Settings — tabbed page: Qualifying Checklist | Site Visit Checklist | Term Blocks | Service Plans | Email Templates | Checklists | SMS Templates | Automations
 import { EmailTemplatesTab } from './EmailTemplatesTab'
 import SmsTemplatesTab from './SmsTemplatesTab'
 import { ChecklistTemplatesTab } from './ChecklistTemplatesTab'
@@ -64,7 +64,7 @@ const FIELD_TYPE_LABELS: Record<string, string> = {
   prefill_source:        'Auto-fill: Lead Source',
 }
 
-type AdminTab = 'qualifying' | 'site_visit' | 'terms' | 'service_plans' | 'email_templates' | 'checklists' | 'sms_templates'
+type AdminTab = 'qualifying' | 'site_visit' | 'terms' | 'service_plans' | 'email_templates' | 'checklists' | 'sms_templates' | 'automations'
 
 const TABS: { key: AdminTab; label: string; icon: string; color: string }[] = [
   { key: 'qualifying',       label: 'Qualifying Checklist', icon: '✅', color: '#4ade80' },
@@ -74,6 +74,7 @@ const TABS: { key: AdminTab; label: string; icon: string; color: string }[] = [
   { key: 'email_templates',  label: 'Email Templates',      icon: '✉️', color: '#f472b6' },
   { key: 'checklists',       label: 'Checklists',           icon: '📋', color: '#8b5cf6' },
   { key: 'sms_templates',    label: 'SMS Templates',        icon: '💬', color: '#22c55e' },
+  { key: 'automations',      label: 'Automations',          icon: '⚡', color: '#f97316' },
 ]
 
 export default function AdminSettingsPage() {
@@ -150,6 +151,7 @@ export default function AdminSettingsPage() {
         {activeTab === 'email_templates' && <EmailTemplatesTab />}
         {activeTab === 'checklists'      && <ChecklistTemplatesTab />}
         {activeTab === 'sms_templates'   && <SmsTemplatesTab />}
+        {activeTab === 'automations'     && <AutomationsTab />}
       </div>
     </div>
   )
@@ -753,7 +755,6 @@ function TermBlocksTab() {
 
   return (
     <div style={{ display: 'flex', height: '100%', gap: 0 }}>
-      {/* LEFT SIDEBAR */}
       <div style={{
         width: 220, flexShrink: 0, background: '#162232',
         border: '1px solid #1e3a4f', borderRadius: '14px 0 0 14px',
@@ -804,7 +805,6 @@ function TermBlocksTab() {
         </div>
       </div>
 
-      {/* BLOCK LIST */}
       <div style={{
         width: editing ? 280 : undefined, flex: editing ? undefined : 1,
         flexShrink: 0, overflowY: 'auto',
@@ -859,7 +859,6 @@ function TermBlocksTab() {
         )}
       </div>
 
-      {/* EDITOR PANEL */}
       {editing && (
         <div style={{
           flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden',
@@ -943,9 +942,7 @@ function TermBlocksTab() {
       )}
 
       {!editing && (
-        <div style={{
-          flex: 1, display: 'none',
-        }} className="lg:flex items-center justify-center" />
+        <div style={{ flex: 1, display: 'none' }} className="lg:flex items-center justify-center" />
       )}
     </div>
   )
@@ -973,7 +970,6 @@ function ServicePlansTemplateTab() {
   const [error, setError] = useState('')
   const [products, setProducts] = useState<{ id: string; name: string }[]>([])
 
-  // Form state
   const [fName, setFName] = useState('')
   const [fDesc, setFDesc] = useState('')
   const [fNotes, setFNotes] = useState('')
@@ -1011,70 +1007,39 @@ function ServicePlansTemplateTab() {
     setEditing(null); setError('')
   }
 
-  function startAdd() {
-    resetForm()
-    setShowForm(true)
-  }
+  function startAdd() { resetForm(); setShowForm(true) }
 
   function startEdit(t: ServicePlanTemplate) {
-    setEditing(t)
-    setFName(t.name)
-    setFDesc(t.description || '')
-    setFNotes(t.internal_notes || '')
-    setFCycle(t.billing_cycle)
-    setFPrice(String(t.price || ''))
-    setFFulfillment(t.fulfillment_type)
+    setEditing(t); setFName(t.name); setFDesc(t.description || ''); setFNotes(t.internal_notes || '')
+    setFCycle(t.billing_cycle); setFPrice(String(t.price || '')); setFFulfillment(t.fulfillment_type)
     setFInterval(t.fulfillment_interval_months ? String(t.fulfillment_interval_months) : '')
     setFCategories(Array.isArray(t.applies_to_categories) ? t.applies_to_categories : [])
-    setFRequiresSystem(t.requires_installed_system)
-    setFAutoActivate(t.auto_activate_on_install)
-    setFProductId((t as any).product_id || '')
-    setShowForm(true)
-    setError('')
+    setFRequiresSystem(t.requires_installed_system); setFAutoActivate(t.auto_activate_on_install)
+    setFProductId((t as any).product_id || ''); setShowForm(true); setError('')
   }
 
   async function handleSave() {
     if (!fName.trim()) { setError('Plan name is required'); return }
     if (!fPrice || parseFloat(fPrice) < 0) { setError('Valid price is required'); return }
-
-    setSaving(true)
-    setError('')
-
+    setSaving(true); setError('')
     const input: CreatePlanTemplateInput = {
-      name: fName.trim(),
-      description: fDesc.trim() || undefined,
-      internal_notes: fNotes.trim() || undefined,
-      billing_cycle: fCycle,
-      price: parseFloat(fPrice),
-      fulfillment_type: fFulfillment,
+      name: fName.trim(), description: fDesc.trim() || undefined,
+      internal_notes: fNotes.trim() || undefined, billing_cycle: fCycle,
+      price: parseFloat(fPrice), fulfillment_type: fFulfillment,
       fulfillment_interval_months: fInterval ? parseInt(fInterval) : null,
-      applies_to_categories: fCategories,
-      requires_installed_system: fRequiresSystem,
+      applies_to_categories: fCategories, requires_installed_system: fRequiresSystem,
       auto_activate_on_install: fAutoActivate,
     }
-
     try {
       if (editing) {
         await updatePlanTemplate(editing.id, input)
-        // Save product_id for any fulfillment type
-        if (fProductId) {
-          await supabase.from('service_plans').update({ product_id: fProductId }).eq('id', editing.id)
-        } else {
-          await supabase.from('service_plans').update({ product_id: null }).eq('id', editing.id)
-        }
+        await supabase.from('service_plans').update({ product_id: fProductId || null }).eq('id', editing.id)
       } else {
         const created = await createPlanTemplate(input)
-        // Save product_id on newly created template
-        if (created && fProductId) {
-          await supabase.from('service_plans').update({ product_id: fProductId }).eq('id', created.id)
-        }
+        if (created && fProductId) await supabase.from('service_plans').update({ product_id: fProductId }).eq('id', created.id)
       }
-      setShowForm(false)
-      resetForm()
-      loadTemplates()
-    } catch (e: any) {
-      setError(e.message || 'Failed to save')
-    }
+      setShowForm(false); resetForm(); loadTemplates()
+    } catch (e: any) { setError(e.message || 'Failed to save') }
     setSaving(false)
   }
 
@@ -1082,18 +1047,14 @@ function ServicePlansTemplateTab() {
     try {
       await togglePlanTemplateActive(t.id, !t.is_active)
       setTemplates(prev => prev.map(x => x.id === t.id ? { ...x, is_active: !x.is_active } : x))
-    } catch (e: any) {
-      console.error('Toggle active error:', e)
-    }
+    } catch (e: any) { console.error('Toggle active error:', e) }
   }
 
   async function handleToggleAutoActivate(t: ServicePlanTemplate) {
     try {
       await toggleAutoActivate(t.id, !t.auto_activate_on_install)
       setTemplates(prev => prev.map(x => x.id === t.id ? { ...x, auto_activate_on_install: !x.auto_activate_on_install } : x))
-    } catch (e: any) {
-      console.error('Toggle auto-activate error:', e)
-    }
+    } catch (e: any) { console.error('Toggle auto-activate error:', e) }
   }
 
   async function handleDelete(t: ServicePlanTemplate) {
@@ -1128,47 +1089,32 @@ function ServicePlansTemplateTab() {
 
   return (
     <div style={{ height: '100%', overflowY: 'auto' }}>
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
           <h2 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 16, margin: 0 }}>Service Plan Templates</h2>
           <p style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>
-            {activeCount} active · {autoCount} auto-enroll on install — available for quotes and customer activation
+            {activeCount} active · {autoCount} auto-enroll on install
           </p>
         </div>
         <button onClick={startAdd} style={{
           padding: '8px 18px', borderRadius: 10, fontSize: 13, fontWeight: 700,
           background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: '#fff', border: 'none', cursor: 'pointer',
-        }}>
-          + Add Plan Template
-        </button>
+        }}>+ Add Plan Template</button>
       </div>
 
-      {/* Add/Edit Form */}
       {showForm && (
         <div style={{ ...tableCardStyle, marginBottom: 16, padding: 20 }}>
           <h3 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 14, marginBottom: 16 }}>
             {editing ? 'Edit Plan Template' : 'New Plan Template'}
           </h3>
-
           {error && (
-            <div style={{
-              background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.3)',
-              borderRadius: 10, padding: '8px 14px', marginBottom: 14, fontSize: 12, color: '#f87171',
-            }}>
-              {error}
-            </div>
+            <div style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 10, padding: '8px 14px', marginBottom: 14, fontSize: 12, color: '#f87171' }}>{error}</div>
           )}
-
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* Row 1: Name */}
             <div>
               <label style={labelStyle}>Plan Name</label>
-              <input type="text" value={fName} onChange={e => setFName(e.target.value)}
-                placeholder="e.g., Annual Maintenance Plan" style={inputStyle} />
+              <input type="text" value={fName} onChange={e => setFName(e.target.value)} placeholder="e.g., Annual Maintenance Plan" style={inputStyle} />
             </div>
-
-            {/* Row 2: Billing cycle + Price */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <label style={labelStyle}>Billing Cycle</label>
@@ -1181,12 +1127,9 @@ function ServicePlansTemplateTab() {
               </div>
               <div>
                 <label style={labelStyle}>Price per Cycle ($)</label>
-                <input type="number" step="0.01" min="0" value={fPrice}
-                  onChange={e => setFPrice(e.target.value)} placeholder="0.00" style={inputStyle} />
+                <input type="number" step="0.01" min="0" value={fPrice} onChange={e => setFPrice(e.target.value)} placeholder="0.00" style={inputStyle} />
               </div>
             </div>
-
-            {/* Row 3: Fulfillment type + interval */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <label style={labelStyle}>Fulfillment Type</label>
@@ -1200,105 +1143,66 @@ function ServicePlansTemplateTab() {
               {(fFulfillment === 'tech_visit' || fFulfillment === 'shipment') && (
                 <div>
                   <label style={labelStyle}>Fulfillment Interval (months)</label>
-                  <input type="number" min="1" value={fInterval}
-                    onChange={e => setFInterval(e.target.value)} placeholder="12" style={inputStyle} />
+                  <input type="number" min="1" value={fInterval} onChange={e => setFInterval(e.target.value)} placeholder="12" style={inputStyle} />
                 </div>
               )}
             </div>
-
-            {/* Row 3.5: Related Product (all fulfillment types except billing-only) */}
             {fFulfillment !== 'none' && (
               <div>
-                <label style={labelStyle}>{fFulfillment === 'shipment' ? 'Product to Ship' : fFulfillment === 'tech_visit' ? 'Parts / Filters for This Service' : 'Related Product'} <span style={{ color: '#f59e0b' }}>— {fFulfillment === 'shipment' ? 'what goes in the box' : 'so tech knows what to bring'}</span></label>
+                <label style={labelStyle}>
+                  {fFulfillment === 'shipment' ? 'Product to Ship' : 'Related Product'}
+                  <span style={{ color: '#f59e0b' }}> — fulfillment cron needs this</span>
+                </label>
                 <select value={fProductId} onChange={e => setFProductId(e.target.value)} style={inputStyle}>
-                  <option value="" style={{ background: '#0f1923' }}>Select product to ship...</option>
+                  <option value="" style={{ background: '#0f1923' }}>Select product...</option>
                   {products.map(p => <option key={p.id} value={p.id} style={{ background: '#0f1923' }}>{p.name}</option>)}
                 </select>
-                {!fProductId && (
-                  <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 4 }}>
-                    ⚠️ Fulfillment cron will skip this plan until a product is linked
-                  </div>
-                )}
+                {!fProductId && <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 4 }}>⚠️ Fulfillment cron will skip this plan until a product is linked</div>}
               </div>
             )}
-
-            {/* Row 4: Description */}
             <div>
               <label style={labelStyle}>Customer-Facing Description</label>
-              <textarea value={fDesc} onChange={e => setFDesc(e.target.value)} rows={2}
-                placeholder="Shown on quotes and customer pages"
-                style={{ ...inputStyle, resize: 'none' as const, fontFamily: 'inherit' }} />
+              <textarea value={fDesc} onChange={e => setFDesc(e.target.value)} rows={2} placeholder="Shown on quotes and customer pages" style={{ ...inputStyle, resize: 'none' as const, fontFamily: 'inherit' }} />
             </div>
-
-            {/* Row 5: Internal notes */}
             <div>
               <label style={labelStyle}>Internal Notes (admin only)</label>
-              <textarea value={fNotes} onChange={e => setFNotes(e.target.value)} rows={2}
-                placeholder="Not shown to customers"
-                style={{ ...inputStyle, resize: 'none' as const, fontFamily: 'inherit' }} />
+              <textarea value={fNotes} onChange={e => setFNotes(e.target.value)} rows={2} placeholder="Not shown to customers" style={{ ...inputStyle, resize: 'none' as const, fontFamily: 'inherit' }} />
             </div>
-
-            {/* Row 6: Applies to categories */}
             <div>
               <label style={labelStyle}>Applies to Product Categories <span style={{ color: '#334155' }}>(empty = all)</span></label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {PRODUCT_CATEGORIES.map(cat => {
                   const selected = fCategories.includes(cat.value)
                   return (
-                    <button key={cat.value} onClick={() => toggleCategory(cat.value)}
-                      style={{
-                        padding: '5px 12px', borderRadius: 20, fontSize: 12, cursor: 'pointer',
-                        background: selected ? 'rgba(245,158,11,0.15)' : 'rgba(255,255,255,0.04)',
-                        color: selected ? '#f59e0b' : '#64748b',
-                        border: `1px solid ${selected ? 'rgba(245,158,11,0.4)' : '#1e3a4f'}`,
-                        fontWeight: selected ? 700 : 400,
-                      }}>
-                      {cat.label}
-                    </button>
+                    <button key={cat.value} onClick={() => toggleCategory(cat.value)} style={{
+                      padding: '5px 12px', borderRadius: 20, fontSize: 12, cursor: 'pointer',
+                      background: selected ? 'rgba(245,158,11,0.15)' : 'rgba(255,255,255,0.04)',
+                      color: selected ? '#f59e0b' : '#64748b',
+                      border: `1px solid ${selected ? 'rgba(245,158,11,0.4)' : '#1e3a4f'}`,
+                      fontWeight: selected ? 700 : 400,
+                    }}>{cat.label}</button>
                   )
                 })}
               </div>
             </div>
-
-            {/* Row 7: Toggles */}
             <div style={{ display: 'flex', gap: 24 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                <input type="checkbox" checked={fRequiresSystem}
-                  onChange={e => setFRequiresSystem(e.target.checked)}
-                  style={{ width: 15, height: 15, accentColor: '#0d7ea3' }} />
+                <input type="checkbox" checked={fRequiresSystem} onChange={e => setFRequiresSystem(e.target.checked)} style={{ width: 15, height: 15, accentColor: '#0d7ea3' }} />
                 <span style={{ fontSize: 13, color: '#e2e8f0' }}>Requires Installed System</span>
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                <input type="checkbox" checked={fAutoActivate}
-                  onChange={e => setFAutoActivate(e.target.checked)}
-                  style={{ width: 15, height: 15, accentColor: '#f59e0b' }} />
+                <input type="checkbox" checked={fAutoActivate} onChange={e => setFAutoActivate(e.target.checked)} style={{ width: 15, height: 15, accentColor: '#f59e0b' }} />
                 <span style={{ fontSize: 13, color: '#e2e8f0' }}>Auto-Enroll on Install</span>
               </label>
             </div>
-
             {fAutoActivate && (
-              <div style={{
-                background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)',
-                borderRadius: 10, padding: '8px 14px', fontSize: 12, color: '#f59e0b',
-                display: 'flex', gap: 8,
-              }}>
-                <span>⚡</span>
-                <span>This plan will automatically activate for every new installation matching the selected categories. Turn off anytime to stop auto-enrollment.</span>
+              <div style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 10, padding: '8px 14px', fontSize: 12, color: '#f59e0b', display: 'flex', gap: 8 }}>
+                <span>⚡</span><span>This plan will automatically activate for every new installation matching the selected categories.</span>
               </div>
             )}
-
-            {/* Buttons */}
             <div style={{ display: 'flex', gap: 8, paddingTop: 4 }}>
-              <button onClick={() => { setShowForm(false); resetForm() }} style={{
-                padding: '8px 16px', borderRadius: 10, fontSize: 13, color: '#64748b', cursor: 'pointer',
-                background: 'rgba(255,255,255,0.04)', border: '1px solid #1e3a4f',
-              }}>Cancel</button>
-              <button onClick={handleSave} disabled={saving || !fName.trim()} style={{
-                padding: '8px 20px', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#fff',
-                background: 'linear-gradient(135deg, #f59e0b, #d97706)', border: 'none',
-                cursor: saving || !fName.trim() ? 'not-allowed' : 'pointer',
-                opacity: saving || !fName.trim() ? 0.5 : 1,
-              }}>
+              <button onClick={() => { setShowForm(false); resetForm() }} style={{ padding: '8px 16px', borderRadius: 10, fontSize: 13, color: '#64748b', cursor: 'pointer', background: 'rgba(255,255,255,0.04)', border: '1px solid #1e3a4f' }}>Cancel</button>
+              <button onClick={handleSave} disabled={saving || !fName.trim()} style={{ padding: '8px 20px', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #f59e0b, #d97706)', border: 'none', cursor: saving || !fName.trim() ? 'not-allowed' : 'pointer', opacity: saving || !fName.trim() ? 0.5 : 1 }}>
                 {saving ? 'Saving...' : editing ? 'Update Template' : 'Create Template'}
               </button>
             </div>
@@ -1306,13 +1210,12 @@ function ServicePlansTemplateTab() {
         </div>
       )}
 
-      {/* Template list */}
       {loading ? (
         <div style={{ textAlign: 'center', color: '#64748b', padding: '48px 0' }}>Loading...</div>
       ) : templates.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '48px 0' }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>🔄</div>
-          <p style={{ color: '#64748b' }}>No service plan templates yet. Click "+ Add Plan Template" to create one.</p>
+          <p style={{ color: '#64748b' }}>No service plan templates yet.</p>
         </div>
       ) : (
         <div style={{ ...tableCardStyle, overflowX: 'auto' }}>
@@ -1334,109 +1237,370 @@ function ServicePlansTemplateTab() {
               {templates.map((t, idx) => {
                 const productName = products.find(p => p.id === (t as any).product_id)?.name
                 return (
-                <tr key={t.id} style={{ opacity: t.is_active ? 1 : 0.4 }}>
-                  <td style={{ ...tdStyle, color: '#64748b', fontFamily: 'monospace' }}>{idx + 1}</td>
-                  <td style={tdStyle}>
-                    <div style={{ fontWeight: 600 }}>{t.name}</div>
-                    {t.description && (
-                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>
-                        {t.description.length > 80 ? t.description.slice(0, 80) + '...' : t.description}
-                      </div>
-                    )}
-                    {Array.isArray(t.applies_to_categories) && t.applies_to_categories.length > 0 && (
-                      <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
-                        {t.applies_to_categories.map((cat: string) => (
-                          <span key={cat} style={{
-                            fontSize: 9, padding: '1px 6px', borderRadius: 10,
-                            background: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)',
-                          }}>{cat}</span>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                  <td style={tdStyle}>
-                    <span style={{
-                      fontSize: 11, padding: '3px 8px', borderRadius: 20,
-                      background: 'rgba(255,255,255,0.05)', color: '#94a3b8', border: '1px solid #1e3a4f',
-                    }}>
-                      {t.billing_cycle === 'one_time' ? 'One-Time' : t.billing_cycle.charAt(0).toUpperCase() + t.billing_cycle.slice(1)}
-                    </span>
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>
-                    ${Number(t.price).toFixed(2)}
-                    <div style={{ fontSize: 10, color: '#64748b', fontWeight: 400 }}>
-                      {BILLING_CYCLE_LABELS[t.billing_cycle] || ''}
-                    </div>
-                  </td>
-                  <td style={tdStyle}>
-                    <span style={{
-                      fontSize: 11, padding: '3px 8px', borderRadius: 20,
-                      background: t.fulfillment_type === 'tech_visit' ? 'rgba(96,165,250,0.1)' :
-                        t.fulfillment_type === 'shipment' ? 'rgba(168,85,247,0.1)' :
-                        t.fulfillment_type === 'on_demand' ? 'rgba(74,222,128,0.1)' : 'rgba(255,255,255,0.05)',
-                      color: t.fulfillment_type === 'tech_visit' ? '#60a5fa' :
-                        t.fulfillment_type === 'shipment' ? '#a855f7' :
-                        t.fulfillment_type === 'on_demand' ? '#4ade80' : '#94a3b8',
-                      border: '1px solid transparent',
-                    }}>
-                      {FULFILLMENT_TYPE_LABELS[t.fulfillment_type] || t.fulfillment_type}
-                    </span>
-                    {t.fulfillment_interval_months && (
-                      <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
-                        Every {t.fulfillment_interval_months} mo
-                      </div>
-                    )}
-                    {t.fulfillment_type === 'shipment' && productName && (
-                      <div style={{ fontSize: 10, color: '#a855f7', marginTop: 2 }}>
-                        📦 {productName}
-                      </div>
-                    )}
-                    {t.fulfillment_type === 'shipment' && !productName && (
-                      <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 2 }}>
-                        ⚠️ No product linked
-                      </div>
-                    )}
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'center' }}>
-                    <ActiveBadge active={t.is_active} onClick={() => handleToggleActive(t)} />
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'center' }}>
-                    <button onClick={() => handleToggleAutoActivate(t)} style={{
-                      fontSize: 11, padding: '3px 10px', borderRadius: 20, fontWeight: 700, cursor: 'pointer',
-                      background: t.auto_activate_on_install ? 'rgba(245,158,11,0.12)' : 'rgba(100,116,139,0.12)',
-                      color: t.auto_activate_on_install ? '#f59e0b' : '#64748b',
-                      border: `1px solid ${t.auto_activate_on_install ? 'rgba(245,158,11,0.4)' : 'rgba(100,116,139,0.2)'}`,
-                    }}>
-                      {t.auto_activate_on_install ? '⚡ On' : 'Off'}
-                    </button>
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'center' }}>
-                    <div style={{ display: 'flex', justifyContent: 'center', gap: 4 }}>
-                      <button onClick={() => handleMove(t, 'up')} disabled={idx === 0}
-                        style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', opacity: idx === 0 ? 0.2 : 1 }}>▲</button>
-                      <button onClick={() => handleMove(t, 'down')} disabled={idx === templates.length - 1}
-                        style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', opacity: idx === templates.length - 1 ? 0.2 : 1 }}>▼</button>
-                    </div>
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                      <button onClick={() => startEdit(t)}
-                        style={{ fontSize: 12, color: '#60a5fa', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
-                        Edit
+                  <tr key={t.id} style={{ opacity: t.is_active ? 1 : 0.4 }}>
+                    <td style={{ ...tdStyle, color: '#64748b', fontFamily: 'monospace' }}>{idx + 1}</td>
+                    <td style={tdStyle}>
+                      <div style={{ fontWeight: 600 }}>{t.name}</div>
+                      {t.description && <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>{t.description.length > 80 ? t.description.slice(0, 80) + '...' : t.description}</div>}
+                      {Array.isArray(t.applies_to_categories) && t.applies_to_categories.length > 0 && (
+                        <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
+                          {t.applies_to_categories.map((cat: string) => (
+                            <span key={cat} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 10, background: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)' }}>{cat}</span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td style={tdStyle}>
+                      <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 20, background: 'rgba(255,255,255,0.05)', color: '#94a3b8', border: '1px solid #1e3a4f' }}>
+                        {t.billing_cycle === 'one_time' ? 'One-Time' : t.billing_cycle.charAt(0).toUpperCase() + t.billing_cycle.slice(1)}
+                      </span>
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>
+                      ${Number(t.price).toFixed(2)}
+                      <div style={{ fontSize: 10, color: '#64748b', fontWeight: 400 }}>{BILLING_CYCLE_LABELS[t.billing_cycle] || ''}</div>
+                    </td>
+                    <td style={tdStyle}>
+                      <span style={{
+                        fontSize: 11, padding: '3px 8px', borderRadius: 20,
+                        background: t.fulfillment_type === 'tech_visit' ? 'rgba(96,165,250,0.1)' : t.fulfillment_type === 'shipment' ? 'rgba(168,85,247,0.1)' : t.fulfillment_type === 'on_demand' ? 'rgba(74,222,128,0.1)' : 'rgba(255,255,255,0.05)',
+                        color: t.fulfillment_type === 'tech_visit' ? '#60a5fa' : t.fulfillment_type === 'shipment' ? '#a855f7' : t.fulfillment_type === 'on_demand' ? '#4ade80' : '#94a3b8',
+                        border: '1px solid transparent',
+                      }}>
+                        {FULFILLMENT_TYPE_LABELS[t.fulfillment_type] || t.fulfillment_type}
+                      </span>
+                      {t.fulfillment_interval_months && <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>Every {t.fulfillment_interval_months} mo</div>}
+                      {t.fulfillment_type === 'shipment' && productName && <div style={{ fontSize: 10, color: '#a855f7', marginTop: 2 }}>📦 {productName}</div>}
+                      {t.fulfillment_type === 'shipment' && !productName && <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 2 }}>⚠️ No product linked</div>}
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'center' }}><ActiveBadge active={t.is_active} onClick={() => handleToggleActive(t)} /></td>
+                    <td style={{ ...tdStyle, textAlign: 'center' }}>
+                      <button onClick={() => handleToggleAutoActivate(t)} style={{
+                        fontSize: 11, padding: '3px 10px', borderRadius: 20, fontWeight: 700, cursor: 'pointer',
+                        background: t.auto_activate_on_install ? 'rgba(245,158,11,0.12)' : 'rgba(100,116,139,0.12)',
+                        color: t.auto_activate_on_install ? '#f59e0b' : '#64748b',
+                        border: `1px solid ${t.auto_activate_on_install ? 'rgba(245,158,11,0.4)' : 'rgba(100,116,139,0.2)'}`,
+                      }}>
+                        {t.auto_activate_on_install ? '⚡ On' : 'Off'}
                       </button>
-                      <button onClick={() => handleDelete(t)}
-                        style={{ fontSize: 12, color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'center' }}>
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: 4 }}>
+                        <button onClick={() => handleMove(t, 'up')} disabled={idx === 0} style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', opacity: idx === 0 ? 0.2 : 1 }}>▲</button>
+                        <button onClick={() => handleMove(t, 'down')} disabled={idx === templates.length - 1} style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', opacity: idx === templates.length - 1 ? 0.2 : 1 }}>▼</button>
+                      </div>
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                        <button onClick={() => startEdit(t)} style={{ fontSize: 12, color: '#60a5fa', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Edit</button>
+                        <button onClick={() => handleDelete(t)} style={{ fontSize: 12, color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Delete</button>
+                      </div>
+                    </td>
+                  </tr>
                 )
               })}
             </tbody>
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════
+// TAB 8: AUTOMATIONS
+// Toggle on/off + edit SMS templates for all 31 automation keys
+// Grouped by group_name, reads/writes automation_settings table
+// ════════════════════════════════════════════════════════════════
+
+interface AutomationSetting {
+  id: string
+  key: string
+  label: string
+  group_name: string
+  enabled: boolean
+  channel: string
+  sms_template: string | null
+  timing_label: string | null
+  updated_at: string
+}
+
+const CHANNEL_COLORS: Record<string, { bg: string; color: string; border: string }> = {
+  sms:      { bg: 'rgba(34,197,94,0.1)',   color: '#22c55e', border: 'rgba(34,197,94,0.3)' },
+  email:    { bg: 'rgba(96,165,250,0.1)',  color: '#60a5fa', border: 'rgba(96,165,250,0.3)' },
+  task:     { bg: 'rgba(251,191,36,0.1)',  color: '#fbbf24', border: 'rgba(251,191,36,0.3)' },
+  internal: { bg: 'rgba(100,116,139,0.1)', color: '#94a3b8', border: 'rgba(100,116,139,0.2)' },
+}
+
+function AutomationsTab() {
+  const [settings, setSettings] = useState<AutomationSetting[]>([])
+  const [loading, setLoading] = useState(true)
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [editTemplate, setEditTemplate] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<Record<string, string>>({})
+
+  useEffect(() => { loadSettings() }, [])
+
+  async function loadSettings() {
+    setLoading(true)
+    const { data } = await supabase
+      .from('automation_settings')
+      .select('id, key, label, group_name, enabled, channel, sms_template, timing_label, updated_at')
+      .order('group_name')
+      .order('key')
+    if (data) setSettings(data)
+    setLoading(false)
+  }
+
+  async function toggleEnabled(setting: AutomationSetting) {
+    const { error } = await supabase
+      .from('automation_settings')
+      .update({ enabled: !setting.enabled, updated_at: new Date().toISOString() })
+      .eq('id', setting.id)
+    if (!error) {
+      setSettings(prev => prev.map(s => s.id === setting.id ? { ...s, enabled: !s.enabled } : s))
+    }
+  }
+
+  function startEditTemplate(setting: AutomationSetting) {
+    setEditingKey(setting.key)
+    setEditTemplate(setting.sms_template || '')
+  }
+
+  async function saveTemplate(setting: AutomationSetting) {
+    setSaving(true)
+    const { error } = await supabase
+      .from('automation_settings')
+      .update({ sms_template: editTemplate.trim() || null, updated_at: new Date().toISOString() })
+      .eq('id', setting.id)
+
+    if (error) {
+      setSaveMsg(prev => ({ ...prev, [setting.key]: '❌ Error: ' + error.message }))
+    } else {
+      setSettings(prev => prev.map(s => s.id === setting.id ? { ...s, sms_template: editTemplate.trim() || null } : s))
+      setSaveMsg(prev => ({ ...prev, [setting.key]: '✅ Saved' }))
+      setEditingKey(null)
+      setTimeout(() => setSaveMsg(prev => { const n = { ...prev }; delete n[setting.key]; return n }), 3000)
+    }
+    setSaving(false)
+  }
+
+  // Group settings by group_name
+  const groups = settings.reduce<Record<string, AutomationSetting[]>>((acc, s) => {
+    if (!acc[s.group_name]) acc[s.group_name] = []
+    acc[s.group_name].push(s)
+    return acc
+  }, {})
+
+  const groupOrder = ['Lead Pipeline', 'Consultation', 'Installation', 'Post-Install & Retention', 'Billing & Contracts', 'Shipping & Fulfillment']
+  const sortedGroups = [
+    ...groupOrder.filter(g => groups[g]),
+    ...Object.keys(groups).filter(g => !groupOrder.includes(g)),
+  ]
+
+  const enabledCount = settings.filter(s => s.enabled).length
+
+  if (loading) return <div style={{ textAlign: 'center', color: '#64748b', padding: '48px 0' }}>Loading automations...</div>
+
+  return (
+    <div style={{ height: '100%', overflowY: 'auto' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div>
+          <h2 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 16, margin: 0 }}>Automation Settings</h2>
+          <p style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>
+            {enabledCount} of {settings.length} automations active — toggle on/off and edit message templates
+          </p>
+        </div>
+        <div style={{
+          fontSize: 11, padding: '6px 14px', borderRadius: 20, fontWeight: 600,
+          background: 'rgba(249,115,22,0.1)', color: '#f97316', border: '1px solid rgba(249,115,22,0.3)',
+        }}>
+          ⚡ Changes take effect on next trigger
+        </div>
+      </div>
+
+      {/* Variable reference */}
+      <div style={{
+        background: 'rgba(13,126,163,0.06)', border: '1px solid rgba(13,126,163,0.2)',
+        borderRadius: 12, padding: '12px 16px', marginBottom: 20,
+        display: 'flex', gap: 12, alignItems: 'flex-start',
+      }}>
+        <span style={{ fontSize: 18, flexShrink: 0 }}>💡</span>
+        <div>
+          <div style={{ color: '#38bdf8', fontWeight: 700, fontSize: 12, marginBottom: 4 }}>Template Variables</div>
+          <div style={{ color: '#64748b', fontSize: 11, lineHeight: 1.6 }}>
+            Use <code style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: 4, color: '#94a3b8' }}>{'{{name}}'}</code>
+            {' '}<code style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: 4, color: '#94a3b8' }}>{'{{date}}'}</code>
+            {' '}<code style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: 4, color: '#94a3b8' }}>{'{{time}}'}</code>
+            {' '}<code style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: 4, color: '#94a3b8' }}>{'{{tracking_number}}'}</code>
+            {' '}<code style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: 4, color: '#94a3b8' }}>{'{{plan_name}}'}</code>
+            {' — '}replaced automatically when SMS is sent.
+          </div>
+        </div>
+      </div>
+
+      {/* Groups */}
+      {sortedGroups.map(groupName => {
+        const groupSettings = groups[groupName] || []
+        const groupEnabled = groupSettings.filter(s => s.enabled).length
+
+        return (
+          <div key={groupName} style={{ marginBottom: 20 }}>
+            {/* Group header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8,
+              paddingBottom: 8, borderBottom: '1px solid #1e3a4f',
+            }}>
+              <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 13 }}>{groupName}</div>
+              <div style={{
+                fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 600,
+                background: 'rgba(249,115,22,0.08)', color: '#f97316',
+              }}>
+                {groupEnabled}/{groupSettings.length} active
+              </div>
+            </div>
+
+            {/* Automation rows */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {groupSettings.map(setting => {
+                const chanStyle = CHANNEL_COLORS[setting.channel] || CHANNEL_COLORS.internal
+                const isEditingThis = editingKey === setting.key
+                const hasSaveMsg = saveMsg[setting.key]
+
+                return (
+                  <div key={setting.key} style={{
+                    background: '#162232', border: `1px solid ${setting.enabled ? '#1e3a4f' : 'rgba(255,255,255,0.04)'}`,
+                    borderRadius: 12, overflow: 'hidden',
+                    opacity: setting.enabled ? 1 : 0.55,
+                  }}>
+                    {/* Main row */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px' }}>
+                      {/* Toggle */}
+                      <button
+                        onClick={() => toggleEnabled(setting)}
+                        style={{
+                          width: 44, height: 24, borderRadius: 12, cursor: 'pointer', flexShrink: 0,
+                          background: setting.enabled ? '#f97316' : 'rgba(100,116,139,0.3)',
+                          border: 'none', position: 'relative', transition: 'background 0.2s',
+                        }}
+                      >
+                        <div style={{
+                          position: 'absolute', top: 3,
+                          left: setting.enabled ? 23 : 3,
+                          width: 18, height: 18, borderRadius: '50%',
+                          background: '#fff', transition: 'left 0.2s',
+                        }} />
+                      </button>
+
+                      {/* Label + timing */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>{setting.label}</div>
+                        {setting.timing_label && (
+                          <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>⏱ {setting.timing_label}</div>
+                        )}
+                      </div>
+
+                      {/* Channel badge */}
+                      <span style={{
+                        fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 700, flexShrink: 0,
+                        background: chanStyle.bg, color: chanStyle.color, border: `1px solid ${chanStyle.border}`,
+                        textTransform: 'uppercase',
+                      }}>
+                        {setting.channel}
+                      </span>
+
+                      {/* Edit template button (SMS only) */}
+                      {setting.channel === 'sms' && (
+                        <button
+                          onClick={() => isEditingThis ? setEditingKey(null) : startEditTemplate(setting)}
+                          style={{
+                            fontSize: 11, padding: '4px 12px', borderRadius: 8, cursor: 'pointer', flexShrink: 0,
+                            background: isEditingThis ? 'rgba(249,115,22,0.15)' : 'rgba(255,255,255,0.05)',
+                            color: isEditingThis ? '#f97316' : '#64748b',
+                            border: `1px solid ${isEditingThis ? 'rgba(249,115,22,0.3)' : '#1e3a4f'}`,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {isEditingThis ? 'Cancel' : '✏️ Edit Message'}
+                        </button>
+                      )}
+
+                      {hasSaveMsg && (
+                        <span style={{ fontSize: 12, fontWeight: 700, color: hasSaveMsg.includes('❌') ? '#f87171' : '#4ade80', flexShrink: 0 }}>
+                          {hasSaveMsg}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* SMS template editor (expanded) */}
+                    {isEditingThis && (
+                      <div style={{ padding: '0 16px 16px', borderTop: '1px solid #1e3a4f' }}>
+                        <div style={{ paddingTop: 12 }}>
+                          <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 6 }}>
+                            Message Template <span style={{ color: '#334155' }}>({editTemplate.length} chars · recommended max 160)</span>
+                          </label>
+                          <textarea
+                            value={editTemplate}
+                            onChange={e => setEditTemplate(e.target.value)}
+                            rows={3}
+                            style={{
+                              width: '100%', boxSizing: 'border-box',
+                              background: 'rgba(255,255,255,0.05)', border: '1px solid #1e3a4f',
+                              borderRadius: 10, padding: '10px 14px', color: '#e2e8f0', fontSize: 13,
+                              fontFamily: 'inherit', outline: 'none', resize: 'none',
+                            }}
+                          />
+                          {/* Preview with dummy vars */}
+                          {editTemplate && (
+                            <div style={{
+                              background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 8,
+                              padding: '8px 12px', marginTop: 8, fontSize: 12, color: '#94a3b8', lineHeight: 1.5,
+                            }}>
+                              <span style={{ color: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Preview: </span>
+                              {editTemplate
+                                .replace(/{{name}}/g, 'John')
+                                .replace(/{{date}}/g, 'Wednesday, April 2')
+                                .replace(/{{time}}/g, '10:00 AM')
+                                .replace(/{{tracking_number}}/g, '1234567890')
+                                .replace(/{{plan_name}}/g, 'Annual Filter Plan')
+                                .replace(/{{review_url}}/g, 'g.page/review')}
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                            <button onClick={() => setEditingKey(null)} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 12, color: '#64748b', cursor: 'pointer', background: 'rgba(255,255,255,0.04)', border: '1px solid #1e3a4f' }}>
+                              Cancel
+                            </button>
+                            <button
+                              onClick={() => saveTemplate(setting)}
+                              disabled={saving}
+                              style={{ padding: '7px 18px', borderRadius: 8, fontSize: 12, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #f97316, #ea580c)', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.5 : 1 }}
+                            >
+                              {saving ? 'Saving...' : 'Save Template'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Current template preview (collapsed, SMS only) */}
+                    {!isEditingThis && setting.channel === 'sms' && setting.sms_template && (
+                      <div style={{
+                        padding: '6px 16px 10px',
+                        borderTop: '1px solid rgba(255,255,255,0.03)',
+                      }}>
+                        <div style={{ fontSize: 11, color: '#475569', lineHeight: 1.5, fontStyle: 'italic' }}>
+                          "{setting.sms_template.length > 120 ? setting.sms_template.slice(0, 120) + '...' : setting.sms_template}"
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
