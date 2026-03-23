@@ -13,15 +13,15 @@ import {
   reopenFromFollowUp,
 } from '../../services/leadMutations'
 import type { AgreementData } from '../../services/leadMutations'
-import { LostReasonModal } from './modals/LostReasonModal'
+// CHANGED: import LostReasonResult type alongside the modal
+import { LostReasonModal, type LostReasonResult } from './modals/LostReasonModal'
 import { FollowUpModal } from './modals/FollowUpModal'
 import { AgreementModal } from './modals/AgreementModal'
 import { InstallJobModal } from './modals/InstallJobModal'
 import { ConfirmDialog } from './modals/ConfirmDialog'
 
-// ── Contact Gate Configuration ─────────────────────────────────
+// Contact Gate Configuration
 const REQUIRED_CONTACT_ATTEMPTS = 5
-// Stages where the contact gate applies (Lost/DND locked until 5 attempts)
 const CONTACT_GATED_STAGES: LeadStage[] = [
   'new_lead', 'qualifying', 'qualified', 'site_visit_scheduled',
   'proposal_in_progress', 'quote_sent', 'future_follow_up',
@@ -35,9 +35,7 @@ interface ActionDef {
   targetStage?: LeadStage
   disabled?: (lead: Lead) => boolean
   disabledLabel?: string
-  /** If true, only admin/frontdesk can see this action — sales reps cannot */
   adminOnly?: boolean
-  /** If true, this action is gated by the 5-step contact requirement */
   contactGated?: boolean
 }
 
@@ -54,19 +52,19 @@ const STAGE_ACTIONS: Partial<Record<LeadStage, ActionDef[]>> = {
     { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true, contactGated: true },
   ],
   qualified: [
-    { label: '📅 Schedule Visit', action: 'schedule_visit', variant: 'primary', adminOnly: true },
+    { label: 'Schedule Visit', action: 'schedule_visit', variant: 'primary', adminOnly: true },
     { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true, contactGated: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
     { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true, contactGated: true },
   ],
   site_visit_scheduled: [
-    { label: '📄 Build Quote', action: 'create_quote', variant: 'primary' },
+    { label: 'Build Quote', action: 'create_quote', variant: 'primary' },
     { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true, contactGated: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
     { label: 'DND', action: 'dnd', variant: 'warning', modal: 'confirm_dnd', adminOnly: true, contactGated: true },
   ],
   proposal_in_progress: [
-    { label: '📄 Build & Send Quote', action: 'create_quote', variant: 'success' },
+    { label: 'Build & Send Quote', action: 'create_quote', variant: 'success' },
     { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true, contactGated: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
   ],
@@ -107,39 +105,34 @@ interface Props {
   qualifyingComplete?: boolean
   onScheduleVisit?: () => void
   siteVisitComplete?: boolean
-  /** Number of call attempts logged for this lead — gates Lost/DND buttons */
   callAttemptCount?: number
-  /** True if any call was logged with outcome 'no_contact_requested' — bypasses 5-step gate */
   hasNoContactRequest?: boolean
 }
 
-export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingComplete, onScheduleVisit, siteVisitComplete, callAttemptCount = 0, hasNoContactRequest = false }: Props) {
+export function StageActionBar({
+  lead, onLeadUpdated, onCreateQuote, qualifyingComplete,
+  onScheduleVisit, siteVisitComplete,
+  callAttemptCount = 0, hasNoContactRequest = false,
+}: Props) {
   const { user, profile, role } = useAuth()
   const [activeModal, setActiveModal] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [error, setError] = useState('')
 
   const isSalesRep = role === 'salesrep'
-
   const allActions = STAGE_ACTIONS[lead.stage] || []
+  const actions = isSalesRep ? allActions.filter(a => !a.adminOnly) : allActions
 
-  // Sales reps only see actions that are NOT adminOnly
-  const actions = isSalesRep
-    ? allActions.filter(a => !a.adminOnly)
-    : allActions
-
-  // Contact gate: active when below threshold AND no explicit no-contact request
   const isGatedStage = CONTACT_GATED_STAGES.includes(lead.stage)
   const attemptsRemaining = Math.max(0, REQUIRED_CONTACT_ATTEMPTS - callAttemptCount)
   const contactGateActive = isGatedStage && attemptsRemaining > 0 && !hasNoContactRequest
 
   if (!user) return null
 
-  // If sales rep has no actions for this stage, show read-only notice
   if (isSalesRep && actions.length === 0) {
     return (
       <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ backgroundColor: 'rgba(100,116,139,0.1)', border: '1px solid rgba(100,116,139,0.2)' }}>
-        <span className="text-xs" style={{ color: '#94a3b8' }}>👁 View only — stage actions managed by admin</span>
+        <span className="text-xs" style={{ color: '#94a3b8' }}>View only — stage actions managed by admin</span>
       </div>
     )
   }
@@ -148,13 +141,10 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
 
   async function handleAction(actionDef: ActionDef) {
     setError('')
-
-    // Block contact-gated actions when gate is active
     if (actionDef.contactGated && contactGateActive) {
       setError(`Log ${attemptsRemaining} more call attempt${attemptsRemaining !== 1 ? 's' : ''} before marking this lead as ${actionDef.action === 'lost' ? 'Lost' : 'DND'}.`)
       return
     }
-
     if (actionDef.action === 'create_quote') {
       if (lead.stage === 'site_visit_scheduled' && !siteVisitComplete) {
         setError('Complete all required site visit checklist items before building a quote.')
@@ -163,17 +153,8 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
       onCreateQuote?.()
       return
     }
-
-    if (actionDef.action === 'schedule_visit') {
-      onScheduleVisit?.()
-      return
-    }
-
-    if (actionDef.modal) {
-      setActiveModal(actionDef.modal)
-      return
-    }
-
+    if (actionDef.action === 'schedule_visit') { onScheduleVisit?.(); return }
+    if (actionDef.modal) { setActiveModal(actionDef.modal); return }
     if (actionDef.action === 'move' && actionDef.targetStage) {
       if (lead.stage === 'qualifying' && actionDef.targetStage === 'qualified' && !qualifyingComplete) {
         setError('Complete all required qualifying questions before moving to Qualified.')
@@ -183,19 +164,39 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
       try {
         const updated = await moveStage(lead.id, lead.stage, actionDef.targetStage, actor)
         onLeadUpdated(updated)
-      } catch (e: any) {
-        setError(e.message)
-      } finally {
-        setPendingAction(null)
-      }
+      } catch (e: any) { setError(e.message) }
+      finally { setPendingAction(null) }
     }
   }
 
-  async function handleLost(reason: string) {
+  // CHANGED: accepts LostReasonResult instead of plain string
+  async function handleLost(result: LostReasonResult) {
     setPendingAction('lost')
     try {
-      const updated = await markLost(lead.id, lead.stage, actor, reason)
-      onLeadUpdated(updated); setActiveModal(null)
+      // Build human-readable string for leads.lost_reason (backward-compatible column)
+      const reasonText = result.freeText
+        ? `${result.reasonLabel}: ${result.freeText}`
+        : result.reasonLabel
+
+      // CHANGED: pass structured code + re-engage date to markLost
+      const updated = await markLost(lead.id, lead.stage, actor, reasonText, {
+        lost_reason_code:   result.reasonCode,
+        lost_reengage_date: result.reEngageDate ?? undefined,
+      })
+      onLeadUpdated(updated)
+
+      // CHANGED: auto-schedule follow-up for Deferred / No Response codes
+      if (result.autoMoveToFutureFollowUp && result.reEngageDate) {
+        try {
+          await scheduleFollowUp(
+            lead.id, 'lost', actor,
+            result.reEngageDate,
+            `Auto-scheduled from Lost reason: ${result.reasonLabel}`,
+          )
+        } catch { /* fire-and-forget — lead already marked lost */ }
+      }
+
+      setActiveModal(null)
     } catch (e: any) { setError(e.message) }
     finally { setPendingAction(null) }
   }
@@ -231,9 +232,9 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
     setPendingAction('reopen')
     try {
       let updated: Lead
-      if (lead.stage === 'lost')       updated = await reopenFromLost(lead.id, lead, actor)
-      else if (lead.stage === 'dnd')   updated = await reopenFromDND(lead.id, actor)
-      else                             updated = await reopenFromFollowUp(lead.id, lead, actor)
+      if (lead.stage === 'lost')     updated = await reopenFromLost(lead.id, lead, actor)
+      else if (lead.stage === 'dnd') updated = await reopenFromDND(lead.id, actor)
+      else                           updated = await reopenFromFollowUp(lead.id, lead, actor)
       onLeadUpdated(updated); setActiveModal(null)
     } catch (e: any) { setError(e.message) }
     finally { setPendingAction(null) }
@@ -241,7 +242,6 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
 
   return (
     <>
-      {/* Qualifying checklist warning */}
       {lead.stage === 'qualifying' && !qualifyingComplete && !isSalesRep && (
         <div className="flex items-start gap-2 rounded-xl px-4 py-3" style={{ backgroundColor: '#854d0e', border: '2px solid #eab308' }}>
           <span className="text-lg leading-none">⚠️</span>
@@ -252,7 +252,6 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
         </div>
       )}
 
-      {/* Site visit checklist warning */}
       {lead.stage === 'site_visit_scheduled' && !siteVisitComplete && (
         <div className="flex items-start gap-2 rounded-xl px-4 py-3" style={{ backgroundColor: '#581c87', border: '2px solid #a855f7' }}>
           <span className="text-lg leading-none">📋</span>
@@ -263,7 +262,6 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
         </div>
       )}
 
-      {/* ── No Contact Request bypass banner ────────────────────── */}
       {hasNoContactRequest && isGatedStage && !isSalesRep && (
         <div className="flex items-center gap-2 rounded-xl px-4 py-3" style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>
           <span style={{ fontSize: 14 }}>⛔</span>
@@ -274,24 +272,20 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
         </div>
       )}
 
-      {/* ── Contact Gate Step Counter ────────────────────────────── */}
       {contactGateActive && !isSalesRep && (
         <div className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ backgroundColor: 'rgba(34,211,238,0.08)', border: '1px solid rgba(34,211,238,0.25)' }}>
           <div className="flex items-center gap-1.5">
             {Array.from({ length: REQUIRED_CONTACT_ATTEMPTS }).map((_, i) => (
-              <div
-                key={i}
-                style={{
-                  width: 8, height: 8, borderRadius: '50%',
-                  backgroundColor: i < callAttemptCount ? '#22d3ee' : 'rgba(100,116,139,0.3)',
-                  transition: 'background-color 0.2s',
-                }}
-              />
+              <div key={i} style={{
+                width: 8, height: 8, borderRadius: '50%',
+                backgroundColor: i < callAttemptCount ? '#22d3ee' : 'rgba(100,116,139,0.3)',
+                transition: 'background-color 0.2s',
+              }} />
             ))}
           </div>
           <div>
             <span className="text-xs font-bold" style={{ color: '#22d3ee' }}>
-              📞 STEP {Math.min(callAttemptCount + 1, REQUIRED_CONTACT_ATTEMPTS)} OF {REQUIRED_CONTACT_ATTEMPTS}
+              STEP {Math.min(callAttemptCount + 1, REQUIRED_CONTACT_ATTEMPTS)} OF {REQUIRED_CONTACT_ATTEMPTS}
             </span>
             <span className="text-xs ml-2" style={{ color: '#94a3b8' }}>
               {attemptsRemaining} more call{attemptsRemaining !== 1 ? 's' : ''} before Lost/DND unlocks
@@ -300,11 +294,10 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
         </div>
       )}
 
-      {/* Gate complete indicator */}
       {isGatedStage && !contactGateActive && !hasNoContactRequest && callAttemptCount > 0 && !isSalesRep && (
         <div className="flex items-center gap-2 rounded-lg px-3 py-1.5" style={{ backgroundColor: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)' }}>
           <span className="text-xs font-semibold" style={{ color: '#4ade80' }}>
-            ✓ {callAttemptCount} call{callAttemptCount !== 1 ? 's' : ''} logged — all actions unlocked
+            {callAttemptCount} call{callAttemptCount !== 1 ? 's' : ''} logged — all actions unlocked
           </span>
         </div>
       )}
@@ -341,7 +334,11 @@ export function StageActionBar({ lead, onLeadUpdated, onCreateQuote, qualifyingC
       )}
 
       {activeModal === 'lost' && (
-        <LostReasonModal onSubmit={handleLost} onCancel={() => setActiveModal(null)} isPending={pendingAction === 'lost'} />
+        <LostReasonModal
+          onSubmit={handleLost}
+          onCancel={() => setActiveModal(null)}
+          isPending={pendingAction === 'lost'}
+        />
       )}
       {activeModal === 'followup' && (
         <FollowUpModal onSubmit={handleFollowUp} onCancel={() => setActiveModal(null)} isPending={pendingAction === 'followup'} />
