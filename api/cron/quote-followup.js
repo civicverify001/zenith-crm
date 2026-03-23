@@ -479,6 +479,185 @@ module.exports = async function handler(req, res) {
       console.log('[quote-followup] install_complete_review_email disabled — skipping')
     }
 
+    // ══════════════════════════════════════════════════════════
+    // SECTION 4 — 30-DAY REFERRAL SMS
+    // Jobs completed 29–31 days ago, referral_sms_sent_at IS NULL
+    // ══════════════════════════════════════════════════════════
+
+    if (settings['referral_30day_sms']?.enabled !== false) {
+      const day29 = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1000).toISOString()
+      const day31 = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000).toISOString()
+
+      const { data: referralJobs, error: rjErr } = await supabase
+        .from('jobs')
+        .select('id, lead_id, customer_name_snapshot, phone_snapshot, email_snapshot')
+        .eq('status', 'complete')
+        .gte('completed_at', day29)
+        .lte('completed_at', day31)
+        .is('referral_sms_sent_at', null)
+
+      if (rjErr) {
+        console.error('[quote-followup] Section 4 query error:', rjErr.message)
+      } else {
+        console.log(`[quote-followup] Section 4: ${referralJobs?.length || 0} referral SMS due`)
+
+        for (const rjob of (referralJobs || [])) {
+          try {
+            let phone = rjob.phone_snapshot || null
+            let customerName = rjob.customer_name_snapshot || 'there'
+            let isDnd = false
+
+            // DND check via lead
+            if (rjob.lead_id) {
+              const { data: lead } = await supabase
+                .from('leads').select('stage, full_name').eq('id', rjob.lead_id).single()
+              if (lead?.stage === 'dnd') isDnd = true
+              if (lead?.full_name) customerName = lead.full_name
+            }
+
+            if (isDnd) {
+              await supabase.from('jobs').update({ referral_sms_sent_at: now.toISOString() }).eq('id', rjob.id)
+              continue
+            }
+
+            if (!phone) {
+              // Try customer record
+              if (rjob.lead_id) {
+                const { data: cust } = await supabase
+                  .from('customers').select('phone, full_name').eq('lead_id', rjob.lead_id).single()
+                if (cust?.phone) phone = cust.phone
+                if (cust?.full_name) customerName = cust.full_name
+              }
+            }
+
+            if (!phone) {
+              await supabase.from('jobs').update({ referral_sms_sent_at: now.toISOString() }).eq('id', rjob.id)
+              continue
+            }
+
+            const firstName = customerName.split(' ')[0]
+
+            // Call trigger endpoint (fire-and-forget)
+            const triggerRes = await fetch(`${APP_URL}/api/automations/trigger`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                key: 'referral_30day_sms',
+                to: phone,
+                entity_type: 'lead',
+                entity_id: rjob.lead_id,
+                variables: { name: firstName },
+              }),
+            })
+
+            const triggerData = await triggerRes.json()
+            if (triggerData.sent || triggerData.skipped) {
+              await supabase.from('jobs').update({ referral_sms_sent_at: now.toISOString() }).eq('id', rjob.id)
+              if (triggerData.sent) {
+                results.day2_sent++ // reuse counter for summary
+                console.log(`[quote-followup] S4 referral SMS sent: ${customerName}`)
+              }
+            }
+          } catch (err) {
+            console.error('[quote-followup] S4 error:', err.message)
+            results.errors.push({ section: 'referral', job_id: rjob.id, reason: err.message })
+          }
+        }
+      }
+    } else {
+      console.log('[quote-followup] referral_30day_sms disabled — skipping')
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // SECTION 4 — 30-DAY REFERRAL SMS
+    // Jobs completed 29–31 days ago, referral_sms_sent_at IS NULL
+    // ══════════════════════════════════════════════════════════
+
+    if (settings['referral_30day_sms']?.enabled !== false) {
+      const day29ago = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1000).toISOString()
+      const day31ago = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000).toISOString()
+
+      const { data: referralJobs, error: rjErr } = await supabase
+        .from('jobs')
+        .select('id, lead_id, customer_name_snapshot, phone_snapshot, email_snapshot, completed_at')
+        .eq('status', 'complete')
+        .gte('completed_at', day29ago)
+        .lte('completed_at', day31ago)
+        .is('referral_sms_sent_at', null)
+
+      if (rjErr) {
+        console.error('[quote-followup] Section 4 query error:', rjErr.message)
+        results.errors.push({ section: 'referral_query', reason: rjErr.message })
+      } else {
+        console.log(`[quote-followup] Section 4: ${referralJobs?.length || 0} referral SMS due`)
+
+        for (const job of (referralJobs || [])) {
+          try {
+            // Get phone — prefer customer record
+            let phone = job.phone_snapshot || null
+            let customerId = null
+            let leadStage = null
+
+            if (job.lead_id) {
+              const { data: lead } = await supabase
+                .from('leads').select('stage, customer_id').eq('id', job.lead_id).single()
+              leadStage = lead?.stage
+              if (lead?.customer_id) {
+                const { data: cust } = await supabase
+                  .from('customers').select('id, phone').eq('id', lead.customer_id).single()
+                if (cust) { customerId = cust.id; phone = cust.phone || phone }
+              }
+            }
+
+            // Mark sent regardless (avoid infinite retry on no-phone)
+            if (!phone) {
+              await supabase.from('jobs').update({ referral_sms_sent_at: now.toISOString() }).eq('id', job.id)
+              results.day2_skipped++
+              continue
+            }
+
+            // DND check
+            if (leadStage === 'dnd') {
+              await supabase.from('jobs').update({ referral_sms_sent_at: now.toISOString() }).eq('id', job.id)
+              results.day2_skipped++
+              continue
+            }
+
+            const firstName = (job.customer_name_snapshot || 'there').split(' ')[0]
+
+            const sendRes = await fetch(`${APP_URL}/api/automations/trigger`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                key: 'referral_30day_sms',
+                to: phone,
+                entity_type: customerId ? 'customer' : 'lead',
+                entity_id: customerId || job.lead_id,
+                variables: { name: firstName },
+              }),
+            })
+
+            const sendData = await sendRes.json()
+            await supabase.from('jobs').update({ referral_sms_sent_at: now.toISOString() }).eq('id', job.id)
+
+            if (sendData.sent) {
+              results.day2_sent++
+              console.log(`[quote-followup] S4 referral SMS sent: ${job.customer_name_snapshot}`)
+            } else {
+              results.day2_skipped++
+            }
+          } catch (err) {
+            console.error('[quote-followup] S4 error:', err.message)
+            results.errors.push({ section: 'referral', job_id: job.id, reason: err.message })
+            // Mark to avoid retry loop
+            await supabase.from('jobs').update({ referral_sms_sent_at: now.toISOString() }).eq('id', job.id).then(() => {}).catch(() => {})
+          }
+        }
+      }
+    } else {
+      console.log('[quote-followup] referral_30day_sms disabled — skipping')
+    }
+
     // ── Summary log ──────────────────────────────────────────
     const total = results.day2_sent + results.day10_sent
     if (total > 0) {
