@@ -961,6 +961,13 @@ const PRODUCT_CATEGORIES = [
   { value: 'combo_whole_home_ro', label: 'Combo (Whole Home + RO)' },
 ]
 
+interface PlanItem {
+  id: string
+  product_id: string
+  quantity: number
+  cycle_year: number | null
+}
+
 function ServicePlansTemplateTab() {
   const [templates, setTemplates] = useState<ServicePlanTemplate[]>([])
   const [loading, setLoading] = useState(true)
