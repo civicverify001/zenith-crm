@@ -539,6 +539,7 @@ function PipelineSection({ range }: { range: DateRange }) {
   const { data: snapshot = [], isLoading: sl } = useQuery({ queryKey: ['reports', 'pipeline_snapshot'], queryFn: () => rs.getPipelineSnapshot() })
   const { data: outcomes, isLoading: ol } = useQuery({ queryKey: ['reports', 'pipeline_outcomes', range.start, range.end], queryFn: () => rs.getPipelineOutcomes(range) })
   const { data: leads = [], isLoading: ll } = useQuery({ queryKey: ['reports', 'leads_drilldown'], queryFn: () => rs.getLeadsDrilldown(100) })
+  const { data: lostReasons = [], isLoading: lrl } = useQuery({ queryKey: ['reports', 'lost_reasons'], queryFn: () => rs.getLostReasonBreakdown() })
   const o = outcomes || { won: 0, lost: 0, dnd: 0, parked: 0 }
   const stageOrder = ['new_lead','qualifying','qualified','site_visit_scheduled','proposal_in_progress','quote_sent','agreement_signed']
   const sortedSnapshot = stageOrder.map(s => (snapshot as any[]).find((r: any) => r.stage === s) || { stage: s, lead_count: 0 })
@@ -560,6 +561,34 @@ function PipelineSection({ range }: { range: DateRange }) {
           <KPICard label="Parked" value={ol ? '…' : String(o.parked)} icon="⏸️" accent="#94a3b8" sub="Future follow-up" />
         </div>
       </div>
+
+      {/* Lost Reasons Breakdown — only shown when data exists */}
+      {!lrl && lostReasons.length > 0 && (
+        <ChartCard title="Lost Reasons Breakdown" tooltip="Based on lost_reason_code set when marking a lead as Lost.">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {lostReasons.map((r, i) => {
+              const max = lostReasons[0].count
+              const barW = max > 0 ? Math.round((r.count / max) * 100) : 0
+              const color = i === 0 ? '#f87171' : i === 1 ? '#fb923c' : i === 2 ? '#fbbf24' : '#94a3b8'
+              return (
+                <div key={r.code}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                    <span style={{ fontSize: 12, color: '#94a3b8', fontWeight: 600 }}>{r.label}</span>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color }}>{r.count}</span>
+                      <span style={{ fontSize: 10, color: '#475569', minWidth: 32, textAlign: 'right' }}>{r.pct}%</span>
+                    </div>
+                  </div>
+                  <div style={{ height: 10, background: '#0d1a26', borderRadius: 20, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${barW}%`, background: `linear-gradient(90deg, ${color}80, ${color})`, borderRadius: 20, transition: 'width 0.4s ease' }} />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </ChartCard>
+      )}
+
       {ll ? <LoadingState small /> : (
         <DrilldownTable
           columns={[
