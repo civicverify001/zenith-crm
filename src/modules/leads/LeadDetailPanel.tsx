@@ -74,6 +74,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   const [visitInfo, setVisitInfo] = useState<{ rep_name: string; date: string; hour: number } | null>(null)
   const [siteVisitComplete, setSiteVisitComplete] = useState(false)
   const [visitConfirmed, setVisitConfirmed] = useState(false)
+
   // Water test state
   const [waterTests, setWaterTests] = useState<WaterTest[]>([])
   const [showWaterTestForm, setShowWaterTestForm] = useState(false)
@@ -460,31 +461,17 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                   <QualifyingChecklist lead={lead} onLeadUpdated={handleLeadUpdated} onCompletionChange={setQualifyingComplete} />
                 )}
 
-                {lead.stage === 'site_visit_scheduled' && (
-                  <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14, overflow: 'hidden' }}>
-                    <div style={{ padding: '10px 14px', borderBottom: '1px solid #1e3a4f', display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 13 }}>📋</span>
-                      <span style={{ color: '#94a3b8', fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Qualifying Notes (from office)</span>
-                    </div>
-                    <div style={{ padding: '10px 14px' }}>
-                      <QualifyingChecklist lead={lead} onLeadUpdated={handleLeadUpdated} onCompletionChange={setQualifyingComplete} readOnly />
-                    </div>
-                  </div>
-                )}
-
-                {/* Site Visit Info */}
+                {/* Site Visit Info — shown FIRST so confirmed badge is immediately visible */}
                 {visitInfo && ['site_visit_scheduled', 'proposal_in_progress', 'quote_sent', 'agreement_signed'].includes(lead.stage) && (
                   <div className="rounded-xl p-4" style={{ backgroundColor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#60a5fa' }}>
-                          📅 Site Visit {lead.stage === 'site_visit_scheduled' ? 'Scheduled' : 'Completed'}
-                        </div>
-                        {visitConfirmed
-                          ? <span style={{ fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, background: 'rgba(74,222,128,0.2)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.4)', boxShadow: '0 0 8px rgba(74,222,128,0.2)' }}>✓ Confirmed</span>
-                          : <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'rgba(100,116,139,0.15)', color: '#64748b', border: '1px solid rgba(100,116,139,0.2)' }}>Awaiting</span>
-                        }
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#60a5fa' }}>
+                        📅 Site Visit {lead.stage === 'site_visit_scheduled' ? 'Scheduled' : 'Completed'}
                       </div>
+                      {visitConfirmed
+                        ? <span style={{ fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, background: 'rgba(74,222,128,0.2)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.4)', boxShadow: '0 0 8px rgba(74,222,128,0.2)' }}>✓ Confirmed</span>
+                        : <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'rgba(100,116,139,0.15)', color: '#64748b', border: '1px solid rgba(100,116,139,0.2)' }}>Awaiting</span>
+                      }
                     </div>
                     <div className="space-y-1">
                       <div className="text-sm text-white">
@@ -494,6 +481,19 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                         {' · '}
                         {({9:'9:00 AM',10:'10:00 AM',11:'11:00 AM',12:'12:00 PM',13:'1:00 PM',14:'2:00 PM',15:'3:00 PM',16:'4:00 PM'} as Record<number,string>)[visitInfo.hour]}
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Qualifying Notes (read-only for rep at site visit stage) */}
+                {lead.stage === 'site_visit_scheduled' && (
+                  <div style={{ background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14, overflow: 'hidden' }}>
+                    <div style={{ padding: '10px 14px', borderBottom: '1px solid #1e3a4f', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 13 }}>📋</span>
+                      <span style={{ color: '#94a3b8', fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Qualifying Notes (from office)</span>
+                    </div>
+                    <div style={{ padding: '10px 14px' }}>
+                      <QualifyingChecklist lead={lead} onLeadUpdated={handleLeadUpdated} onCompletionChange={setQualifyingComplete} readOnly />
                     </div>
                   </div>
                 )}
