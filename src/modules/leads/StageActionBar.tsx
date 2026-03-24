@@ -69,6 +69,7 @@ const STAGE_ACTIONS: Partial<Record<LeadStage, ActionDef[]>> = {
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
   ],
   quote_sent: [
+    { label: '📄 Build Another Quote', action: 'create_quote', variant: 'primary' },
     { label: 'Mark Signed (Manual)', action: 'agreement', variant: 'success', modal: 'agreement', adminOnly: true },
     { label: 'Lost', action: 'lost', variant: 'danger', modal: 'lost', adminOnly: true, contactGated: true },
     { label: 'Follow-Up', action: 'followup', variant: 'secondary', modal: 'followup' },
