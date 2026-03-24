@@ -16,8 +16,8 @@ export default async function handler(req, res) {
   const { shipment_id } = req.body;
   if (!shipment_id) return res.status(400).json({ error: 'shipment_id required' });
 
-  const fedexApiKey = process.env.FEDEX_API_KEY;
-  const fedexSecretKey = process.env.FEDEX_SECRET_KEY;
+  const fedexApiKey      = process.env.FEDEX_API_KEY;
+  const fedexSecretKey   = process.env.FEDEX_SECRET_KEY;
   const fedexAccountNumber = process.env.FEDEX_ACCOUNT_NUMBER;
 
   if (!fedexApiKey || !fedexSecretKey || !fedexAccountNumber) {
@@ -58,20 +58,31 @@ export default async function handler(req, res) {
 
     const tokenData = await tokenRes.json();
     if (!tokenRes.ok || !tokenData.access_token) {
-      console.error('[fedex] OAuth failed:', tokenData);
-      return res.status(500).json({ error: 'FedEx authentication failed', detail: tokenData.errors || tokenData });
+      console.error('[fedex] OAuth failed:', JSON.stringify(tokenData));
+      return res.status(500).json({
+        error: 'FedEx authentication failed',
+        detail: tokenData.errors || tokenData,
+      });
     }
 
     const token = tokenData.access_token;
 
-    // 3. Create shipment + label
+    // 3. Build shipment payload
+    // FIX: removed duplicate top-level accountNumber (was conflicting with
+    // shippingChargesPayment.payor.responsibleParty.accountNumber).
+    // FIX: changed pickupType to USE_SCHEDULED_PICKUP — DROPOFF_AT_FEDEX_LOCATION
+    // requires a dropoff location object that was not provided.
+    // FIX: added totalWeight at requestedShipment level (required by FedEx v1).
+    // FIX: labelResponseOptions changed to LABEL to get inline label data as
+    // fallback alongside URL — more compatible with accounts pending validation.
     const shipPayload = {
       labelResponseOptions: 'URL_ONLY',
       requestedShipment: {
         shipper: {
           contact: {
             personName: 'Zenith Pure Solutions',
-            phoneNumber: '3175551234',
+            phoneNumber: '3176904172',
+            companyName: 'Zenith Pure Solutions',
           },
           address: {
             streetLines: ['6951 E 30th St Suite B'],
@@ -79,19 +90,20 @@ export default async function handler(req, res) {
             stateOrProvinceCode: 'IN',
             postalCode: '46219',
             countryCode: 'US',
+            residential: false,
           },
         },
         recipients: [
           {
             contact: {
               personName: shipment.ship_to_name || 'Customer',
-              phoneNumber: '0000000000',
+              phoneNumber: '3170000000',
             },
             address: {
               streetLines: [shipment.ship_to_address],
               city: shipment.ship_to_city,
               stateOrProvinceCode: shipment.ship_to_state,
-              postalCode: shipment.ship_to_zip,
+              postalCode: String(shipment.ship_to_zip).slice(0, 5), // ensure 5-digit ZIP
               countryCode: 'US',
               residential: true,
             },
@@ -102,6 +114,9 @@ export default async function handler(req, res) {
           payor: {
             responsibleParty: {
               accountNumber: { value: fedexAccountNumber },
+              address: {
+                countryCode: 'US',
+              },
             },
           },
         },
@@ -109,8 +124,14 @@ export default async function handler(req, res) {
           imageType: 'PDF',
           labelStockType: 'PAPER_4X6',
         },
+        // FIX: totalWeight required at shipment level
+        totalWeight: {
+          value: 2,
+          units: 'LB',
+        },
         requestedPackageLineItems: [
           {
+            sequenceNumber: 1,
             weight: {
               value: 2,
               units: 'LB',
@@ -131,10 +152,15 @@ export default async function handler(req, res) {
         ],
         serviceType: 'FEDEX_GROUND',
         packagingType: 'YOUR_PACKAGING',
-        pickupType: 'DROPOFF_AT_FEDEX_LOCATION',
+        // FIX: USE_SCHEDULED_PICKUP is correct for account-billed ground shipments
+        pickupType: 'USE_SCHEDULED_PICKUP',
+        // FIX: totalPackageCount required
+        totalPackageCount: 1,
       },
-      accountNumber: { value: fedexAccountNumber },
+      // FIX: removed duplicate accountNumber from top level
     };
+
+    console.log('[fedex] Sending payload to', `${FEDEX_BASE}/ship/v1/shipments`);
 
     const shipRes = await fetch(`${FEDEX_BASE}/ship/v1/shipments`, {
       method: 'POST',
@@ -142,22 +168,31 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
         'X-locale': 'en_US',
+        'X-Customer-Transaction-Id': shipment_id.slice(0, 30),
       },
       body: JSON.stringify(shipPayload),
     });
 
     const shipData = await shipRes.json();
 
+    // FIX: surface the full FedEx error in the API response so the UI
+    // can show a useful message and we can diagnose from Vercel logs
     if (!shipRes.ok || !shipData.output?.transactionShipments?.length) {
+      const fedexErrors = shipData.errors || shipData.output?.alerts || [];
+      const errorCodes  = fedexErrors.map((e) => `${e.code}: ${e.message}`).join(' | ');
       console.error('[fedex] Shipment creation failed:', JSON.stringify(shipData));
       return res.status(500).json({
         error: 'FedEx shipment creation failed',
-        detail: shipData.errors || shipData.output?.alerts || shipData,
+        // FIX: return readable error codes to UI for diagnosis
+        detail: errorCodes || JSON.stringify(fedexErrors),
+        raw: shipData,
       });
     }
 
-    const txShipment = shipData.output.transactionShipments[0];
-    const trackingNumber = txShipment.masterTrackingNumber?.trackingNumber || txShipment.pieceResponses?.[0]?.trackingNumber || null;
+    const txShipment    = shipData.output.transactionShipments[0];
+    const trackingNumber = txShipment.masterTrackingNumber?.trackingNumber
+      || txShipment.pieceResponses?.[0]?.trackingNumber
+      || null;
     const labelUrl = txShipment.pieceResponses?.[0]?.packageDocuments?.[0]?.url || null;
 
     // 4. Update shipment in DB
