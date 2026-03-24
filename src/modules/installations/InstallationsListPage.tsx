@@ -1,63 +1,66 @@
-import { useState } from 'react'
 import { useJobsBoard } from '../dispatch/useJobs'
 import { useAuth } from '../../hooks/useAuth'
 import { useNavigate } from 'react-router-dom'
-import type { Job, JobStatus } from '../dispatch/dispatch.types'
-import { JOB_STATUS_LABELS, JOB_STATUS_COLORS, SYSTEM_TYPE_LABELS } from '../dispatch/dispatch.types'
+import type { Job } from '../dispatch/dispatch.types'
+import { SYSTEM_TYPE_LABELS } from '../dispatch/dispatch.types'
 
-const TAB_STYLES: Record<string, { active: React.CSSProperties; inactive: React.CSSProperties }> = {
-  all: {
-    active: { backgroundColor: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.4)' },
-    inactive: { backgroundColor: 'transparent', color: '#94a3b8', border: '1px solid rgba(148, 163, 184, 0.2)' },
+// Column definitions — order matches dispatch board
+const COLUMNS = [
+  {
+    key: 'ready_to_schedule',
+    label: 'Ready to Schedule',
+    color: '#a78bfa',
+    bg: 'rgba(167,139,250,0.08)',
+    border: 'rgba(167,139,250,0.3)',
   },
-  scheduled: {
-    active: { backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.4)' },
-    inactive: { backgroundColor: 'transparent', color: '#94a3b8', border: '1px solid rgba(148, 163, 184, 0.2)' },
+  {
+    key: 'scheduled',
+    label: 'Scheduled',
+    color: '#60a5fa',
+    bg: 'rgba(96,165,250,0.08)',
+    border: 'rgba(96,165,250,0.3)',
   },
-  in_progress: {
-    active: { backgroundColor: 'rgba(6, 182, 212, 0.15)', color: '#22d3ee', border: '1px solid rgba(6, 182, 212, 0.4)' },
-    inactive: { backgroundColor: 'transparent', color: '#94a3b8', border: '1px solid rgba(148, 163, 184, 0.2)' },
+  {
+    key: 'in_progress',
+    label: 'In Progress',
+    color: '#22d3ee',
+    bg: 'rgba(34,211,238,0.08)',
+    border: 'rgba(34,211,238,0.3)',
   },
-  waiting_for_stock: {
-    active: { backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.4)' },
-    inactive: { backgroundColor: 'transparent', color: '#94a3b8', border: '1px solid rgba(148, 163, 184, 0.2)' },
+  {
+    key: 'waiting_for_stock',
+    label: 'Waiting for Stock',
+    color: '#fbbf24',
+    bg: 'rgba(251,191,36,0.08)',
+    border: 'rgba(251,191,36,0.3)',
   },
-  complete: {
-    active: { backgroundColor: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', border: '1px solid rgba(34, 197, 94, 0.4)' },
-    inactive: { backgroundColor: 'transparent', color: '#94a3b8', border: '1px solid rgba(148, 163, 184, 0.2)' },
+  {
+    key: 'complete',
+    label: 'Completed',
+    color: '#4ade80',
+    bg: 'rgba(74,222,128,0.08)',
+    border: 'rgba(74,222,128,0.3)',
   },
-}
-
-type FilterKey = 'all' | 'scheduled' | 'in_progress' | 'waiting_for_stock' | 'complete'
-
-const FILTER_TABS: { key: FilterKey; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'scheduled', label: 'Scheduled' },
-  { key: 'in_progress', label: 'In Progress' },
-  { key: 'waiting_for_stock', label: 'Waiting for Stock' },
-  { key: 'complete', label: 'Completed' },
 ]
-
-// Status left-border color for compact cards
-const STATUS_BORDER: Record<string, string> = {
-  in_progress:      '#22d3ee',
-  scheduled:        '#60a5fa',
-  waiting_for_stock:'#fbbf24',
-  ready_to_schedule:'#a78bfa',
-  complete:         '#4ade80',
-}
 
 export function InstallationsListPage() {
   const { user, role } = useAuth()
   const navigate = useNavigate()
   const { data: jobsByStatus, isLoading, error } = useJobsBoard()
-  const [filter, setFilter] = useState<FilterKey>('all')
 
   if (isLoading) {
-    return <div className="flex items-center justify-center h-full"><div className="text-muted text-sm">Loading jobs...</div></div>
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-muted text-sm">Loading jobs...</div>
+      </div>
+    )
   }
   if (error) {
-    return <div className="flex items-center justify-center h-full"><div className="text-red text-sm">Failed to load jobs.</div></div>
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div style={{ color: '#f87171' }} className="text-sm">Failed to load jobs.</div>
+      </div>
+    )
   }
 
   const allJobs = Object.values(jobsByStatus || {}).flat()
@@ -66,114 +69,118 @@ export function InstallationsListPage() {
     ? allJobs
     : allJobs.filter(j => j.assigned_technician_id === user?.id)
 
-  const statusCounts: Record<string, number> = { all: visibleJobs.length }
-  for (const j of visibleJobs) {
-    statusCounts[j.status] = (statusCounts[j.status] || 0) + 1
+  const totalActive = visibleJobs.filter(j => j.status !== 'complete').length
+  const totalCompleted = visibleJobs.filter(j => j.status === 'complete').length
+
+  // Group jobs by status
+  const jobsByCol: Record<string, Job[]> = {}
+  for (const col of COLUMNS) {
+    jobsByCol[col.key] = visibleJobs
+      .filter(j => j.status === col.key)
+      .sort((a, b) => {
+        if (a.scheduled_date && b.scheduled_date) return a.scheduled_date.localeCompare(b.scheduled_date)
+        return a.scheduled_date ? -1 : 1
+      })
   }
 
-  const displayJobs = visibleJobs
-    .filter(j => filter === 'all' ? true : j.status === filter)
-    .sort((a, b) => {
-      const order: Record<string, number> = { in_progress: 0, scheduled: 1, waiting_for_stock: 2, complete: 3 }
-      const diff = (order[a.status] ?? 4) - (order[b.status] ?? 4)
-      if (diff !== 0) return diff
-      if (a.status === 'complete') return (b.completed_at || '').localeCompare(a.completed_at || '')
-      if (a.scheduled_date && b.scheduled_date) return a.scheduled_date.localeCompare(b.scheduled_date)
-      return a.scheduled_date ? -1 : 1
-    })
-
-  const activeCount = visibleJobs.filter(j => j.status !== 'complete').length
-  const completedCount = statusCounts['complete'] || 0
-
   return (
-    <div className="flex flex-col h-full">
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 flex-shrink-0">
-        <div>
-          <h1 className="text-xl font-bold text-white">
-            {role === 'technician' ? 'My Installations' : 'All Installations'}
-          </h1>
-          <p className="text-sm text-muted mt-0.5">
-            {activeCount} active job{activeCount !== 1 ? 's' : ''}
-            {completedCount > 0 && ` · ${completedCount} completed`}
-          </p>
-        </div>
+      <div style={{ marginBottom: '16px', flexShrink: 0 }}>
+        <h1 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: '20px' }}>
+          {role === 'technician' ? 'My Installations' : 'All Installations'}
+        </h1>
+        <p style={{ color: '#64748b', fontSize: '13px', marginTop: '2px' }}>
+          {totalActive} active job{totalActive !== 1 ? 's' : ''}
+          {totalCompleted > 0 && ` · ${totalCompleted} completed`}
+        </p>
       </div>
 
-      {/* Filter tabs */}
-      <div className="mb-4 flex-shrink-0" style={{ display: 'grid', gridTemplateColumns: `repeat(${FILTER_TABS.length}, 1fr)`, gap: '8px' }}>
-        {FILTER_TABS.map(tab => {
-          const count = statusCounts[tab.key] || 0
-          const isActive = filter === tab.key
-          const styles = TAB_STYLES[tab.key] || TAB_STYLES.all
+      {/* Kanban columns — horizontal scroll if needed */}
+      <div
+        style={{
+          display: 'flex',
+          gap: '12px',
+          flex: 1,
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          paddingBottom: '8px',
+        }}
+      >
+        {COLUMNS.map(col => {
+          const jobs = jobsByCol[col.key] || []
           return (
-            <button
-              key={tab.key}
-              onClick={() => setFilter(tab.key)}
+            <div
+              key={col.key}
               style={{
-                ...(isActive ? styles.active : styles.inactive),
-                padding: '10px 8px',
+                minWidth: '220px',
+                flex: '1 1 220px',
+                display: 'flex',
+                flexDirection: 'column',
+                background: col.bg,
+                border: `1px solid ${col.border}`,
                 borderRadius: '12px',
-                fontSize: '13px',
-                fontWeight: 600,
-                textAlign: 'center',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
+                overflow: 'hidden',
               }}
             >
-              {tab.label}
-              <span style={{ marginLeft: '6px', fontSize: '11px', fontWeight: 700, opacity: 0.8 }}>
-                {count}
-              </span>
-            </button>
+              {/* Column header */}
+              <div style={{
+                padding: '10px 14px',
+                borderBottom: `1px solid ${col.border}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexShrink: 0,
+              }}>
+                <span style={{ color: col.color, fontWeight: 700, fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  {col.label}
+                </span>
+                <span style={{
+                  background: col.bg,
+                  border: `1px solid ${col.border}`,
+                  color: col.color,
+                  borderRadius: '20px',
+                  padding: '1px 8px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                }}>
+                  {jobs.length}
+                </span>
+              </div>
+
+              {/* Cards */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
+                {jobs.length === 0 ? (
+                  <div style={{ color: '#334155', fontSize: '12px', textAlign: 'center', padding: '20px 8px' }}>
+                    No jobs
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {jobs.map(job => (
+                      <JobCard
+                        key={job.id}
+                        job={job}
+                        accentColor={col.color}
+                        onClick={() => navigate(`/installations/${job.id}`)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           )
         })}
       </div>
-
-      {/* Job grid — compact cards like dispatch board */}
-      {displayJobs.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <div className="text-4xl mb-3">{filter === 'complete' ? '✅' : '🔧'}</div>
-            <div className="text-slate-300 font-medium">
-              No {filter === 'all' ? '' : FILTER_TABS.find(t => t.key === filter)?.label.toLowerCase() + ' '}jobs
-            </div>
-            <div className="text-sm text-muted mt-1">
-              {role === 'technician' && 'Check back soon or contact admin.'}
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div
-          className="flex-1 overflow-y-auto pb-4"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-            gap: '12px',
-            alignContent: 'start',
-          }}
-        >
-          {displayJobs.map(job => (
-            <JobCompactCard
-              key={job.id}
-              job={job}
-              onClick={() => navigate(`/installations/${job.id}`)}
-            />
-          ))}
-        </div>
-      )}
     </div>
   )
 }
 
-function JobCompactCard({ job, onClick }: { job: Job; onClick: () => void }) {
+function JobCard({ job, accentColor, onClick }: { job: Job; accentColor: string; onClick: () => void }) {
   const scheduledStr = job.scheduled_date
     ? new Date(job.scheduled_date + 'T00:00:00').toLocaleDateString('en-US', {
         weekday: 'short', month: 'short', day: 'numeric',
       })
     : 'Not scheduled'
-
-  const accentColor = STATUS_BORDER[job.status] || '#475569'
 
   return (
     <div
@@ -182,10 +189,10 @@ function JobCompactCard({ job, onClick }: { job: Job; onClick: () => void }) {
         background: '#162232',
         border: '1px solid #1e3a4f',
         borderLeft: `3px solid ${accentColor}`,
-        borderRadius: '10px',
-        padding: '12px',
+        borderRadius: '8px',
+        padding: '10px 12px',
         cursor: 'pointer',
-        transition: 'border-color 0.15s, background 0.15s',
+        transition: 'background 0.15s',
       }}
       onMouseEnter={e => (e.currentTarget.style.background = '#1a2d45')}
       onMouseLeave={e => (e.currentTarget.style.background = '#162232')}
@@ -202,37 +209,27 @@ function JobCompactCard({ job, onClick }: { job: Job; onClick: () => void }) {
         </div>
       )}
 
-      {/* Address */}
-      {job.service_address_snapshot && (
-        <div style={{ color: '#64748b', fontSize: '11px', marginBottom: '8px', lineHeight: 1.4 }}>
-          {job.service_address_snapshot}
-        </div>
-      )}
-
-      {/* System type badge + date */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+      {/* System type + date row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px', marginTop: '6px' }}>
         <span style={{
           background: 'rgba(100,116,139,0.15)',
-          border: '1px solid rgba(100,116,139,0.3)',
+          border: '1px solid rgba(100,116,139,0.25)',
           color: '#94a3b8',
-          borderRadius: '6px',
-          padding: '2px 8px',
-          fontSize: '11px',
+          borderRadius: '4px',
+          padding: '1px 6px',
+          fontSize: '10px',
           fontWeight: 600,
           whiteSpace: 'nowrap',
         }}>
           {SYSTEM_TYPE_LABELS[job.system_type] || job.system_type}
         </span>
-
-        <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#64748b', fontSize: '11px', whiteSpace: 'nowrap' }}>
-          <span style={{ fontSize: '10px' }}>📅</span>
-          {scheduledStr}
+        <span style={{ color: '#475569', fontSize: '10px', whiteSpace: 'nowrap' }}>
+          📅 {scheduledStr}
         </span>
       </div>
 
-      {/* In progress indicator */}
       {job.status === 'in_progress' && (
-        <div style={{ marginTop: '8px', fontSize: '11px', fontWeight: 600, color: '#22d3ee' }}>
+        <div style={{ marginTop: '6px', fontSize: '10px', fontWeight: 600, color: '#22d3ee' }}>
           → In progress — tap to continue
         </div>
       )}
