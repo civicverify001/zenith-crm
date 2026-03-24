@@ -929,54 +929,14 @@ export function QuoteReviewPage() {
       const terms: TermBlock[] = inv.terms_snapshot?.blocks || purchaseTerms
       const html = generateInvoiceHTML(inv, quote?.customer, terms, signatureImageUrl)
 
-      const iframe = document.createElement('iframe')
-      iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;height:3000px;border:none;visibility:hidden;'
-      document.body.appendChild(iframe)
-
-      await new Promise<void>((resolve) => {
-        iframe.onload = () => resolve()
-        iframe.srcdoc = html
-        setTimeout(resolve, 3000)
-      })
-
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
-      if (!iframeDoc) throw new Error('Could not access iframe document')
-
-      const noPrint = iframeDoc.querySelector('.no-print') as HTMLElement | null
-      if (noPrint) noPrint.style.display = 'none'
-
-      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-        import('html2canvas'),
-        import('jspdf'),
-      ])
-
-      const canvas = await html2canvas(iframeDoc.body, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        windowWidth: 900,
-      })
-
-      document.body.removeChild(iframe)
-
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-      const pageW = pdf.internal.pageSize.getWidth()
-      const pageH = pdf.internal.pageSize.getHeight()
-      const imgW  = pageW
-      const imgH  = (canvas.height * imgW) / canvas.width
-
-      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, imgW, imgH)
-
-      let heightLeft = imgH - pageH
-      let offset = -pageH
-      while (heightLeft > 0) {
-        pdf.addPage()
-        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, offset, imgW, imgH)
-        offset    -= pageH
-        heightLeft -= pageH
-      }
-
-      pdf.save(`${inv.invoice_number}.pdf`)
+      const blob = new Blob([html], { type: 'text/html' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.target = '_blank'
+      a.rel = 'noopener noreferrer'
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 10000)
 
     } catch (e: any) {
       setError(e.message || 'Could not generate PDF. Please try again.')
