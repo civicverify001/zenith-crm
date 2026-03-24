@@ -234,18 +234,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
 
     // ── SMS: Quote sent notification (fire-and-forget) ────────────
-    try {
-      if (customer.phone) {
-        const firstName  = (customer.full_name || 'there').split(' ')[0]
-        const publicToken = updates.public_token || quote.public_token || updates.accept_token || quote.accept_token
-        const quoteUrl   = `${APP_URL}/q/${publicToken}`
-        await sendSms(
-          customer.phone,
-          `Hi ${firstName}, your quote from Zenith Pure Solutions is ready! Review it here: ${quoteUrl}`,
-          quote.customer_id,
-        )
-      }
-    } catch (_) { /* fire-and-forget */ }
+try {
+  if (customer.phone) {
+    const firstName   = (customer.full_name || 'there').split(' ')[0]
+    const publicToken = updates.public_token || quote.public_token || updates.accept_token || quote.accept_token
+    const quoteUrl    = `${APP_URL}/q/${publicToken}`
+    fetch(`${APP_URL}/api/openphone/send-sms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: customer.phone,
+        body: `Hi ${firstName}, your quote from Zenith Pure Solutions is ready! Review it here: ${quoteUrl}`,
+        entity_type: 'customer',
+        entity_id: quote.customer_id,
+      }),
+    }).catch(() => {})
+  }
+} catch (_) { /* fire-and-forget */ }
 
     // ── GAP 14: Auto-create follow-up 2 days after quote sent ────
     try {
