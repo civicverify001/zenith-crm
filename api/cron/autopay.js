@@ -281,14 +281,22 @@ export default async function handler(req, res) {
           results.errors.push({ contract_id: contract.id, customer_name: customer.full_name, reason: stripeErr.message, stripe_code: stripeErr.code })
         }
 
-        await supabase.from('payment_transactions').insert({
-          customer_id: customer.id, contract_id: contract.id, payment_method_id: paymentMethod.id,
-          amount: contract.monthly_amount, status: chargeSucceeded ? 'succeeded' : 'failed',
-          type: 'autopay', external_id: paymentIntent?.id || null, description,
-          attempted_at: new Date().toISOString(),
-          completed_at: chargeSucceeded ? new Date().toISOString() : null,
-          failure_reason: chargeSucceeded ? null : (results.errors[results.errors.length - 1]?.reason || 'unknown'),
-        })
+        // Get contract_id for this customer so autopay guard works correctly
+          const { data: rentalContract } = await supabase
+            .from('contracts').select('id')
+            .eq('customer_id', customerId).eq('status', 'active').eq('type', 'rental')
+            .order('created_at', { ascending: false }).limit(1).maybeSingle();
+
+          await supabase.from('payment_transactions').insert({
+            customer_id: customerId, payment_method_id: paymentMethod.id,
+            contract_id: rentalContract?.id || null,
+            amount: monthlyAmount,
+            status: rentalPI.status === 'succeeded' ? 'succeeded' : 'pending',
+            type: 'autopay', external_id: rentalPI.id,
+            description: `First month rental (install day) — ${customer.full_name || 'Customer'}`,
+            attempted_at: new Date().toISOString(),
+            completed_at: rentalPI.status === 'succeeded' ? new Date().toISOString() : null,
+          });
 
         if (chargeSucceeded) {
           results.succeeded++
