@@ -855,17 +855,11 @@ export function QuoteReviewPage() {
         setDownloading(false)
         return
       }
-
       const terms: TermBlock[] = ag.terms_snapshot?.blocks || rentalTerms
-      const terms: TermBlock[] = ag.terms_snapshot?.blocks || rentalTerms
-      const sigImg = signatureImageUrl || ag.signature_data || undefined
+      const sigImg = signatureImageUrl || ag.customer_signature || undefined
       const html = generateAgreementHTML(ag, quote?.customer, terms, sigImg)
 
-      const terms: TermBlock[] = ag.terms_snapshot?.blocks || rentalTerms
-      const sigImg = signatureImageUrl || ag.signature_data || undefined
-      const html = generateAgreementHTML(ag, quote?.customer, terms, sigImg)
-      document.body.appendChild(iframe)
-
+      const iframe = document.createElement('iframe')
       await new Promise<void>((resolve) => {
         iframe.onload = () => resolve()
         iframe.srcdoc = html
