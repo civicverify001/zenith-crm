@@ -429,8 +429,13 @@ if (sessionMeta.invoice_type === 'buyout') {
         if (jobId) {
           const { data: jobForLead } = await supabase.from('jobs').select('lead_id').eq('id', jobId).single()
           if (jobForLead?.lead_id) {
-            await supabase.from('leads').update({ job_created: true }).eq('id', jobForLead.lead_id)
-              .then(() => {}).catch(() => {})
+            await supabase.from('leads').update({ 
+  job_created: true,
+  stage: 'agreement_signed',
+  stage_changed_at: now,
+  stage_entered_at: now,
+}).eq('id', jobForLead.lead_id)
+  .then(() => {}).catch(() => {})
           }
         }
 
