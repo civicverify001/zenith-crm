@@ -79,10 +79,11 @@ module.exports = async function handler(req, res) {
             .limit(1);
           if (products && products[0]?.category) {
             const cat = products[0].category;
-            if (cat === 'ro') systemType = 'ro_only';
+            if (cat === 'ro') systemType = 'ro_install';
             else if (cat === 'softener') systemType = 'softener_only';
-            else if (cat === 'whole_home_filter') systemType = 'whole_home_filter';
-            else if (cat === 'combo') systemType = 'softener_ro';
+            else if (cat === 'whole_home_filter') systemType = 'combo_whole_home_ro';
+            else if (cat === 'combo') systemType = 'combo_whole_home_ro';
+            else systemType = 'softener_only';
           }
         }
       }
