@@ -819,7 +819,7 @@ module.exports = async function handler(req, res) {
       try {
         const { data: existingRental } = await supabase
           .from('payment_transactions').select('id')
-          .eq('customer_id', customerId).eq('type', 'first_month_rental').eq('status', 'succeeded').maybeSingle();
+          .eq('customer_id', customerId).eq('type', 'autopay').eq('status', 'succeeded').maybeSingle();
 
         if (!existingRental) {
           const rentalPI = await stripe.paymentIntents.create({
@@ -835,21 +835,11 @@ module.exports = async function handler(req, res) {
             customer_id: customerId, payment_method_id: paymentMethod.id,
             amount: monthlyAmount,
             status: rentalPI.status === 'succeeded' ? 'succeeded' : 'pending',
-            type: 'first_month_rental', external_id: rentalPI.id,
+            type: 'autopay', external_id: rentalPI.id,
             description: `First month rental — ${customer.full_name || 'Customer'}`,
             attempted_at: new Date().toISOString(),
             completed_at: rentalPI.status === 'succeeded' ? new Date().toISOString() : null,
           });
-
-          // Advance next_billing_date by 1 month so autopay doesn't double-charge
-          if (rentalPI.status === 'succeeded') {
-            const nextMonth = new Date();
-            nextMonth.setMonth(nextMonth.getMonth() + 1);
-            const nextBillingDate = nextMonth.toISOString().split('T')[0];
-            await supabase.from('contracts')
-              .update({ next_billing_date: nextBillingDate })
-              .eq('customer_id', customerId).eq('status', 'active').eq('type', 'rental');
-          }
 
           rentalChargeResult = {
             status: rentalPI.status === 'succeeded' ? 'charged' : 'pending',
