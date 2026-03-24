@@ -38,14 +38,15 @@ module.exports = async function handler(req, res) {
         .limit(1)
         .maybeSingle();
 
-      if (quote) {
+      if (quoteData) {
         // Get product line items from the quote
         const { data: lineItems } = await supabase
           .from('document_line_items')
           .select('product_id, description')
-          .eq('document_id', quote.id)
+          .eq('document_id', quoteData.id)
           .eq('item_type', 'product')
           .not('product_id', 'is', null);
+        quote = quoteData
 
         if (lineItems && lineItems.length > 0) {
           const productIds = lineItems.map(li => li.product_id);
