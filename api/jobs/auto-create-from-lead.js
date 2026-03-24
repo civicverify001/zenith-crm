@@ -115,8 +115,24 @@ module.exports = async function handler(req, res) {
       if (jobErr.code === '23505') return res.status(200).json({ success: true, already_existed: true });
       return res.status(500).json({ error: 'Job insert failed', detail: jobErr.message });
     }
-    // 6. Update lead
-    await supabase.from('leads').update({ job_created: true }).eq('id', lead_id);
+    // Create reorder requests for waiting_for_stock jobs so receiving unblocks them
+    if (jobStatus === 'waiting_for_stock' && quote) {
+      const { data: lineItems } = await supabase
+        .from('document_line_items')
+        .select('product_id')
+        .eq('document_id', quote.id)
+        .eq('item_type', 'product')
+        .not('product_id', 'is', null)
+      for (const li of (lineItems || [])) {
+        await supabase.from('reorder_requests').upsert({
+          product_id: li.product_id,
+          job_id: job.id,
+          request_type: 'job_shortage',
+          quantity_needed: 1,
+          status: 'open',
+        }, { onConflict: 'job_id,product_id', ignoreDuplicates: true }).catch(() => {})
+      }
+    }
 
     console.log('[AUTO-JOB] Created job', job.id, 'for lead', lead_id, '— status:', jobStatus);
     return res.status(200).json({ success: true, job_id: job.id, status: jobStatus });
