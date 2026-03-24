@@ -64,16 +64,6 @@ module.exports = async function handler(req, res) {
             if (hasStockIssue) {
       jobStatus = 'waiting_for_stock';
       console.log('[AUTO-JOB] Stock unavailable for lead', lead_id, '— setting waiting_for_stock');
-      // Create reorder requests so receiveStock() can unblock this job
-      for (const productId of productIds) {
-        await supabase.from('reorder_requests').upsert({
-          product_id: productId,
-          job_id: null, // will be set after job creation below
-          request_type: 'job_shortage',
-          quantity_needed: 1,
-          status: 'open',
-        }, { onConflict: 'job_id,product_id', ignoreDuplicates: true }).catch(() => {})
-      }
     }
           } else {
             // No inventory records found for these products — treat as out of stock
