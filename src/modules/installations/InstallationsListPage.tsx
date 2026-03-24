@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useJobsBoard } from '../dispatch/useJobs'
 import { useAuth } from '../../hooks/useAuth'
 import { useNavigate } from 'react-router-dom'
@@ -23,6 +24,7 @@ export function InstallationsListPage() {
   const { user, role } = useAuth()
   const navigate = useNavigate()
   const { data: jobsByStatus, isLoading, error } = useJobsBoard()
+  const [search, setSearch] = useState('')
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-full"><div style={{ color: '#64748b', fontSize: '14px' }}>Loading jobs...</div></div>
@@ -32,7 +34,9 @@ export function InstallationsListPage() {
   }
 
   const allJobs = Object.values(jobsByStatus || {}).flat()
-  const visibleJobs = role === 'admin' ? allJobs : allJobs.filter(j => j.assigned_technician_id === user?.id)
+  const visibleJobs = (role === 'admin' ? allJobs : allJobs.filter(j => j.assigned_technician_id === user?.id))
+    .filter(j => !search || (j.customer_name_snapshot || '').toLowerCase().includes(search.toLowerCase())
+      || (j.phone_snapshot || '').includes(search))
 
   const activeCount = visibleJobs.filter(j => j.status !== 'complete').length
   const completedCount = visibleJobs.filter(j => j.status === 'complete').length
@@ -69,6 +73,22 @@ export function InstallationsListPage() {
           {activeCount} active job{activeCount !== 1 ? 's' : ''}
           {completedCount > 0 && ` · ${completedCount} completed`}
         </p>
+      </div>
+
+      {/* Search */}
+      <div style={{ marginBottom: '14px', flexShrink: 0 }}>
+        <input
+          type="text"
+          placeholder="Search by customer name or phone..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{
+            width: '100%', maxWidth: '360px',
+            background: '#162232', border: '1px solid #1e3a4f',
+            borderRadius: '8px', color: '#e2e8f0',
+            padding: '8px 12px', fontSize: '13px', outline: 'none',
+          }}
+        />
       </div>
 
       {/* Kanban columns */}
