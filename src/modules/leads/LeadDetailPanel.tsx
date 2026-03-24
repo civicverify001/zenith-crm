@@ -475,14 +475,16 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                 {/* Site Visit Info */}
                 {visitInfo && ['site_visit_scheduled', 'proposal_in_progress', 'quote_sent', 'agreement_signed'].includes(lead.stage) && (
                   <div className="rounded-xl p-4" style={{ backgroundColor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)' }}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#60a5fa' }}>
-                        📅 Site Visit {lead.stage === 'site_visit_scheduled' ? 'Scheduled' : 'Completed'}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#60a5fa' }}>
+                          📅 Site Visit {lead.stage === 'site_visit_scheduled' ? 'Scheduled' : 'Completed'}
+                        </div>
+                        {visitConfirmed
+                          ? <span style={{ fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, background: 'rgba(74,222,128,0.2)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.4)', boxShadow: '0 0 8px rgba(74,222,128,0.2)' }}>✓ Confirmed</span>
+                          : <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'rgba(100,116,139,0.15)', color: '#64748b', border: '1px solid rgba(100,116,139,0.2)' }}>Awaiting</span>
+                        }
                       </div>
-                      {visitConfirmed
-                        ? <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}>✓ Customer Confirmed</span>
-                        : <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'rgba(100,116,139,0.15)', color: '#64748b', border: '1px solid rgba(100,116,139,0.2)' }}>Awaiting Confirmation</span>
-                      }
                     </div>
                     <div className="space-y-1">
                       <div className="text-sm text-white">
