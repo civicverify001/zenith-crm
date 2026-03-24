@@ -811,6 +811,60 @@ module.exports = async function handler(req, res) {
       chargeResult = { status: 'failed', error: stripeErr.message, amount: installFee };
     }
 
+    // ── 11b. First month rental charge (rental only) ──────────────────
+    // Charges first month immediately on install day so customer isn't waiting
+    // for autopay cron. Sets next_billing_date to next month to prevent double-charge.
+    let rentalChargeResult = {};
+    if (ownershipType === 'rented' && monthlyAmount && monthlyAmount > 0 && !alreadyComplete) {
+      try {
+        const { data: existingRental } = await supabase
+          .from('payment_transactions').select('id')
+          .eq('customer_id', customerId).eq('type', 'first_month_rental').eq('status', 'succeeded').maybeSingle();
+
+        if (!existingRental) {
+          const rentalPI = await stripe.paymentIntents.create({
+            amount: Math.round(monthlyAmount * 100), currency: 'usd',
+            customer: customer.stripe_customer_id,
+            payment_method: paymentMethod.external_id,
+            off_session: true, confirm: true,
+            description: `First month rental — ${customer.full_name || 'Customer'}`,
+            metadata: { job_id, customer_id: customerId, type: 'first_month_rental' },
+          });
+
+          await supabase.from('payment_transactions').insert({
+            customer_id: customerId, payment_method_id: paymentMethod.id,
+            amount: monthlyAmount,
+            status: rentalPI.status === 'succeeded' ? 'succeeded' : 'pending',
+            type: 'first_month_rental', external_id: rentalPI.id,
+            description: `First month rental — ${customer.full_name || 'Customer'}`,
+            attempted_at: new Date().toISOString(),
+            completed_at: rentalPI.status === 'succeeded' ? new Date().toISOString() : null,
+          });
+
+          // Advance next_billing_date by 1 month so autopay doesn't double-charge
+          if (rentalPI.status === 'succeeded') {
+            const nextMonth = new Date();
+            nextMonth.setMonth(nextMonth.getMonth() + 1);
+            const nextBillingDate = nextMonth.toISOString().split('T')[0];
+            await supabase.from('contracts')
+              .update({ next_billing_date: nextBillingDate })
+              .eq('customer_id', customerId).eq('status', 'active').eq('type', 'rental');
+          }
+
+          rentalChargeResult = {
+            status: rentalPI.status === 'succeeded' ? 'charged' : 'pending',
+            amount: monthlyAmount, payment_intent_id: rentalPI.id,
+          };
+          console.log('[COMPLETE][S11b] First month rental charged:', monthlyAmount, 'status:', rentalPI.status);
+        } else {
+          rentalChargeResult = { status: 'already_charged' };
+        }
+      } catch (rentalErr) {
+        console.error('[COMPLETE][S11b] First month rental charge failed (non-blocking):', rentalErr.message);
+        rentalChargeResult = { status: 'failed', error: rentalErr.message };
+      }
+    }
+
     return res.status(200).json({
       success: true, job_completed: true,
       installed_system_id: installedSystemId,
