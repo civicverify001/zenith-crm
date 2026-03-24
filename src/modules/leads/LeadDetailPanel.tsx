@@ -73,7 +73,7 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
   const [showVisitScheduler, setShowVisitScheduler] = useState(false)
   const [visitInfo, setVisitInfo] = useState<{ rep_name: string; date: string; hour: number } | null>(null)
   const [siteVisitComplete, setSiteVisitComplete] = useState(false)
-
+  const [visitConfirmed, setVisitConfirmed] = useState(false)
   // Water test state
   const [waterTests, setWaterTests] = useState<WaterTest[]>([])
   const [showWaterTestForm, setShowWaterTestForm] = useState(false)
@@ -130,6 +130,17 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
             .maybeSingle()
           const repName = rep?.full_name || 'Rep'
           setVisitInfo({ rep_name: repName, date: data.visit_date, hour: data.visit_hour })
+          // Check for inbound CONFIRM reply from customer
+          const { data: confirmMsg } = await supabase
+            .from('communications_log')
+            .select('id')
+            .eq('entity_type', 'lead')
+            .eq('entity_id', lead.id)
+            .eq('direction', 'inbound')
+            .ilike('body', 'CONFIRM%')
+            .limit(1)
+            .maybeSingle()
+          setVisitConfirmed(!!confirmMsg)
         }
       })
   }, [lead.id, lead.stage])
@@ -464,8 +475,14 @@ export function LeadDetailPanel({ lead: initialLead, onClose, onLeadUpdated, onL
                 {/* Site Visit Info */}
                 {visitInfo && ['site_visit_scheduled', 'proposal_in_progress', 'quote_sent', 'agreement_signed'].includes(lead.stage) && (
                   <div className="rounded-xl p-4" style={{ backgroundColor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)' }}>
-                    <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: '#60a5fa' }}>
-                      📅 Site Visit {lead.stage === 'site_visit_scheduled' ? 'Scheduled' : 'Completed'}
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#60a5fa' }}>
+                        📅 Site Visit {lead.stage === 'site_visit_scheduled' ? 'Scheduled' : 'Completed'}
+                      </div>
+                      {visitConfirmed
+                        ? <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}>✓ Customer Confirmed</span>
+                        : <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'rgba(100,116,139,0.15)', color: '#64748b', border: '1px solid rgba(100,116,139,0.2)' }}>Awaiting Confirmation</span>
+                      }
                     </div>
                     <div className="space-y-1">
                       <div className="text-sm text-white">
