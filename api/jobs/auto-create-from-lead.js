@@ -110,10 +110,10 @@ module.exports = async function handler(req, res) {
       .single();
 
     if (jobErr) {
+      console.error('[AUTO-JOB] Job insert failed:', jobErr.message, jobErr.code, JSON.stringify(jobErr));
       if (jobErr.code === '23505') return res.status(200).json({ success: true, already_existed: true });
       return res.status(500).json({ error: 'Job insert failed', detail: jobErr.message });
     }
-
     // 6. Update lead
     await supabase.from('leads').update({ job_created: true }).eq('id', lead_id);
 
