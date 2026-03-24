@@ -17,28 +17,22 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// ── SMS: fire-and-forget via OpenPhone ────────────────────────────
-const OPENPHONE_KEY     = process.env.OPENPHONE_API_KEY || ''
-const OPENPHONE_NUM     = process.env.OPENPHONE_NUMBER  || '+14633005100'
+// FIX: removed inline sendSms (was calling OpenPhone API directly with phone number string
+// instead of phone number ID — caused 400 errors). Now routes through send-sms.js which
+// correctly resolves the phone number ID first.
 const GOOGLE_REVIEW_URL = process.env.GOOGLE_REVIEW_URL || ''
+const APP_URL = process.env.VITE_APP_URL || 'https://zenith-crm-ten.vercel.app'
 
 async function sendSms(to, message, customerId) {
-  if (!OPENPHONE_KEY || !to) return
+  if (!to) return
   try {
-    const digits = to.replace(/\D/g, '')
-    const e164   = digits.length === 10 ? `+1${digits}` : `+${digits}`
-    const resp   = await fetch('https://api.openphone.com/v1/messages', {
+    await fetch(`${APP_URL}/api/openphone/send-sms`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': OPENPHONE_KEY },
-      body: JSON.stringify({ content: message, from: OPENPHONE_NUM, to: [e164] }),
-    })
-    const data = await resp.json()
-    await supabase.from('communications_log').insert({
-      entity_type: 'customer', entity_id: customerId, customer_id: customerId,
-      direction: 'outbound', channel: 'sms', body: message,
-      status: resp.ok ? 'sent' : 'failed',
-      external_id: data?.data?.id || null,
-      created_at: new Date().toISOString(),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to, body: message,
+        entity_type: 'customer', entity_id: customerId,
+      }),
     })
   } catch (e) { console.error('[complete] sendSms error:', e.message) }
 }
@@ -681,7 +675,26 @@ module.exports = async function handler(req, res) {
       } catch (_) { /* fire-and-forget */ }
     }
 
+    // ── Install confirmation email (fire-and-forget) ──────────────────
+    // FIX: new — sends branded install complete email with warranty + service plan info
+    if (customerId && !alreadyComplete) {
+      try {
+        fetch(`${APP_URL}/api/email/send-install-complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            customerId,
+            jobId: job_id,
+            productName: product?.name || null,
+            ownershipType,
+            activatedPlans: activatedPlans.map(p => p.name),
+          }),
+        }).catch(() => {})
+      } catch (_) {}
+    }
+
     // ── SMS: Install complete + Google review (fire-and-forget) ──────
+    // FIX: now routes through /api/openphone/send-sms (resolves phone number ID correctly)
     if (customerId && !alreadyComplete) {
       try {
         const { data: smsCustomer } = await supabase
