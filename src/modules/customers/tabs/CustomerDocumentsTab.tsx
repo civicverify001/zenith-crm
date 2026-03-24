@@ -653,7 +653,7 @@ export function CustomerDocumentsTab({ customerId }: Props) {
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-2">
                   <span className="text-sm">📝</span>
-                  <span className="text-sm font-medium text-white">{QUOTE_TYPE_LABELS[agr.quote_type] || agr.quote_type?.replace(/_/g, ' ') || 'Agreement'}</span>
+                  <span className="text-sm font-medium text-white">{QUOTE_TYPE_LABELS[agr.agreement_type || agr.commercial_type || agr.quote_type] || 'Rental Agreement'}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${agr.signed_at ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'}`}>{agr.signed_at ? 'Signed' : 'Pending'}</span>
