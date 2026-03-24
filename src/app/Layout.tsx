@@ -288,7 +288,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const visibleNav = NAV_ITEMS.filter(item => {
     if (!role) return false
     if (role === 'admin') return item.roles.includes(role)
-    if (allowedPages) return canAccess(item.path)
+    if (allowedPages) return canAccess(item.path) || item.roles.includes(role)
     return item.roles.includes(role)
   })
 
