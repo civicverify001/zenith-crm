@@ -51,7 +51,7 @@ module.exports = async function handler(req, res) {
 
           // Check inventory for all products — any with available <= 0 triggers waiting_for_stock
           const { data: inventory } = await supabase
-            .from('inventory_items')
+            .from('inventory')
             .select('product_id, quantity_available, quantity_on_hand')
             .in('product_id', productIds);
 
@@ -102,6 +102,7 @@ module.exports = async function handler(req, res) {
         phone_snapshot: lead.phone || '',
         email_snapshot: lead.email || null,
         service_address_snapshot: address || null,
+        source_quote_id: quote?.id || null,
       })
       .select('id')
       .single();
