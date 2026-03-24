@@ -26,9 +26,10 @@ module.exports = async function handler(req, res) {
     // 4. Inventory gate — find products from the accepted/signed quote for this lead
     let jobStatus = 'ready_to_schedule';
     let systemType = 'softener_only';
+    let quote = null;
 
     try {
-      const { data: quote } = await supabase
+      const { data: quoteData } = await supabase
         .from('quotes')
         .select('id')
         .eq('lead_id', lead_id)
