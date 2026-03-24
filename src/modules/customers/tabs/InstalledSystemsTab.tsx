@@ -81,13 +81,13 @@ export function InstalledSystemsTab({ customerId }: Props) {
               <div className="flex items-center gap-4 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 mb-3">
                 {sys.monthly_amount_snapshot && (
                   <div>
-                    <div className="text-[10px] text-amber-400/70 font-semibold uppercase tracking-wide">Monthly Rental</div>
+                    <div style={{ fontSize: 10, color: '#fbbf24', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Monthly Rental</div>
                     <div className="text-sm font-bold text-amber-300">{fmt(sys.monthly_amount_snapshot)}/mo</div>
                   </div>
                 )}
                 {sys.install_fee_snapshot > 0 && (
                   <div>
-                    <div className="text-[10px] text-amber-400/70 font-semibold uppercase tracking-wide">Install Fee Paid</div>
+                    <div style={{ fontSize: 10, color: '#fbbf24', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Install Fee Paid</div>
                     <div className="text-sm font-bold text-amber-300">{fmt(sys.install_fee_snapshot)}</div>
                   </div>
                 )}
