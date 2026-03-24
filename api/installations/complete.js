@@ -233,13 +233,12 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // ── 5b. Set job_id on customer record ─────────────────────────────
+    // ── 5b. Set job_id + activate lifecycle on customer record ──────────
     if (customerId) {
       await supabase
         .from('customers')
-        .update({ job_id: job_id })
-        .eq('id', customerId)
-        .is('job_id', null);
+        .update({ lifecycle_status: 'active' })
+        .eq('id', customerId);
     }
 
     // ── 5c. Set billing_day + retail_price_snapshot on active contract ─
