@@ -857,10 +857,13 @@ export function QuoteReviewPage() {
       }
 
       const terms: TermBlock[] = ag.terms_snapshot?.blocks || rentalTerms
-      const html = generateAgreementHTML(ag, quote?.customer, terms, signatureImageUrl)
+      const terms: TermBlock[] = ag.terms_snapshot?.blocks || rentalTerms
+      const sigImg = signatureImageUrl || ag.signature_data || undefined
+      const html = generateAgreementHTML(ag, quote?.customer, terms, sigImg)
 
-      const iframe = document.createElement('iframe')
-      iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;height:3000px;border:none;visibility:hidden;'
+      const terms: TermBlock[] = ag.terms_snapshot?.blocks || rentalTerms
+      const sigImg = signatureImageUrl || ag.signature_data || undefined
+      const html = generateAgreementHTML(ag, quote?.customer, terms, sigImg)
       document.body.appendChild(iframe)
 
       await new Promise<void>((resolve) => {
@@ -1193,6 +1196,7 @@ export function QuoteReviewPage() {
 
       const { error: e } = await supabase.from('agreements').update({
         status: 'signed', signed_at: now, signed_name: signedName, signed_ip: ip,
+        signature_data: sigDataUrl || null,
       }).eq('id', agreement.id)
       if (e) throw e
 
