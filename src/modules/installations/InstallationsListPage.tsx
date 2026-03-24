@@ -38,6 +38,15 @@ const FILTER_TABS: { key: FilterKey; label: string }[] = [
   { key: 'complete', label: 'Completed' },
 ]
 
+// Status left-border color for compact cards
+const STATUS_BORDER: Record<string, string> = {
+  in_progress:      '#22d3ee',
+  scheduled:        '#60a5fa',
+  waiting_for_stock:'#fbbf24',
+  ready_to_schedule:'#a78bfa',
+  complete:         '#4ade80',
+}
+
 export function InstallationsListPage() {
   const { user, role } = useAuth()
   const navigate = useNavigate()
@@ -53,18 +62,15 @@ export function InstallationsListPage() {
 
   const allJobs = Object.values(jobsByStatus || {}).flat()
 
-  // Technicians see only their assigned jobs. Admin sees all.
   const visibleJobs = role === 'admin'
     ? allJobs
     : allJobs.filter(j => j.assigned_technician_id === user?.id)
 
-  // Count per status
   const statusCounts: Record<string, number> = { all: visibleJobs.length }
   for (const j of visibleJobs) {
     statusCounts[j.status] = (statusCounts[j.status] || 0) + 1
   }
 
-  // Filter and sort
   const displayJobs = visibleJobs
     .filter(j => filter === 'all' ? true : j.status === filter)
     .sort((a, b) => {
@@ -94,7 +100,7 @@ export function InstallationsListPage() {
         </div>
       </div>
 
-      {/* Filter tabs — full width, colored */}
+      {/* Filter tabs */}
       <div className="mb-4 flex-shrink-0" style={{ display: 'grid', gridTemplateColumns: `repeat(${FILTER_TABS.length}, 1fr)`, gap: '8px' }}>
         {FILTER_TABS.map(tab => {
           const count = statusCounts[tab.key] || 0
@@ -124,7 +130,7 @@ export function InstallationsListPage() {
         })}
       </div>
 
-      {/* Job list */}
+      {/* Job grid — compact cards like dispatch board */}
       {displayJobs.length === 0 ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
@@ -138,9 +144,17 @@ export function InstallationsListPage() {
           </div>
         </div>
       ) : (
-        <div className="space-y-3 flex-1 overflow-y-auto pb-4">
+        <div
+          className="flex-1 overflow-y-auto pb-4"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+            gap: '12px',
+            alignContent: 'start',
+          }}
+        >
           {displayJobs.map(job => (
-            <JobListCard
+            <JobCompactCard
               key={job.id}
               job={job}
               onClick={() => navigate(`/installations/${job.id}`)}
@@ -152,41 +166,75 @@ export function InstallationsListPage() {
   )
 }
 
-function JobListCard({ job, onClick }: { job: Job; onClick: () => void }) {
+function JobCompactCard({ job, onClick }: { job: Job; onClick: () => void }) {
   const scheduledStr = job.scheduled_date
     ? new Date(job.scheduled_date + 'T00:00:00').toLocaleDateString('en-US', {
         weekday: 'short', month: 'short', day: 'numeric',
       })
     : 'Not scheduled'
 
-  const needsAction = job.status === 'in_progress'
+  const accentColor = STATUS_BORDER[job.status] || '#475569'
 
   return (
     <div
       onClick={onClick}
-      className={`bg-card border rounded-xl p-4 cursor-pointer hover:border-accent/50 transition-all ${
-        needsAction ? 'border-cyan/30' : 'border-border'
-      }`}
+      style={{
+        background: '#162232',
+        border: '1px solid #1e3a4f',
+        borderLeft: `3px solid ${accentColor}`,
+        borderRadius: '10px',
+        padding: '12px',
+        cursor: 'pointer',
+        transition: 'border-color 0.15s, background 0.15s',
+      }}
+      onMouseEnter={e => (e.currentTarget.style.background = '#1a2d45')}
+      onMouseLeave={e => (e.currentTarget.style.background = '#162232')}
     >
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-bold text-white">{job.customer_name_snapshot}</h3>
-        <span className={`stage-badge border text-xs ${JOB_STATUS_COLORS[job.status]}`}>
-          {JOB_STATUS_LABELS[job.status]}
+      {/* Customer name */}
+      <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: '13px', marginBottom: '2px' }}>
+        {job.customer_name_snapshot}
+      </div>
+
+      {/* Phone */}
+      {job.phone_snapshot && (
+        <div style={{ color: '#64748b', fontSize: '11px', marginBottom: '4px' }}>
+          {job.phone_snapshot}
+        </div>
+      )}
+
+      {/* Address */}
+      {job.service_address_snapshot && (
+        <div style={{ color: '#64748b', fontSize: '11px', marginBottom: '8px', lineHeight: 1.4 }}>
+          {job.service_address_snapshot}
+        </div>
+      )}
+
+      {/* System type badge + date */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+        <span style={{
+          background: 'rgba(100,116,139,0.15)',
+          border: '1px solid rgba(100,116,139,0.3)',
+          color: '#94a3b8',
+          borderRadius: '6px',
+          padding: '2px 8px',
+          fontSize: '11px',
+          fontWeight: 600,
+          whiteSpace: 'nowrap',
+        }}>
+          {SYSTEM_TYPE_LABELS[job.system_type] || job.system_type}
+        </span>
+
+        <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#64748b', fontSize: '11px', whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: '10px' }}>📅</span>
+          {scheduledStr}
         </span>
       </div>
 
-      <div className="text-xs text-muted mb-1">{job.service_address_snapshot}</div>
-      <div className="text-xs text-muted mb-2">{job.phone_snapshot}</div>
-
-      <div className="flex items-center justify-between">
-        <span className="text-xs bg-surface border border-border rounded px-1.5 py-0.5 text-muted">
-          {SYSTEM_TYPE_LABELS[job.system_type]}
-        </span>
-        <span className="text-xs text-muted">📅 {scheduledStr}</span>
-      </div>
-
-      {needsAction && (
-        <div className="mt-2 text-xs font-medium" style={{ color: '#22d3ee' }}>→ In progress — tap to continue</div>
+      {/* In progress indicator */}
+      {job.status === 'in_progress' && (
+        <div style={{ marginTop: '8px', fontSize: '11px', fontWeight: 600, color: '#22d3ee' }}>
+          → In progress — tap to continue
+        </div>
       )}
     </div>
   )
