@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useCustomers } from './useCustomers'
 import { useNavigate } from 'react-router-dom'
+import { supabase } from '../../lib/supabase'
 import type { Customer, CustomerLifecycle } from './customers.types'
 import { LIFECYCLE_LABELS, LIFECYCLE_COLORS } from './customers.types'
+import { AtRiskReasonModal, type AtRiskReasonResult } from '../leads/modals/AtRiskReasonModal'
 
 function useIsMobile() {
   const [v, setV] = useState(window.innerWidth < 768)
@@ -28,12 +30,23 @@ const COLUMNS: {
   { key: 'inactive',     label: 'Inactive',     icon: '○', color: '#94a3b8', bg: 'rgba(148,163,184,0.05)', border: 'rgba(148,163,184,0.15)', headerBg: 'rgba(148,163,184,0.1)' },
 ]
 
-function CustomerCard({ c, onClick, accentColor, borderColor }: { c: Customer; onClick: () => void; accentColor: string; borderColor: string }) {
+function CustomerCard({ c, onClick, accentColor, borderColor, onMarkAtRisk }: {
+  c: Customer
+  onClick: () => void
+  accentColor: string
+  borderColor: string
+  onMarkAtRisk?: (e: React.MouseEvent) => void
+}) {
+  const [hovered, setHovered] = useState(false)
   return (
     <div
       onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
-        background: `linear-gradient(135deg, #0f1923 0%, #111e2e 100%)`,
+        background: hovered
+          ? `linear-gradient(135deg, ${accentColor}0d 0%, #0f1923 100%)`
+          : `linear-gradient(135deg, #0f1923 0%, #111e2e 100%)`,
         border: `1px solid ${borderColor}`,
         borderLeft: `3px solid ${accentColor}`,
         borderRadius: 10,
@@ -41,18 +54,8 @@ function CustomerCard({ c, onClick, accentColor, borderColor }: { c: Customer; o
         cursor: 'pointer',
         transition: 'all 0.15s',
         marginBottom: 8,
-      }}
-      onMouseEnter={e => {
-        const el = e.currentTarget as HTMLDivElement
-        el.style.background = `linear-gradient(135deg, ${accentColor}0d 0%, #0f1923 100%)`
-        el.style.transform = 'translateY(-1px)'
-        el.style.boxShadow = `0 4px 16px ${accentColor}20`
-      }}
-      onMouseLeave={e => {
-        const el = e.currentTarget as HTMLDivElement
-        el.style.background = 'linear-gradient(135deg, #0f1923 0%, #111e2e 100%)'
-        el.style.transform = 'translateY(0)'
-        el.style.boxShadow = 'none'
+        transform: hovered ? 'translateY(-1px)' : 'translateY(0)',
+        boxShadow: hovered ? `0 4px 16px ${accentColor}20` : 'none',
       }}
     >
       {/* Avatar + name row */}
@@ -78,6 +81,20 @@ function CustomerCard({ c, onClick, accentColor, borderColor }: { c: Customer; o
             <div style={{ color: '#64748b', fontSize: 11, marginTop: 1 }}>{c.phone}</div>
           )}
         </div>
+        {/* At Risk button — shows on hover for non-at_risk cards */}
+        {onMarkAtRisk && hovered && (
+          <button
+            onClick={e => { e.stopPropagation(); onMarkAtRisk(e) }}
+            title="Mark as At Risk"
+            style={{
+              flexShrink: 0, padding: '3px 8px', borderRadius: 6,
+              background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+              color: '#f87171', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            ⚠ At Risk
+          </button>
+        )}
       </div>
 
       {/* Details */}
@@ -108,9 +125,45 @@ function CustomerCard({ c, onClick, accentColor, borderColor }: { c: Customer; o
 export function CustomersListPage() {
   const navigate = useNavigate()
   const isMobile = useIsMobile()
-  const { data: customers, isLoading, error } = useCustomers()
+  const { data: customers, isLoading, error, refetch } = useCustomers()
   const [search, setSearch] = useState('')
   const [mobileTab, setMobileTab] = useState<CustomerLifecycle>('active')
+  const [atRiskTarget, setAtRiskTarget] = useState<Customer | null>(null)
+  const [atRiskPending, setAtRiskPending] = useState(false)
+
+  async function handleAtRiskSubmit(result: AtRiskReasonResult) {
+    if (!atRiskTarget) return
+    setAtRiskPending(true)
+    try {
+      await supabase
+        .from('customers')
+        .update({
+          lifecycle_status: 'at_risk',
+          at_risk_reason_code: result.reasonCode,
+          at_risk_reason_label: result.reasonLabel,
+          at_risk_notes: result.freeText,
+          at_risk_flagged_at: new Date().toISOString(),
+        })
+        .eq('id', atRiskTarget.id)
+
+      if (result.reEngageDate) {
+        await supabase.from('follow_up_tasks').insert({
+          entity_type: 'customer', entity_id: atRiskTarget.id,
+          title: `Re-engage: ${atRiskTarget.full_name} (At Risk — ${result.reasonLabel})`,
+          description: result.freeText || `Customer marked at risk: ${result.reasonLabel}`,
+          due_date: result.reEngageDate,
+          status: 'pending', priority: 'high',
+        }).catch(() => {})
+      }
+
+      setAtRiskTarget(null)
+      refetch?.()
+    } catch (e) {
+      console.error('At risk update failed:', e)
+    } finally {
+      setAtRiskPending(false)
+    }
+  }
 
   if (isLoading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
@@ -159,7 +212,6 @@ export function CustomersListPage() {
               <div style={{ color: '#64748b', fontSize: 12, marginTop: 1 }}>{allCustomers.length} total</div>
             </div>
           </div>
-          {/* Full-width search */}
           <input
             type="text"
             value={search}
@@ -174,14 +226,7 @@ export function CustomersListPage() {
         </div>
 
         {/* Stage tabs — scrollable */}
-        <div style={{
-          flexShrink: 0,
-          display: 'flex',
-          gap: 6,
-          overflowX: 'auto',
-          paddingBottom: 10,
-          scrollbarWidth: 'none',
-        }}>
+        <div style={{ flexShrink: 0, display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 10, scrollbarWidth: 'none' }}>
           {COLUMNS.map(col => {
             const count = filterCustomers(byStatus[col.key] || []).length
             const isActive = mobileTab === col.key
@@ -190,19 +235,12 @@ export function CustomersListPage() {
                 key={col.key}
                 onClick={() => setMobileTab(col.key)}
                 style={{
-                  flexShrink: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  padding: '7px 12px',
-                  borderRadius: 20,
+                  flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5,
+                  padding: '7px 12px', borderRadius: 20,
                   border: `1px solid ${isActive ? col.color : col.border}`,
                   background: isActive ? `${col.color}20` : '#0c1a26',
                   color: isActive ? col.color : '#64748b',
-                  fontSize: 12,
-                  fontWeight: isActive ? 700 : 500,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
+                  fontSize: 12, fontWeight: isActive ? 700 : 500, cursor: 'pointer', transition: 'all 0.15s',
                 }}
               >
                 <span style={{ fontSize: 13 }}>{col.icon}</span>
@@ -210,10 +248,7 @@ export function CustomersListPage() {
                 <span style={{
                   background: isActive ? `${col.color}30` : '#1e3a4f',
                   color: isActive ? col.color : '#64748b',
-                  borderRadius: 10,
-                  padding: '1px 6px',
-                  fontSize: 11,
-                  fontWeight: 700,
+                  borderRadius: 10, padding: '1px 6px', fontSize: 11, fontWeight: 700,
                 }}>
                   {count}
                 </span>
@@ -231,38 +266,38 @@ export function CustomersListPage() {
           ) : (
             cards.map(c => (
               <CustomerCard
-                key={c.id}
-                c={c}
-                accentColor={activeCol.color}
-                borderColor={activeCol.border}
+                key={c.id} c={c}
+                accentColor={activeCol.color} borderColor={activeCol.border}
                 onClick={() => navigate(`/customers/${c.id}`)}
+                onMarkAtRisk={activeCol.key !== 'at_risk' ? () => setAtRiskTarget(c) : undefined}
               />
             ))
           )}
         </div>
+
+        {atRiskTarget && (
+          <AtRiskReasonModal
+            onSubmit={handleAtRiskSubmit}
+            onCancel={() => setAtRiskTarget(null)}
+            isPending={atRiskPending}
+          />
+        )}
       </div>
     )
   }
 
-  // ── DESKTOP LAYOUT (unchanged) ────────────────────────────
+  // ── DESKTOP LAYOUT ────────────────────────────────────────
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
 
       {/* Top bar */}
       <div style={{
-        flexShrink: 0,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 12,
-        padding: '0 0 16px 0',
-        flexWrap: 'wrap',
+        flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: 12, padding: '0 0 16px 0', flexWrap: 'wrap',
       }}>
         <div>
           <h1 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 20, margin: 0 }}>Customers</h1>
-          <div style={{ color: '#64748b', fontSize: 13, marginTop: 2 }}>
-            {allCustomers.length} total
-          </div>
+          <div style={{ color: '#64748b', fontSize: 13, marginTop: 2 }}>{allCustomers.length} total</div>
         </div>
         <input
           type="text"
@@ -285,52 +320,28 @@ export function CustomersListPage() {
             <div
               key={col.key}
               style={{
-                flex: '1 1 0',
-                minWidth: 200,
-                display: 'flex',
-                flexDirection: 'column',
-                background: '#0c1a26',
-                border: `1px solid ${col.border}`,
-                borderRadius: 12,
-                overflow: 'hidden',
+                flex: '1 1 0', minWidth: 200, display: 'flex', flexDirection: 'column',
+                background: '#0c1a26', border: `1px solid ${col.border}`, borderRadius: 12, overflow: 'hidden',
               }}
             >
               <div style={{
-                background: col.headerBg,
-                padding: '12px 14px',
-                borderBottom: `1px solid ${col.border}`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexShrink: 0,
-                borderTop: `3px solid ${col.color}`,
+                background: col.headerBg, padding: '12px 14px', borderBottom: `1px solid ${col.border}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                flexShrink: 0, borderTop: `3px solid ${col.color}`,
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                   <span style={{ fontSize: 16 }}>{col.icon}</span>
                   <span style={{ color: col.color, fontWeight: 800, fontSize: 14, letterSpacing: '0.01em' }}>{col.label}</span>
                 </div>
                 <div style={{
-                  background: col.color + '25',
-                  color: col.color,
-                  border: `1px solid ${col.color}40`,
-                  borderRadius: 20,
-                  padding: '3px 10px',
-                  fontSize: 12,
-                  fontWeight: 800,
-                  minWidth: 26,
-                  textAlign: 'center',
+                  background: col.color + '25', color: col.color, border: `1px solid ${col.color}40`,
+                  borderRadius: 20, padding: '3px 10px', fontSize: 12, fontWeight: 800, minWidth: 26, textAlign: 'center',
                 }}>
                   {cards.length}
                 </div>
               </div>
 
-              <div style={{
-                flex: 1,
-                overflowY: 'auto',
-                padding: '10px 10px 10px',
-                scrollbarWidth: 'thin',
-                scrollbarColor: '#1e3a4f transparent',
-              }}>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '10px', scrollbarWidth: 'thin', scrollbarColor: '#1e3a4f transparent' }}>
                 {cards.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '32px 12px', color: '#334155', fontSize: 12 }}>
                     {search ? 'No matches' : 'No customers'}
@@ -338,11 +349,10 @@ export function CustomersListPage() {
                 ) : (
                   cards.map(c => (
                     <CustomerCard
-                      key={c.id}
-                      c={c}
-                      accentColor={col.color}
-                      borderColor={col.border}
+                      key={c.id} c={c}
+                      accentColor={col.color} borderColor={col.border}
                       onClick={() => navigate(`/customers/${c.id}`)}
+                      onMarkAtRisk={col.key !== 'at_risk' ? () => setAtRiskTarget(c) : undefined}
                     />
                   ))
                 )}
@@ -351,6 +361,14 @@ export function CustomersListPage() {
           )
         })}
       </div>
+
+      {atRiskTarget && (
+        <AtRiskReasonModal
+          onSubmit={handleAtRiskSubmit}
+          onCancel={() => setAtRiskTarget(null)}
+          isPending={atRiskPending}
+        />
+      )}
     </div>
   )
 }
