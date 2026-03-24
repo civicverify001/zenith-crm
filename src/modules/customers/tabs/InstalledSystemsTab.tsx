@@ -82,13 +82,13 @@ export function InstalledSystemsTab({ customerId }: Props) {
                 {sys.monthly_amount_snapshot && (
                   <div>
                     <div style={{ fontSize: 10, color: '#fbbf24', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Monthly Rental</div>
-                    <div className="text-sm font-bold text-amber-300">{fmt(sys.monthly_amount_snapshot)}/mo</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#fcd34d' }}>{fmt(sys.monthly_amount_snapshot)}/mo</div>
                   </div>
                 )}
                 {sys.install_fee_snapshot > 0 && (
                   <div>
                     <div style={{ fontSize: 10, color: '#fbbf24', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Install Fee Paid</div>
-                    <div className="text-sm font-bold text-amber-300">{fmt(sys.install_fee_snapshot)}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#fcd34d' }}>{fmt(sys.install_fee_snapshot)}</div>
                   </div>
                 )}
               </div>
