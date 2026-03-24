@@ -6,8 +6,6 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 const RESEND_KEY = process.env.RESEND_API_KEY!
 const DOMAIN     = process.env.RESEND_DOMAIN || 'zenithpuresolutions.com'
 const APP_URL    = process.env.VITE_APP_URL  || 'https://zenith-crm-ten.vercel.app'
-const OPENPHONE_KEY = process.env.OPENPHONE_API_KEY || ''
-const OPENPHONE_NUM = process.env.OPENPHONE_NUMBER  || '+14633005100'
 
 const fmt     = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
 const fmtDate = (s: string | null) => s ? new Date(s).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—'
@@ -19,28 +17,6 @@ async function sendViaResend(to: string, subject: string, html: string, fromEmai
     body: JSON.stringify({ from: `${fromName} <${fromEmail}>`, reply_to: fromEmail, to: [to], subject, html }),
   })
   if (!r.ok) throw new Error(`Resend ${r.status}: ${await r.text()}`)
-}
-
-// ── SMS: fire-and-forget via OpenPhone ────────────────────────────
-async function sendSms(to: string, message: string, customerId: string) {
-  if (!OPENPHONE_KEY || !to) return
-  try {
-    const digits = to.replace(/\D/g, '')
-    const e164   = digits.length === 10 ? `+1${digits}` : `+${digits}`
-    const resp   = await fetch('https://api.openphone.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': OPENPHONE_KEY },
-      body: JSON.stringify({ content: message, from: OPENPHONE_NUM, to: [e164] }),
-    })
-    const data = await resp.json()
-    await supabase.from('communications_log').insert({
-      entity_type: 'customer', entity_id: customerId, customer_id: customerId,
-      direction: 'outbound', channel: 'sms', body: message,
-      status: resp.ok ? 'sent' : 'failed',
-      external_id: data?.data?.id || null,
-      created_at: new Date().toISOString(),
-    })
-  } catch (e: any) { console.error('[send-quote] sendSms error:', e.message) }
 }
 
 function quoteHtml(quote: any, customer: any, items: any[], senderName: string) {
