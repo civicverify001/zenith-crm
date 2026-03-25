@@ -860,7 +860,7 @@ export function BillingTab({ customerId, customer }: Props) {
                 <span className="text-slate-400">Start date</span>
                 <span className="text-slate-200 font-medium">
                   {activeContract.start_date
-                    ? new Date(activeContract.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    ? new Date(activeContract.start_date + 'T12:00:00').toLocaleDateString
                     : '—'}
                 </span>
               </div>
@@ -868,7 +868,7 @@ export function BillingTab({ customerId, customer }: Props) {
                 <span className="text-slate-400">End date</span>
                 <span className="text-slate-200 font-medium">
                   {activeContract.end_date
-                    ? new Date(activeContract.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    ? new Date(activeContract.end_date + 'T12:00:00').toLocaleDateString
                     : '—'}
                 </span>
               </div>
