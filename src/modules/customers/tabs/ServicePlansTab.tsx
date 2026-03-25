@@ -2,7 +2,38 @@
 // Shows service plans for a customer with Add Plan, Pause, Resume, Cancel actions
 
 import { useState, useEffect } from 'react'
-const [plans, setPlans] = useState<CustomerServicePlan[]>([])
+import {
+  fetchCustomerServicePlans,
+  fetchPlanTemplates,
+  fetchCustomerPlanComponents,
+  activatePlanFromCustomerPage,
+  pausePlan,
+  resumePlan,
+  cancelPlan,
+  checkPaymentMethod,
+  BILLING_CYCLE_LABELS,
+  FULFILLMENT_TYPE_LABELS,
+  PLAN_STATUS_CONFIG,
+  type CustomerServicePlan,
+  type CustomerServicePlanComponent,
+  type ServicePlanTemplate,
+} from '../../../services/servicePlanService'
+import { fetchInstalledSystems } from '../../../services/customerService'
+import { useAuth } from '../../../hooks/useAuth'
+
+interface Props {
+  customerId: string
+}
+
+export function ServicePlansTab({ customerId }: Props) {
+  const { profile } = useAuth()
+  const role = profile?.role || ''
+  const canAdd = ['admin', 'frontdesk', 'salesrep'].includes(role)
+  const canPause = ['admin', 'frontdesk'].includes(role)
+  const canCancel = role === 'admin'
+  const canOverridePrice = role === 'admin'
+
+  const [plans, setPlans] = useState<CustomerServicePlan[]>([])
   const [componentMap, setComponentMap] = useState<Record<string, CustomerServicePlanComponent[]>>({})
   const [loading, setLoading] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
@@ -31,42 +62,10 @@ const [plans, setPlans] = useState<CustomerServicePlan[]>([])
     }
     setLoading(false)
   }
-import { fetchInstalledSystems } from '../../../services/customerService'
-import { useAuth } from '../../../hooks/useAuth'
-
-interface Props {
-  customerId: string
-}
-
-export function ServicePlansTab({ customerId }: Props) {
-  const { profile } = useAuth()
-  const role = profile?.role || ''
-  const canAdd = ['admin', 'frontdesk', 'salesrep'].includes(role)
-  const canPause = ['admin', 'frontdesk'].includes(role)
-  const canCancel = role === 'admin'
-  const canOverridePrice = role === 'admin'
-
-  const [plans, setPlans] = useState<CustomerServicePlan[]>([])
-  const [loading, setLoading] = useState(true)
-  const [showAddModal, setShowAddModal] = useState(false)
-  const [actionLoading, setActionLoading] = useState<string | null>(null)
-
-  useEffect(() => { loadPlans() }, [customerId])
-
-  async function loadPlans() {
-    setLoading(true)
-    try {
-      const data = await fetchCustomerServicePlans(customerId)
-      setPlans(data)
-    } catch (e) {
-      console.error('Failed to load service plans:', e)
-    }
-    setLoading(false)
-  }
 
   async function handlePause(plan: CustomerServicePlan) {
     const reason = prompt('Reason for pausing (optional):')
-    if (reason === null) return // cancelled prompt
+    if (reason === null) return
     setActionLoading(plan.id)
     try {
       await pausePlan(plan.id, reason || undefined)
@@ -102,7 +101,6 @@ export function ServicePlansTab({ customerId }: Props) {
     setActionLoading(null)
   }
 
-  // Separate active vs inactive plans
   const activePlans = plans.filter(p => ['active', 'pending_payment_method', 'pending_install', 'paused', 'payment_failed'].includes(p.status))
   const pastPlans = plans.filter(p => ['cancelled', 'completed', 'expired'].includes(p.status))
 
@@ -146,7 +144,7 @@ export function ServicePlansTab({ customerId }: Props) {
         />
       )}
 
-      {/* Active Plans */}
+      {/* Plans */}
       {activePlans.length === 0 && pastPlans.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '48px 0' }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>🔄</div>
@@ -164,11 +162,12 @@ export function ServicePlansTab({ customerId }: Props) {
               {activePlans.map(plan => {
                 const sc = PLAN_STATUS_CONFIG[plan.status] || PLAN_STATUS_CONFIG.active
                 const isLoading = actionLoading === plan.id
+                const planComponents = componentMap[plan.id] || []
                 return (
                   <div key={plan.id} style={{
                     background: '#162232', border: '1px solid #1e3a4f', borderRadius: 14, padding: 16,
                   }}>
-                    {/* Top row: name + status + actions */}
+                    {/* Top row */}
                     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -191,8 +190,6 @@ export function ServicePlansTab({ customerId }: Props) {
                           <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>{plan.notes}</div>
                         )}
                       </div>
-
-                      {/* Price */}
                       <div style={{ textAlign: 'right', flexShrink: 0 }}>
                         <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 16, fontFamily: 'monospace' }}>
                           ${Number(plan.price).toFixed(2)}
@@ -234,7 +231,7 @@ export function ServicePlansTab({ customerId }: Props) {
                     )}
 
                     {/* Component schedule */}
-                    {(componentMap[plan.id] || []).length > 0 && (
+                    {planComponents.length > 0 && (
                       <div style={{
                         marginTop: 12, padding: '10px 12px',
                         background: 'rgba(56,189,248,0.04)', border: '1px solid rgba(56,189,248,0.12)',
@@ -244,7 +241,7 @@ export function ServicePlansTab({ customerId }: Props) {
                           Service Schedule
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {(componentMap[plan.id] || []).map(comp => (
+                          {planComponents.map(comp => (
                             <div key={comp.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                 <span style={{ fontSize: 12 }}>
@@ -264,7 +261,7 @@ export function ServicePlansTab({ customerId }: Props) {
                                 <span style={{
                                   fontSize: 11, fontWeight: 600,
                                   color: comp.next_due_date
-                                    ? (new Date(comp.next_due_date) < new Date() ? '#f87171' : '#4ade80')
+                                    ? (new Date(comp.next_due_date + 'T12:00:00') < new Date() ? '#f87171' : '#4ade80')
                                     : '#64748b',
                                 }}>
                                   {comp.next_due_date ? `Due ${formatDate(comp.next_due_date)}` : '—'}
@@ -374,7 +371,6 @@ function AddPlanModal({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  // Form state
   const [selectedPlan, setSelectedPlan] = useState('')
   const [selectedSystem, setSelectedSystem] = useState('')
   const [priceOverride, setPriceOverride] = useState('')
@@ -404,7 +400,6 @@ function AddPlanModal({
   const selectedTemplate = templates.find(t => t.id === selectedPlan)
   const needsSystem = selectedTemplate?.requires_installed_system ?? true
 
-  // Filter systems by template's applies_to_categories
   const filteredSystems = selectedTemplate && Array.isArray(selectedTemplate.applies_to_categories) && selectedTemplate.applies_to_categories.length > 0
     ? systems.filter(s => selectedTemplate.applies_to_categories.includes(s.system_type))
     : systems
@@ -412,10 +407,8 @@ function AddPlanModal({
   async function handleSubmit() {
     if (!selectedPlan) { setError('Select a plan'); return }
     if (needsSystem && !selectedSystem) { setError('Select an installed system'); return }
-
     setSaving(true)
     setError('')
-
     try {
       await activatePlanFromCustomerPage({
         customer_id: customerId,
@@ -461,7 +454,6 @@ function AddPlanModal({
               }}>{error}</div>
             )}
 
-            {/* Step 1: Select plan */}
             <div>
               <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 6 }}>Select Plan</label>
               <select value={selectedPlan} onChange={e => { setSelectedPlan(e.target.value); setSelectedSystem('') }} style={inputStyle}>
@@ -474,7 +466,6 @@ function AddPlanModal({
               </select>
             </div>
 
-            {/* Plan details preview */}
             {selectedTemplate && (
               <div style={{
                 background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.15)',
@@ -494,7 +485,6 @@ function AddPlanModal({
               </div>
             )}
 
-            {/* Step 2: Select system */}
             {selectedTemplate && needsSystem && (
               <div>
                 <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 6 }}>Installed System</label>
@@ -516,7 +506,6 @@ function AddPlanModal({
               </div>
             )}
 
-            {/* Step 3: Price override (admin only) */}
             {selectedTemplate && canOverridePrice && (
               <div>
                 <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 6 }}>
@@ -527,7 +516,6 @@ function AddPlanModal({
               </div>
             )}
 
-            {/* Step 4: Billing start */}
             {selectedTemplate && selectedTemplate.billing_cycle !== 'one_time' && (
               <div>
                 <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 6 }}>Billing Start</label>
@@ -547,7 +535,6 @@ function AddPlanModal({
               </div>
             )}
 
-            {/* Payment method warning */}
             {selectedTemplate && !hasCard && selectedTemplate.billing_cycle !== 'one_time' && (
               <div style={{
                 background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.2)',
@@ -559,7 +546,6 @@ function AddPlanModal({
               </div>
             )}
 
-            {/* Step 5: Notes */}
             {selectedTemplate && (
               <div>
                 <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 6 }}>Notes (optional)</label>
@@ -569,7 +555,6 @@ function AddPlanModal({
               </div>
             )}
 
-            {/* Buttons */}
             <div style={{ display: 'flex', gap: 8, paddingTop: 4, justifyContent: 'flex-end' }}>
               <button onClick={onClose} style={{
                 padding: '8px 16px', borderRadius: 10, fontSize: 13, color: '#64748b', cursor: 'pointer',
