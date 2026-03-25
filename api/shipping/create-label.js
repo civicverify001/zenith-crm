@@ -76,7 +76,7 @@ export default async function handler(req, res) {
     // FIX: labelResponseOptions changed to LABEL to get inline label data as
     // fallback alongside URL — more compatible with accounts pending validation.
     const shipPayload = {
-      labelResponseOptions: 'URL_ONLY',
+      labelResponseOptions: 'LABEL',
       requestedShipment: {
         shipper: {
           contact: {
@@ -153,7 +153,7 @@ export default async function handler(req, res) {
         serviceType: 'FEDEX_GROUND',
         packagingType: 'YOUR_PACKAGING',
         // FIX: USE_SCHEDULED_PICKUP is correct for account-billed ground shipments
-        pickupType: 'USE_SCHEDULED_PICKUP',
+        pickupType: 'DROPOFF_AT_FEDEX_LOCATION',
         // FIX: totalPackageCount required
         totalPackageCount: 1,
       },
