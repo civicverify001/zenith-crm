@@ -756,7 +756,7 @@ export function BillingTab({ customerId, customer }: Props) {
         label: plan.name,
         amount: plan.price,
         date: plan.next_billing_date
-          ? new Date(plan.next_billing_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+          ? new Date(plan.next_billing_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
           : 'TBD',
         type: 'plan',
         planId: plan.id,
