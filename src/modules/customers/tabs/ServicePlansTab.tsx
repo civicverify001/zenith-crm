@@ -205,7 +205,14 @@ export function ServicePlansTab({ customerId }: Props) {
                       <DetailCell label="Fulfillment" value={FULFILLMENT_TYPE_LABELS[plan.plan_fulfillment_type || ''] || '—'} />
                       <DetailCell label="Started" value={formatDate(plan.activated_at || plan.start_date)} />
                       <DetailCell label="Next Billing" value={formatDate(plan.next_billing_date)} />
-                      <DetailCell label="Next Service" value={formatDate(plan.next_fulfillment_date || plan.next_service)} />
+                      <DetailCell label="Next Service" value={(() => {
+                        const comps = componentMap[plan.id] || []
+                        const earliest = comps
+                          .filter(c => c.next_due_date && c.status === 'active')
+                          .map(c => c.next_due_date!)
+                          .sort()[0]
+                        return formatDate(earliest || plan.next_fulfillment_date || plan.next_service)
+                      })()} />
                     </div>
 
                     {/* Warning banners */}
