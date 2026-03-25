@@ -108,9 +108,6 @@ export default async function handler(req, res) {
           payor: {
             responsibleParty: {
               accountNumber: { value: fedexAccountNumber },
-              address: {
-                countryCode: 'US',
-              },
             },
           },
         },
@@ -145,7 +142,7 @@ export default async function handler(req, res) {
         ],
         serviceType: 'FEDEX_GROUND',
         packagingType: 'YOUR_PACKAGING',
-        pickupType: 'DROPOFF_AT_FEDEX_LOCATION',
+        pickupType: 'USE_SCHEDULED_PICKUP',
         totalPackageCount: 1,
       },
     };
