@@ -6,7 +6,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const FEDEX_BASE = 'https://apis.fedex.com';
+const FEDEX_BASE = 'https://apis-sandbox.fedex.com';
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
