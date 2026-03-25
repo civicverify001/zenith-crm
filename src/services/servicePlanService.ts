@@ -349,10 +349,19 @@ export async function activatePlanFromCustomerPage(input: ActivatePlanInput) {
     throw new Error(error.message)
   }
 
+  // 5b. Snapshot components
+  try {
+    const today = new Date().toISOString().split('T')[0]
+    await snapshotPlanComponents(data.id, input.plan_id, today)
+  } catch (e) {
+    console.error('[BEST-EFFORT] snapshotPlanComponents:', e)
+  }
+
   // 6. Activity log
   try {
     await supabase.from('customer_activity_log').insert({
       customer_id: input.customer_id,
+      event_type: 'service_plan_added',
       event_type: 'service_plan_added',
       title: `Service plan added: ${template.name}`,
       actor_id: null,
@@ -537,3 +546,167 @@ export const PLAN_STATUS_CONFIG: Record<string, { label: string; color: string; 
   cancelled:               { label: 'Cancelled',         color: '#94a3b8', bgColor: 'rgba(148,163,184,0.12)' },
   expired:                 { label: 'Expired',           color: '#94a3b8', bgColor: 'rgba(148,163,184,0.12)' },
 }
+
+// ═══════════════════════════════════════════════════════════════
+// SERVICE PLAN COMPONENTS — Template component definitions
+// ═══════════════════════════════════════════════════════════════
+
+export interface ServicePlanComponent {
+  id: string
+  plan_id: string
+  label: string
+  component_code: string
+  fulfillment_type: 'tech_visit' | 'shipment' | 'delivery' | 'on_demand'
+  interval_months: number | null
+  sort_order: number
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ComponentDraft {
+  label: string
+  component_code: string
+  fulfillment_type: 'tech_visit' | 'shipment' | 'delivery' | 'on_demand'
+  interval_months: number | null
+}
+
+export interface CustomerServicePlanComponent {
+  id: string
+  customer_service_plan_id: string
+  plan_component_id: string | null
+  label: string
+  component_code: string
+  fulfillment_type: 'tech_visit' | 'shipment' | 'delivery' | 'on_demand'
+  interval_months: number | null
+  next_due_date: string | null
+  last_completed_at: string | null
+  status: 'active' | 'paused' | 'cancelled' | 'completed'
+  created_at: string
+  updated_at: string
+}
+
+export const COMPONENT_CODES = [
+  { value: 'annual_maintenance_visit',  label: 'Annual Maintenance Visit' },
+  { value: 'ro_prefilter_replacement',  label: 'RO Prefilter Replacement' },
+  { value: 'ro_membrane_replacement',   label: 'RO Membrane Replacement' },
+  { value: 'quarterly_water_test',      label: 'Quarterly Water Test' },
+  { value: 'quarterly_salt_delivery',   label: 'Quarterly Salt Delivery' },
+  { value: 'emergency_support',         label: 'Emergency Support' },
+  { value: 'custom',                    label: 'Custom' },
+]
+
+export const COMPONENT_FULFILLMENT_LABELS: Record<string, string> = {
+  tech_visit: 'Technician Visit',
+  shipment:   'Shipment',
+  delivery:   'Delivery',
+  on_demand:  'On-Demand',
+}
+
+// ── Fetch template components ──────────────────────────────────
+export async function fetchPlanComponents(planId: string) {
+  const { data, error } = await supabase
+    .from('service_plan_components')
+    .select('*')
+    .eq('plan_id', planId)
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+  if (error) throw new Error(error.message)
+  return (data || []) as ServicePlanComponent[]
+}
+
+// ── Save template components (delete + insert — templates only) ─
+export async function savePlanComponents(planId: string, components: ComponentDraft[]) {
+  await supabase.from('service_plan_components').delete().eq('plan_id', planId)
+  if (components.length === 0) return []
+  const { data, error } = await supabase
+    .from('service_plan_components')
+    .insert(components.map((c, i) => ({
+      plan_id: planId,
+      label: c.label,
+      component_code: c.component_code,
+      fulfillment_type: c.fulfillment_type,
+      interval_months: c.interval_months,
+      sort_order: i,
+      is_active: true,
+    })))
+    .select()
+  if (error) throw new Error(error.message)
+  return (data || []) as ServicePlanComponent[]
+}
+
+// ── Duplicate plan (copy template + components) ────────────────
+export async function duplicatePlanTemplate(id: string) {
+  const original = await fetchPlanTemplate(id)
+  const components = await fetchPlanComponents(id)
+
+  const slug = original.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-copy-' + Date.now()
+  const { data: newPlan, error } = await supabase
+    .from('service_plans')
+    .insert({ ...original, id: undefined, name: original.name + ' (Copy)', slug, created_at: undefined, updated_at: undefined })
+    .select()
+    .single()
+  if (error) throw new Error(error.message)
+
+  if (components.length > 0) {
+    await savePlanComponents(newPlan.id, components.map(c => ({
+      label: c.label,
+      component_code: c.component_code,
+      fulfillment_type: c.fulfillment_type,
+      interval_months: c.interval_months,
+    })))
+  }
+  return newPlan as ServicePlanTemplate
+}
+
+// ── Fetch customer plan components ─────────────────────────────
+export async function fetchCustomerPlanComponents(customerServicePlanId: string) {
+  const { data, error } = await supabase
+    .from('customer_service_plan_components')
+    .select('*')
+    .eq('customer_service_plan_id', customerServicePlanId)
+    .order('created_at', { ascending: true })
+  if (error) throw new Error(error.message)
+  return (data || []) as CustomerServicePlanComponent[]
+}
+
+// ── Snapshot components at activation (call after plan insert) ─
+export async function snapshotPlanComponents(
+  customerServicePlanId: string,
+  planId: string,
+  activationDate: string // YYYY-MM-DD
+) {
+  const components = await fetchPlanComponents(planId)
+  if (components.length === 0) return []
+
+  const rows = components.map(c => {
+    let nextDueDate: string | null = null
+    if (c.interval_months && c.fulfillment_type !== 'on_demand') {
+      const d = new Date(activationDate + 'T12:00:00')
+      d.setMonth(d.getMonth() + c.interval_months)
+      nextDueDate = d.toISOString().split('T')[0]
+    }
+    return {
+      customer_service_plan_id: customerServicePlanId,
+      plan_component_id: c.id,
+      label: c.label,
+      component_code: c.component_code,
+      fulfillment_type: c.fulfillment_type,
+      interval_months: c.interval_months,
+      next_due_date: nextDueDate,
+      last_completed_at: null,
+      status: 'active',
+    }
+  })
+
+  const { data, error } = await supabase
+    .from('customer_service_plan_components')
+    .insert(rows)
+    .select()
+  if (error) throw new Error(error.message)
+  return (data || []) as CustomerServicePlanComponent[]
+}
+
+// ── Update activatePlanFromCustomerPage to snapshot components ─
+// NOTE: Call snapshotPlanComponents after activatePlanFromCustomerPage returns
+// passing data.id, input.plan_id, today — see ServicePlansTab usage
