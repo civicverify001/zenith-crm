@@ -281,23 +281,6 @@ export default async function handler(req, res) {
           results.errors.push({ contract_id: contract.id, customer_name: customer.full_name, reason: stripeErr.message, stripe_code: stripeErr.code })
         }
 
-        // Get contract_id for this customer so autopay guard works correctly
-          const { data: rentalContract } = await supabase
-            .from('contracts').select('id')
-            .eq('customer_id', customerId).eq('status', 'active').eq('type', 'rental')
-            .order('created_at', { ascending: false }).limit(1).maybeSingle();
-
-          await supabase.from('payment_transactions').insert({
-            customer_id: customerId, payment_method_id: paymentMethod.id,
-            contract_id: rentalContract?.id || null,
-            amount: monthlyAmount,
-            status: rentalPI.status === 'succeeded' ? 'succeeded' : 'pending',
-            type: 'autopay', external_id: rentalPI.id,
-            description: `First month rental (install day) — ${customer.full_name || 'Customer'}`,
-            attempted_at: new Date().toISOString(),
-            completed_at: rentalPI.status === 'succeeded' ? new Date().toISOString() : null,
-          });
-
         if (chargeSucceeded) {
           results.succeeded++
           await supabase.from('contracts').update({ last_billed_at: new Date().toISOString() }).eq('id', contract.id)
@@ -478,34 +461,72 @@ export default async function handler(req, res) {
             }).then(() => {}).catch(() => {})
 
             // ══════════════════════════════════════════════════
-            // PHASE 3.5: Create fulfillment request for tech visit plans
+            // COMPONENT-BASED FULFILLMENT: Create one fulfillment_request
+            // per active component + advance next_due_date from today
             // ══════════════════════════════════════════════════
-            const fulfillmentType = planFulfillmentMap[plan.plan_id]
-            if (fulfillmentType === 'tech_visit' || fulfillmentType === 'maintenance_visit') {
-              try {
-                const { error: frError } = await supabase
-                  .from('fulfillment_requests')
-                  .insert({
-                    customer_id: plan.customer_id,
-                    customer_service_plan_id: plan.id,
-                    type: fulfillmentType,
-                    status: 'paid_awaiting_schedule',
-                    payment_transaction_id: txRecord?.id || null,
-                    due_date: today,
-                    notes: `Auto-created by autopay after successful ${planName} charge`,
-                  })
-                if (frError) {
-                  if (frError.code === '23505') {
-                    console.log(`[autopay] Fulfillment request already exists for plan ${plan.id} — skipping`)
+            try {
+              const { data: planComponents } = await supabase
+                .from('customer_service_plan_components')
+                .select('id, label, component_code, fulfillment_type, interval_months, next_due_date')
+                .eq('customer_service_plan_id', plan.id)
+                .eq('status', 'active')
+                .neq('fulfillment_type', 'on_demand')
+
+              if (planComponents && planComponents.length > 0) {
+                for (const comp of planComponents) {
+                  // Create fulfillment request for this component
+                  const { error: frError } = await supabase
+                    .from('fulfillment_requests')
+                    .insert({
+                      customer_id: plan.customer_id,
+                      customer_service_plan_id: plan.id,
+                      type: comp.fulfillment_type === 'delivery' ? 'tech_visit' : comp.fulfillment_type,
+                      status: 'paid_awaiting_schedule',
+                      payment_transaction_id: txRecord?.id || null,
+                      due_date: today,
+                      notes: `${comp.label} — auto-created after ${planName} charge`,
+                    })
+
+                  if (frError) {
+                    if (frError.code === '23505') {
+                      console.log(`[autopay] Fulfillment already exists for component ${comp.id} — skipping`)
+                    } else {
+                      console.error(`[autopay] Fulfillment request failed for component ${comp.id}:`, frError.message)
+                    }
                   } else {
-                    console.error(`[autopay] Failed to create fulfillment request for plan ${plan.id}:`, frError.message)
+                    results.fulfillment_created++
                   }
-                } else {
-                  results.fulfillment_created++
+
+                  // Advance next_due_date from today (not from old date)
+                  if (comp.interval_months) {
+                    const nextDue = new Date(today + 'T12:00:00')
+                    nextDue.setMonth(nextDue.getMonth() + comp.interval_months)
+                    await supabase
+                      .from('customer_service_plan_components')
+                      .update({ next_due_date: nextDue.toISOString().split('T')[0] })
+                      .eq('id', comp.id)
+                  }
                 }
-              } catch (frErr) {
-                console.error('[autopay] Fulfillment request error:', frErr.message)
+              } else {
+                // Fallback: old single fulfillment_type behaviour for legacy plans
+                const fulfillmentType = planFulfillmentMap[plan.plan_id]
+                if (fulfillmentType === 'tech_visit' || fulfillmentType === 'maintenance_visit') {
+                  const { error: frError } = await supabase
+                    .from('fulfillment_requests')
+                    .insert({
+                      customer_id: plan.customer_id,
+                      customer_service_plan_id: plan.id,
+                      type: fulfillmentType,
+                      status: 'paid_awaiting_schedule',
+                      payment_transaction_id: txRecord?.id || null,
+                      due_date: today,
+                      notes: `Auto-created by autopay after successful ${planName} charge`,
+                    })
+                  if (!frError) results.fulfillment_created++
+                }
               }
+            } catch (frErr) {
+              console.error('[autopay] Component fulfillment error:', frErr.message)
             }
 
             if (!isDnd) {
