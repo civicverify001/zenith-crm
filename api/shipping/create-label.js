@@ -153,7 +153,7 @@ export default async function handler(req, res) {
         serviceType: 'FEDEX_GROUND',
         packagingType: 'YOUR_PACKAGING',
         // FIX: USE_SCHEDULED_PICKUP is correct for account-billed ground shipments
-        pickupType: 'DROPOFF_AT_FEDEX_LOCATION',
+        labelResponseOptions: 'LABEL',
         // FIX: totalPackageCount required
         totalPackageCount: 1,
       },
@@ -178,12 +178,12 @@ export default async function handler(req, res) {
     // FIX: surface the full FedEx error in the API response so the UI
     // can show a useful message and we can diagnose from Vercel logs
     if (!shipRes.ok || !shipData.output?.transactionShipments?.length) {
-      const fedexErrors = shipData.errors || shipData.output?.alerts || [];
-      const errorCodes  = fedexErrors.map((e) => `${e.code}: ${e.message}`).join(' | ');
       console.error('[fedex] Shipment creation failed:', JSON.stringify(shipData));
+      console.error('[fedex] Full payload sent:', JSON.stringify(shipPayload));
+      const fedexErrors = shipData.errors || shipData.output?.alerts || [];
+      const errorCodes  = fedexErrors.map((e) => `${e.code}: ${e.message} (parameterList: ${JSON.stringify(e.parameterList)})`).join(' | ');
       return res.status(500).json({
         error: 'FedEx shipment creation failed',
-        // FIX: return readable error codes to UI for diagnosis
         detail: errorCodes || JSON.stringify(fedexErrors),
         raw: shipData,
       });
