@@ -101,7 +101,7 @@ export function InstallationDetailPage() {
       if (currentJob?.lead_id) {
         const { data: q } = await supabase
           .from('quotes')
-          .select('install_fee, customer_name, customer_id')
+          .select('install_fee, customer_name, customer_id, commercial_type')
           .or(`opportunity_id.eq.${currentJob.lead_id},lead_id.eq.${currentJob.lead_id}`)
           .in('status', ['accepted', 'signed'])
           .order('created_at', { ascending: false })
@@ -119,7 +119,7 @@ export function InstallationDetailPage() {
         if (cust?.id) {
           const { data: q } = await supabase
             .from('quotes')
-            .select('install_fee, customer_name')
+            .select('install_fee, customer_name, commercial_type')
             .eq('customer_id', cust.id)
             .in('status', ['accepted', 'signed'])
             .order('created_at', { ascending: false })
@@ -129,7 +129,32 @@ export function InstallationDetailPage() {
         }
       }
 
-      if (!quote) return fallback
+     if (!quote) return fallback
+
+      const isPurchase = quote.commercial_type === 'purchase' || quote.commercial_type === 'finance'
+
+      if (isPurchase) {
+        // For purchases: show remaining balance from invoice, not install fee
+        const custId = quote.customer_id
+        if (custId) {
+          const { data: inv } = await supabase
+            .from('invoices')
+            .select('amount_due, deposit_percent')
+            .eq('customer_id', custId)
+            .in('status', ['paid', 'signed', 'partial'])
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          const remaining = inv?.amount_due ? parseFloat(inv.amount_due) : 0
+          const fullyPaid = inv?.deposit_percent === 100
+          return {
+            installFee: fullyPaid ? 0 : remaining,
+            customerName: quote.customer_name || currentJob?.customer_name_snapshot || 'Customer',
+          }
+        }
+        return { installFee: 0, customerName: quote.customer_name || currentJob?.customer_name_snapshot || 'Customer' }
+      }
+
       return {
         installFee: quote.install_fee ? parseFloat(quote.install_fee) : 0,
         customerName: quote.customer_name || currentJob?.customer_name_snapshot || 'Customer',
