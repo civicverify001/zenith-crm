@@ -12,10 +12,16 @@ import {
   updatePlanTemplate,
   togglePlanTemplateActive,
   toggleAutoActivate,
+  duplicatePlanTemplate,
+  fetchPlanComponents,
+  savePlanComponents,
   BILLING_CYCLE_LABELS,
   FULFILLMENT_TYPE_LABELS,
+  COMPONENT_CODES,
+  COMPONENT_FULFILLMENT_LABELS,
   type ServicePlanTemplate,
   type CreatePlanTemplateInput,
+  type ComponentDraft,
 } from '../../services/servicePlanService'
 
 // ── Types ─────────────────────────────────────────────────────
@@ -1154,6 +1160,146 @@ function PlanItemsEditor({
   )
 }
 
+// ── Plan Components Editor ─────────────────────────────────────
+function PlanComponentsEditor({
+  components,
+  onChange,
+}: {
+  components: ComponentDraft[]
+  onChange: (c: ComponentDraft[]) => void
+}) {
+  const [newLabel, setNewLabel] = useState('')
+  const [newCode, setNewCode] = useState('annual_maintenance_visit')
+  const [newFulfillment, setNewFulfillment] = useState<'tech_visit' | 'shipment' | 'delivery' | 'on_demand'>('tech_visit')
+  const [newInterval, setNewInterval] = useState('12')
+  const [addError, setAddError] = useState('')
+
+  function addComponent() {
+    if (!newLabel.trim()) { setAddError('Label is required'); return }
+    if (newFulfillment !== 'on_demand' && (!newInterval || parseInt(newInterval) <= 0)) {
+      setAddError('Interval must be > 0 for non-on-demand components'); return
+    }
+    onChange([...components, {
+      label: newLabel.trim(),
+      component_code: newCode,
+      fulfillment_type: newFulfillment,
+      interval_months: newFulfillment === 'on_demand' ? null : parseInt(newInterval),
+    }])
+    setNewLabel(''); setNewCode('annual_maintenance_visit')
+    setNewFulfillment('tech_visit'); setNewInterval('12'); setAddError('')
+  }
+
+  function removeComponent(idx: number) {
+    onChange(components.filter((_, i) => i !== idx))
+  }
+
+  const inputS: React.CSSProperties = {
+    background: 'rgba(255,255,255,0.05)', border: '1px solid #1e3a4f',
+    borderRadius: 8, padding: '7px 10px', color: '#e2e8f0', fontSize: 12, outline: 'none',
+  }
+
+  return (
+    <div>
+      <label style={{ display: 'block', fontSize: 11, color: '#64748b', marginBottom: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        🔁 Recurring Components
+        <span style={{ color: '#475569', fontWeight: 400, textTransform: 'none', letterSpacing: 0, marginLeft: 8 }}>
+          snapshotted per customer at activation — editing here does not affect existing customers
+        </span>
+      </label>
+
+      {/* Existing components */}
+      {components.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+          {components.map((c, idx) => (
+            <div key={idx} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.2)',
+              borderRadius: 10, padding: '8px 12px',
+            }}>
+              <span style={{ fontSize: 14 }}>
+                {c.fulfillment_type === 'tech_visit' ? '🔧' : c.fulfillment_type === 'shipment' ? '📦' : c.fulfillment_type === 'delivery' ? '🚚' : '🔔'}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 12 }}>{c.label}</div>
+                <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
+                  {COMPONENT_FULFILLMENT_LABELS[c.fulfillment_type]}
+                  {c.interval_months ? ` · every ${c.interval_months} months` : ' · no fixed schedule'}
+                  {' · '}<span style={{ color: '#94a3b8' }}>{c.component_code}</span>
+                </div>
+              </div>
+              <button onClick={() => removeComponent(idx)} style={{
+                color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1,
+              }}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add new component row */}
+      <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px dashed #1e3a4f', borderRadius: 10, padding: 12 }}>
+        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8, fontWeight: 600 }}>+ Add Component</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>Label</div>
+              <input type="text" value={newLabel} onChange={e => { setNewLabel(e.target.value); setAddError('') }}
+                placeholder="e.g., Annual Tech Visit" style={{ ...inputS, width: '100%', boxSizing: 'border-box' as const }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>Component Code</div>
+              <select value={newCode} onChange={e => setNewCode(e.target.value)}
+                style={{ ...inputS, width: '100%', boxSizing: 'border-box' as const }}>
+                {COMPONENT_CODES.map(cc => (
+                  <option key={cc.value} value={cc.value} style={{ background: '#0f1923' }}>{cc.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, alignItems: 'flex-end' }}>
+            <div>
+              <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>Fulfillment Type</div>
+              <select
+                value={newFulfillment}
+                onChange={e => {
+                  const v = e.target.value as 'tech_visit' | 'shipment' | 'delivery' | 'on_demand'
+                  setNewFulfillment(v)
+                  if (v === 'on_demand') setNewInterval('')
+                  setAddError('')
+                }}
+                style={{ ...inputS, width: '100%', boxSizing: 'border-box' as const }}>
+                <option value="tech_visit" style={{ background: '#0f1923' }}>Technician Visit</option>
+                <option value="shipment" style={{ background: '#0f1923' }}>Shipment</option>
+                <option value="delivery" style={{ background: '#0f1923' }}>Delivery</option>
+                <option value="on_demand" style={{ background: '#0f1923' }}>On-Demand (no schedule)</option>
+              </select>
+            </div>
+            {newFulfillment !== 'on_demand' && (
+              <div>
+                <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>Interval (months)</div>
+                <input type="number" min="1" value={newInterval}
+                  onChange={e => { setNewInterval(e.target.value); setAddError('') }}
+                  style={{ ...inputS, width: '100%', boxSizing: 'border-box' as const, textAlign: 'center' }} />
+              </div>
+            )}
+            <button onClick={addComponent} style={{
+              padding: '7px 16px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              background: 'linear-gradient(135deg, #38bdf8, #0ea5e9)', color: '#fff', border: 'none',
+              alignSelf: 'flex-end',
+            }}>Add</button>
+          </div>
+        </div>
+        {addError && <div style={{ fontSize: 11, color: '#f87171', marginTop: 6 }}>⚠️ {addError}</div>}
+      </div>
+
+      {components.length === 0 && (
+        <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, fontStyle: 'italic' }}>
+          No components — this plan has no recurring schedule (billing only or priority access).
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ServicePlansTemplateTab() {
   const [templates, setTemplates] = useState<ServicePlanTemplate[]>([])
   const [planItemsMap, setPlanItemsMap] = useState<Record<string, PlanItem[]>>({})
@@ -1177,7 +1323,15 @@ function ServicePlansTemplateTab() {
   const [fAutoActivate, setFAutoActivate] = useState(false)
   // Gap 18: Multi-product items replaces single fProductId
   const [fPlanItems, setFPlanItems] = useState<PlanItem[]>([])
-
+  // Components
+  const [fComponents, setFComponents] = useState<ComponentDraft[]>([])
+  // Feature flags
+  const [fIncludesScheduled, setFIncludesScheduled] = useState(false)
+  const [fIncludesUnscheduled, setFIncludesUnscheduled] = useState(false)
+  const [fIncludesWaterTest, setFIncludesWaterTest] = useState(false)
+  const [fIncludesSalt, setFIncludesSalt] = useState(false)
+  const [fIncludesFilters, setFIncludesFilters] = useState(false)
+  const [fIncludesPriority, setFIncludesPriority] = useState(false)
   useEffect(() => {
     loadTemplates()
     supabase.from('products').select('id, name').eq('is_active', true).order('name').then(({ data }) => {
@@ -1221,6 +1375,10 @@ function ServicePlansTemplateTab() {
     setFName(''); setFDesc(''); setFNotes(''); setFCycle('yearly'); setFPrice('')
     setFFulfillment('none'); setFInterval(''); setFCategories([])
     setFRequiresSystem(true); setFAutoActivate(false); setFPlanItems([])
+    setFComponents([])
+    setFIncludesScheduled(false); setFIncludesUnscheduled(false)
+    setFIncludesWaterTest(false); setFIncludesSalt(false)
+    setFIncludesFilters(false); setFIncludesPriority(false)
     setEditing(null); setError('')
   }
 
@@ -1232,8 +1390,22 @@ function ServicePlansTemplateTab() {
     setFInterval(t.fulfillment_interval_months ? String(t.fulfillment_interval_months) : '')
     setFCategories(Array.isArray(t.applies_to_categories) ? t.applies_to_categories : [])
     setFRequiresSystem(t.requires_installed_system); setFAutoActivate(t.auto_activate_on_install)
-    // Load existing plan items for this template
     setFPlanItems(planItemsMap[t.id] || [])
+    // Feature flags
+    const ta = t as any
+    setFIncludesScheduled(ta.includes_scheduled_maintenance ?? false)
+    setFIncludesUnscheduled(ta.includes_unscheduled_maintenance ?? false)
+    setFIncludesWaterTest(ta.includes_water_test ?? false)
+    setFIncludesSalt(ta.includes_salt_delivery ?? false)
+    setFIncludesFilters(ta.includes_filter_shipments ?? false)
+    setFIncludesPriority(ta.includes_priority_service ?? false)
+    // Load existing components
+    fetchPlanComponents(t.id).then(comps => setFComponents(comps.map(c => ({
+      label: c.label,
+      component_code: c.component_code,
+      fulfillment_type: c.fulfillment_type,
+      interval_months: c.interval_months,
+    })))).catch(() => setFComponents([]))
     setShowForm(true); setError('')
   }
 
@@ -1262,7 +1434,7 @@ function ServicePlansTemplateTab() {
         planId = created.id
       }
 
-      // Gap 18: Sync service_plan_items — delete existing, insert new
+      // Gap 18: Sync service_plan_items
       await supabase.from('service_plan_items').delete().eq('service_plan_id', planId)
       if (fPlanItems.length > 0) {
         await supabase.from('service_plan_items').insert(
@@ -1274,6 +1446,19 @@ function ServicePlansTemplateTab() {
           }))
         )
       }
+
+      // Save feature flags
+      await supabase.from('service_plans').update({
+        includes_scheduled_maintenance: fIncludesScheduled,
+        includes_unscheduled_maintenance: fIncludesUnscheduled,
+        includes_water_test: fIncludesWaterTest,
+        includes_salt_delivery: fIncludesSalt,
+        includes_filter_shipments: fIncludesFilters,
+        includes_priority_service: fIncludesPriority,
+      }).eq('id', planId)
+
+      // Save components (templates only — does NOT touch customer snapshots)
+      await savePlanComponents(planId, fComponents)
 
       setShowForm(false); resetForm(); loadTemplates()
     } catch (e: any) {
@@ -1440,6 +1625,35 @@ function ServicePlansTemplateTab() {
                 <span>⚡</span><span>This plan will automatically activate for every new installation matching the selected categories.</span>
               </div>
             )}
+
+            {/* Feature Flags */}
+            <div style={{ background: 'rgba(56,189,248,0.04)', border: '1px solid rgba(56,189,248,0.15)', borderRadius: 12, padding: 16 }}>
+              <div style={{ fontSize: 11, color: '#38bdf8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                Coverage Features <span style={{ color: '#475569', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>— informational only, shown on customer page</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                {[
+                  { state: fIncludesScheduled,   set: setFIncludesScheduled,   label: 'Scheduled Maintenance' },
+                  { state: fIncludesUnscheduled,  set: setFIncludesUnscheduled,  label: 'Unscheduled Access' },
+                  { state: fIncludesWaterTest,    set: setFIncludesWaterTest,    label: 'Water Tests' },
+                  { state: fIncludesSalt,         set: setFIncludesSalt,         label: 'Salt Delivery' },
+                  { state: fIncludesFilters,      set: setFIncludesFilters,      label: 'Filter Shipments' },
+                  { state: fIncludesPriority,     set: setFIncludesPriority,     label: 'Priority Service' },
+                ].map(({ state, set, label }) => (
+                  <label key={label} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={state} onChange={e => set(e.target.checked)}
+                      style={{ width: 13, height: 13, accentColor: '#38bdf8' }} />
+                    <span style={{ fontSize: 11, color: '#94a3b8' }}>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Components Editor */}
+            <div style={{ background: 'rgba(56,189,248,0.04)', border: '1px solid rgba(56,189,248,0.15)', borderRadius: 12, padding: 16 }}>
+              <PlanComponentsEditor components={fComponents} onChange={setFComponents} />
+            </div>
+
             <div style={{ display: 'flex', gap: 8, paddingTop: 4 }}>
               <button onClick={() => { setShowForm(false); resetForm() }} style={{ padding: '8px 16px', borderRadius: 10, fontSize: 13, color: '#64748b', cursor: 'pointer', background: 'rgba(255,255,255,0.04)', border: '1px solid #1e3a4f' }}>Cancel</button>
               <button onClick={handleSave} disabled={saving || !fName.trim()} style={{ padding: '8px 20px', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #f59e0b, #d97706)', border: 'none', cursor: saving || !fName.trim() ? 'not-allowed' : 'pointer', opacity: saving || !fName.trim() ? 0.5 : 1 }}>
@@ -1552,6 +1766,7 @@ function ServicePlansTemplateTab() {
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
                         <button onClick={() => startEdit(t)} style={{ fontSize: 12, color: '#60a5fa', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Edit</button>
+                        <button onClick={async () => { try { await duplicatePlanTemplate(t.id); loadTemplates() } catch(e: any) { alert('Duplicate failed: ' + e.message) } }} style={{ fontSize: 12, color: '#a855f7', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Duplicate</button>
                         <button onClick={() => handleDelete(t)} style={{ fontSize: 12, color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Delete</button>
                       </div>
                     </td>
