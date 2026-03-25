@@ -422,6 +422,14 @@ module.exports = async function handler(req, res) {
         .maybeSingle();
       const hasCard = !!pmCheck;
 
+      // Helper: next billing date — 1 month or 1 year from today (never today)
+      function calcNextBillingDate(billingCycle) {
+        const d = new Date();
+        if (billingCycle === 'annual') { d.setFullYear(d.getFullYear() + 1); }
+        else { d.setMonth(d.getMonth() + 1); }
+        return d.toISOString().split('T')[0];
+      }
+
       console.log('[COMPLETE][S7b] Starting service plan activation. customerId:', customerId, 'hasCard:', hasCard, 'acceptedQuote:', acceptedQuote?.id || 'none');
 
       // ── A) Quote-origin service plans ──────────────────────────────
@@ -511,7 +519,7 @@ module.exports = async function handler(req, res) {
                     price:                 planPrice,
                     start_date:            todayDate,
                     billing_start_date:    hasCard ? todayDate : null,
-                    next_billing_date:     hasCard ? todayDate : null,
+                    next_billing_date:     hasCard ? calcNextBillingDate(billingCycle) : null,
                     next_fulfillment_date: nextFulfillment,
                     next_service:          nextFulfillment,
                     activated_at:          hasCard ? nowISO : null,
@@ -583,7 +591,7 @@ module.exports = async function handler(req, res) {
                   price:                 planPrice,
                   start_date:            todayDate,
                   billing_start_date:    hasCard ? todayDate : null,
-                  next_billing_date:     hasCard ? todayDate : null,
+                  next_billing_date:     hasCard ? calcNextBillingDate(billingCycle) : null,
                   next_fulfillment_date: nextFulfillment,
                   next_service:          nextFulfillment,
                   activated_at:          hasCard ? nowISO : null,
