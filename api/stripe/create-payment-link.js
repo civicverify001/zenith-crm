@@ -1,3 +1,4 @@
+// test mode refresh
 // api/stripe/create-payment-link.js
 // Creates a Stripe Payment Link for manual/ad-hoc invoices
 // Sends link via SMS (OpenPhone) + email (Resend)
