@@ -964,7 +964,12 @@ export function BillingTab({ customerId, customer }: Props) {
             <div className="flex items-center justify-between mb-3">
               <div className="text-xs font-bold text-slate-300 uppercase tracking-wide">Upcoming Charges</div>
               <div className="text-xs font-semibold" style={{ color: '#fbbf24' }}>
-                {fmt(totalUpcoming)}{upcomingCharges.every(c => activePlans.find(p => p.id === c.planId)?.billing_cycle === 'annual') && upcomingCharges.length > 0 && !activeContract ? '/yr total' : upcomingCharges.some(c => activePlans.find(p => p.id === c.planId)?.billing_cycle === 'annual') && !activeContract ? '/yr total' : '/mo total'}
+                {(() => {
+                  const hasRental = !!activeContract
+                  const hasMonthlyPlan = activePlans.some(p => p.billing_cycle === 'monthly')
+                  const suffix = (!hasRental && !hasMonthlyPlan) ? '/yr' : '/mo'
+                  return `${fmt(totalUpcoming)}${suffix} total`
+                })()}
               </div>
             </div>
             <div className="space-y-2">
