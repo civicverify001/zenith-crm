@@ -717,13 +717,24 @@ module.exports = async function handler(req, res) {
         .then(() => {}).catch(() => {})
     }
 
-    // ── 9. Skip charge if no customer or no fee ───────────────────────
-    if (!customerId || installFee <= 0 || ownershipType === 'purchased') {
+    // ── 9. Skip charge if no customer ────────────────────────────────
+    if (!customerId) {
       return res.status(200).json({
         success: true, job_completed: true,
         installed_system_id: installedSystemId,
         ownership_type: ownershipType, ownership_source: ownershipSource,
-        charge_status: installFee <= 0 ? 'no_fee' : 'no_customer',
+        charge_status: 'no_customer',
+        install_fee: installFee, service_plans: activatedPlans,
+      });
+    }
+
+    // ── 9b. Rental with no install fee — exit early ───────────────────
+    if (ownershipType !== 'purchased' && installFee <= 0) {
+      return res.status(200).json({
+        success: true, job_completed: true,
+        installed_system_id: installedSystemId,
+        ownership_type: ownershipType, ownership_source: ownershipSource,
+        charge_status: 'no_fee',
         install_fee: installFee, service_plans: activatedPlans,
       });
     }
@@ -774,41 +785,43 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    // ── 11. Stripe charge ─────────────────────────────────────────────
+    // ── 11. Stripe charge (rental install fee only) ───────────────────
     let chargeResult = {};
-    try {
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount: Math.round(installFee * 100), currency: 'usd',
-        customer: customer.stripe_customer_id,
-        payment_method: paymentMethod.external_id,
-        off_session: true, confirm: true,
-        description: `Install fee — Job ${job_id}`,
-        metadata: { job_id, customer_id: customerId, type: 'install_fee' },
-      });
+    if (ownershipType !== 'purchased' && installFee > 0) {
+      try {
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: Math.round(installFee * 100), currency: 'usd',
+          customer: customer.stripe_customer_id,
+          payment_method: paymentMethod.external_id,
+          off_session: true, confirm: true,
+          description: `Install fee — Job ${job_id}`,
+          metadata: { job_id, customer_id: customerId, type: 'install_fee' },
+        });
 
-      await supabase.from('payment_transactions').insert({
-        customer_id: customerId, payment_method_id: paymentMethod.id,
-        amount: installFee,
-        status: paymentIntent.status === 'succeeded' ? 'succeeded' : 'pending',
-        type: 'install_fee', external_id: paymentIntent.id,
-        description: `Installation fee — ${customer.full_name || 'Customer'}`,
-        attempted_at: new Date().toISOString(),
-        completed_at: paymentIntent.status === 'succeeded' ? new Date().toISOString() : null,
-      });
+        await supabase.from('payment_transactions').insert({
+          customer_id: customerId, payment_method_id: paymentMethod.id,
+          amount: installFee,
+          status: paymentIntent.status === 'succeeded' ? 'succeeded' : 'pending',
+          type: 'install_fee', external_id: paymentIntent.id,
+          description: `Installation fee — ${customer.full_name || 'Customer'}`,
+          attempted_at: new Date().toISOString(),
+          completed_at: paymentIntent.status === 'succeeded' ? new Date().toISOString() : null,
+        });
 
-      chargeResult = {
-        status: paymentIntent.status === 'succeeded' ? 'charged' : 'pending',
-        amount: installFee, payment_intent_id: paymentIntent.id,
-        last_four: paymentMethod.last_four,
-      };
-    } catch (stripeErr) {
-      await supabase.from('payment_transactions').insert({
-        customer_id: customerId, payment_method_id: paymentMethod.id,
-        amount: installFee, status: 'failed', type: 'install_fee',
-        description: `Installation fee FAILED — ${customer.full_name || 'Customer'}`,
-        attempted_at: new Date().toISOString(), failure_reason: stripeErr.message,
-      });
-      chargeResult = { status: 'failed', error: stripeErr.message, amount: installFee };
+        chargeResult = {
+          status: paymentIntent.status === 'succeeded' ? 'charged' : 'pending',
+          amount: installFee, payment_intent_id: paymentIntent.id,
+          last_four: paymentMethod.last_four,
+        };
+      } catch (stripeErr) {
+        await supabase.from('payment_transactions').insert({
+          customer_id: customerId, payment_method_id: paymentMethod.id,
+          amount: installFee, status: 'failed', type: 'install_fee',
+          description: `Installation fee FAILED — ${customer.full_name || 'Customer'}`,
+          attempted_at: new Date().toISOString(), failure_reason: stripeErr.message,
+        });
+        chargeResult = { status: 'failed', error: stripeErr.message, amount: installFee };
+      }
     }
 
     // ── 11b. First month rental charge (rental only) ──────────────────
