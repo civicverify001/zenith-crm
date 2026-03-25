@@ -67,8 +67,7 @@ export default async function handler(req, res) {
 
     const token = tokenData.access_token;
 
-    // 3. Build shipment payload
-    // labelResponseOptions at TOP LEVEL only — not inside requestedShipment
+    // 3. Minimal payload — strip all optional fields for sandbox compatibility
     const shipPayload = {
       labelResponseOptions: 'LABEL',
       accountNumber: {
@@ -79,7 +78,6 @@ export default async function handler(req, res) {
           contact: {
             personName: 'Zenith Pure Solutions',
             phoneNumber: '3176904172',
-            companyName: 'Zenith Pure Solutions',
           },
           address: {
             streetLines: ['6951 E 30th St Suite B'],
@@ -87,7 +85,6 @@ export default async function handler(req, res) {
             stateOrProvinceCode: 'IN',
             postalCode: '46219',
             countryCode: 'US',
-            residential: false,
           },
         },
         recipients: [
@@ -102,7 +99,6 @@ export default async function handler(req, res) {
               stateOrProvinceCode: shipment.ship_to_state,
               postalCode: String(shipment.ship_to_zip).slice(0, 5),
               countryCode: 'US',
-              residential: true,
             },
           },
         ],
@@ -116,37 +112,19 @@ export default async function handler(req, res) {
         },
         labelSpecification: {
           imageType: 'PDF',
-          labelStockType: 'STOCK_4X6',
-        },
-        totalWeight: {
-          value: 2,
-          units: 'LB',
+          labelStockType: 'PAPER_85X11_TOP_HALF_LABEL',
         },
         requestedPackageLineItems: [
           {
-            sequenceNumber: 1,
             weight: {
-              value: 2,
+              value: 1,
               units: 'LB',
             },
-            dimensions: {
-              length: 10,
-              width: 8,
-              height: 4,
-              units: 'IN',
-            },
-            customerReferences: [
-              {
-                customerReferenceType: 'CUSTOMER_REFERENCE',
-                value: shipment.id.slice(0, 30),
-              },
-            ],
           },
         ],
         serviceType: 'FEDEX_GROUND',
         packagingType: 'YOUR_PACKAGING',
         pickupType: 'USE_SCHEDULED_PICKUP',
-        totalPackageCount: 1,
       },
     };
 
@@ -169,7 +147,9 @@ export default async function handler(req, res) {
       console.error('[fedex] Shipment creation failed:', JSON.stringify(shipData));
       console.error('[fedex] Full payload sent:', JSON.stringify(shipPayload));
       const fedexErrors = shipData.errors || shipData.output?.alerts || [];
-      const errorCodes  = fedexErrors.map((e) => `${e.code}: ${e.message} (parameterList: ${JSON.stringify(e.parameterList)})`).join(' | ');
+      const errorCodes = fedexErrors.map((e) =>
+        `${e.code}: ${e.message} (parameterList: ${JSON.stringify(e.parameterList)})`
+      ).join(' | ');
       return res.status(500).json({
         error: 'FedEx shipment creation failed',
         detail: errorCodes || JSON.stringify(fedexErrors),
@@ -182,7 +162,7 @@ export default async function handler(req, res) {
       || txShipment.pieceResponses?.[0]?.trackingNumber
       || null;
 
-    // LABEL mode returns base64 encoded label data, not a URL
+    // LABEL mode returns base64 encoded label data
     const labelBase64 = txShipment.pieceResponses?.[0]?.packageDocuments?.[0]?.encodedLabel || null;
     const labelUrl    = txShipment.pieceResponses?.[0]?.packageDocuments?.[0]?.url
       || (labelBase64 ? `data:application/pdf;base64,${labelBase64}` : null);
