@@ -362,7 +362,6 @@ export async function activatePlanFromCustomerPage(input: ActivatePlanInput) {
     await supabase.from('customer_activity_log').insert({
       customer_id: input.customer_id,
       event_type: 'service_plan_added',
-      event_type: 'service_plan_added',
       title: `Service plan added: ${template.name}`,
       actor_id: null,
       actor_name: null,
