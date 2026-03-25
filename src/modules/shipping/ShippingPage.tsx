@@ -624,7 +624,15 @@ function ShipmentDetailDrawer({ shipment, onClose, onUpdated }: {
           setFedexError(errMsg || 'Failed to create FedEx label. Check Vercel logs for details.')
         }
       } else {
-        if (data.label_url) window.open(data.label_url, '_blank')
+       if (data.label_url) {
+        if (data.label_url.startsWith('data:')) {
+          const blob = await fetch(data.label_url).then(r => r.blob())
+          const blobUrl = URL.createObjectURL(blob)
+          window.open(blobUrl, '_blank')
+        } else {
+          window.open(data.label_url, '_blank')
+        }
+      }
         onUpdated()
       }
     } catch (err) {
