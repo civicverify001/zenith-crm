@@ -2,20 +2,35 @@
 // Shows service plans for a customer with Add Plan, Pause, Resume, Cancel actions
 
 import { useState, useEffect } from 'react'
-import {
-  fetchCustomerServicePlans,
-  fetchPlanTemplates,
-  activatePlanFromCustomerPage,
-  pausePlan,
-  resumePlan,
-  cancelPlan,
-  checkPaymentMethod,
-  BILLING_CYCLE_LABELS,
-  FULFILLMENT_TYPE_LABELS,
-  PLAN_STATUS_CONFIG,
-  type CustomerServicePlan,
-  type ServicePlanTemplate,
-} from '../../../services/servicePlanService'
+const [plans, setPlans] = useState<CustomerServicePlan[]>([])
+  const [componentMap, setComponentMap] = useState<Record<string, CustomerServicePlanComponent[]>>({})
+  const [loading, setLoading] = useState(true)
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
+
+  useEffect(() => { loadPlans() }, [customerId])
+
+  async function loadPlans() {
+    setLoading(true)
+    try {
+      const data = await fetchCustomerServicePlans(customerId)
+      setPlans(data)
+      // Load components for all active plans
+      const activePlanIds = data.filter(p =>
+        ['active', 'pending_payment_method', 'paused', 'payment_failed'].includes(p.status)
+      ).map(p => p.id)
+      const compMap: Record<string, CustomerServicePlanComponent[]> = {}
+      await Promise.all(activePlanIds.map(async id => {
+        try {
+          compMap[id] = await fetchCustomerPlanComponents(id)
+        } catch { compMap[id] = [] }
+      }))
+      setComponentMap(compMap)
+    } catch (e) {
+      console.error('Failed to load service plans:', e)
+    }
+    setLoading(false)
+  }
 import { fetchInstalledSystems } from '../../../services/customerService'
 import { useAuth } from '../../../hooks/useAuth'
 
@@ -215,6 +230,49 @@ export function ServicePlansTab({ customerId }: Props) {
                       }}>
                         <span>⚠️</span>
                         <span>Payment failed {plan.failed_billing_count} time{plan.failed_billing_count !== 1 ? 's' : ''}. Update card to resume billing.</span>
+                      </div>
+                    )}
+
+                    {/* Component schedule */}
+                    {(componentMap[plan.id] || []).length > 0 && (
+                      <div style={{
+                        marginTop: 12, padding: '10px 12px',
+                        background: 'rgba(56,189,248,0.04)', border: '1px solid rgba(56,189,248,0.12)',
+                        borderRadius: 10,
+                      }}>
+                        <div style={{ fontSize: 10, color: '#38bdf8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+                          Service Schedule
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {(componentMap[plan.id] || []).map(comp => (
+                            <div key={comp.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontSize: 12 }}>
+                                  {comp.fulfillment_type === 'tech_visit' ? '🔧' : comp.fulfillment_type === 'shipment' ? '📦' : comp.fulfillment_type === 'delivery' ? '🚚' : '🔔'}
+                                </span>
+                                <span style={{ fontSize: 12, color: '#e2e8f0' }}>{comp.label}</span>
+                                <span style={{ fontSize: 10, color: '#64748b' }}>
+                                  {comp.interval_months ? `· every ${comp.interval_months} mo` : '· on-demand'}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                                {comp.last_completed_at && (
+                                  <span style={{ fontSize: 10, color: '#64748b' }}>
+                                    Last: {formatDate(comp.last_completed_at)}
+                                  </span>
+                                )}
+                                <span style={{
+                                  fontSize: 11, fontWeight: 600,
+                                  color: comp.next_due_date
+                                    ? (new Date(comp.next_due_date) < new Date() ? '#f87171' : '#4ade80')
+                                    : '#64748b',
+                                }}>
+                                  {comp.next_due_date ? `Due ${formatDate(comp.next_due_date)}` : '—'}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
 
