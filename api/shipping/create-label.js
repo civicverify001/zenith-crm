@@ -6,47 +6,23 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const FEDEX_BASE = process.env.FEDEX_BASE_URL || 'https://apis-sandbox.fedex.com';
-
+const FEDEX_BASE = 'https://apis-sandbox.fedex.com';
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-function safeZip(zip) {
-  return String(zip || '').trim().slice(0, 5);
-}
-
-function safePhone(phone, fallback = '3170000000') {
-  const digits = String(phone || '').replace(/\D/g, '');
-  return digits.length >= 10 ? digits.slice(0, 15) : fallback;
-}
-
-function toIsoDate(dateValue) {
-  const d = dateValue ? new Date(dateValue) : new Date();
-  return d.toISOString().split('T')[0];
-}
-
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { shipment_id } = req.body || {};
-  if (!shipment_id) {
-    return res.status(400).json({ error: 'shipment_id required' });
-  }
+  const { shipment_id } = req.body;
+  if (!shipment_id) return res.status(400).json({ error: 'shipment_id required' });
 
-  const fedexApiKey = process.env.FEDEX_API_KEY;
-  const fedexSecretKey = process.env.FEDEX_SECRET_KEY;
+  const fedexApiKey        = process.env.FEDEX_API_KEY;
+  const fedexSecretKey     = process.env.FEDEX_SECRET_KEY;
   const fedexAccountNumber = process.env.FEDEX_ACCOUNT_NUMBER;
-
-  // Safer to make this configurable instead of hard-coding scheduled pickup
-  const fedexPickupType =
-    process.env.FEDEX_PICKUP_TYPE || 'DROPOFF_AT_FEDEX_LOCATION';
 
   if (!fedexApiKey || !fedexSecretKey || !fedexAccountNumber) {
     return res.status(500).json({ error: 'FedEx credentials not configured' });
   }
-
   if (!supabaseUrl || !supabaseServiceKey) {
     return res.status(500).json({ error: 'Missing Supabase env vars' });
   }
@@ -54,13 +30,10 @@ export default async function handler(req, res) {
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
-    // 1) Fetch shipment details
+    // 1. Fetch shipment details
     const { data: shipment, error: shipErr } = await supabase
       .from('shipments')
-      .select(`
-        *,
-        products(name, sku)
-      `)
+      .select('*, products(name, sku)')
       .eq('id', shipment_id)
       .single();
 
@@ -68,23 +41,14 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Shipment not found' });
     }
 
-    if (
-      !shipment.ship_to_address ||
-      !shipment.ship_to_city ||
-      !shipment.ship_to_state ||
-      !shipment.ship_to_zip
-    ) {
-      return res.status(400).json({
-        error: 'Shipment is missing shipping address',
-      });
+    if (!shipment.ship_to_address || !shipment.ship_to_city || !shipment.ship_to_state || !shipment.ship_to_zip) {
+      return res.status(400).json({ error: 'Shipment is missing shipping address' });
     }
 
-    // 2) FedEx OAuth
+    // 2. Get FedEx OAuth token
     const tokenRes = await fetch(`${FEDEX_BASE}/oauth/token`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         grant_type: 'client_credentials',
         client_id: fedexApiKey,
@@ -93,7 +57,6 @@ export default async function handler(req, res) {
     });
 
     const tokenData = await tokenRes.json();
-
     if (!tokenRes.ok || !tokenData.access_token) {
       console.error('[fedex] OAuth failed:', JSON.stringify(tokenData));
       return res.status(500).json({
@@ -104,41 +67,16 @@ export default async function handler(req, res) {
 
     const token = tokenData.access_token;
 
-    // 3) Build shipment payload
-    const recipientIsResidential =
-      typeof shipment.is_residential === 'boolean'
-        ? shipment.is_residential
-        : true;
-
-    const serviceType = recipientIsResidential
-      ? 'GROUND_HOME_DELIVERY'
-      : 'FEDEX_GROUND';
-
-    const weightValue = Number(shipment.weight_lb || 2);
-    const lengthValue = Number(shipment.length_in || 10);
-    const widthValue = Number(shipment.width_in || 8);
-    const heightValue = Number(shipment.height_in || 4);
-
+    // 3. Minimal payload — strip all optional fields for sandbox compatibility
     const shipPayload = {
       labelResponseOptions: 'LABEL',
       accountNumber: {
         value: fedexAccountNumber,
       },
       requestedShipment: {
-        shipDatestamp: toIsoDate(shipment.ship_date),
-        serviceType,
-        packagingType: 'YOUR_PACKAGING',
-        pickupType: fedexPickupType,
-        totalWeight: {
-          units: 'LB',
-          value: weightValue,
-        },
-        totalPackageCount: 1,
-
         shipper: {
           contact: {
             personName: 'Zenith Pure Solutions',
-            companyName: 'Zenith Pure Solutions',
             phoneNumber: '3176904172',
           },
           address: {
@@ -147,81 +85,58 @@ export default async function handler(req, res) {
             stateOrProvinceCode: 'IN',
             postalCode: '46219',
             countryCode: 'US',
-            residential: false,
           },
         },
-
         recipients: [
           {
             contact: {
               personName: shipment.ship_to_name || 'Customer',
-              companyName: shipment.ship_to_company || undefined,
-              phoneNumber: safePhone(shipment.ship_to_phone),
+              phoneNumber: '3170000000',
             },
             address: {
               streetLines: [shipment.ship_to_address],
               city: shipment.ship_to_city,
               stateOrProvinceCode: shipment.ship_to_state,
-              postalCode: safeZip(shipment.ship_to_zip),
+              postalCode: String(shipment.ship_to_zip).slice(0, 5),
               countryCode: 'US',
-              residential: recipientIsResidential,
             },
           },
         ],
-
         shippingChargesPayment: {
           paymentType: 'SENDER',
           payor: {
             responsibleParty: {
-              accountNumber: {
-                value: fedexAccountNumber,
-              },
+              accountNumber: { value: fedexAccountNumber },
             },
           },
         },
-
         labelSpecification: {
-          labelFormatType: 'COMMON2D',
           imageType: 'PDF',
-          labelStockType: 'PAPER_4X6',
+          labelStockType: 'PAPER_85X11_TOP_HALF_LABEL',
         },
-
         requestedPackageLineItems: [
           {
-            sequenceNumber: 1,
-            groupPackageCount: 1,
             weight: {
+              value: 1,
               units: 'LB',
-              value: weightValue,
             },
-            dimensions: {
-              length: lengthValue,
-              width: widthValue,
-              height: heightValue,
-              units: 'IN',
-            },
-            customerReferences: [
-              {
-                customerReferenceType: 'CUSTOMER_REFERENCE',
-                value: String(shipment.id).slice(0, 30),
-              },
-            ],
           },
         ],
+        serviceType: 'FEDEX_GROUND',
+        packagingType: 'YOUR_PACKAGING',
+        pickupType: 'USE_SCHEDULED_PICKUP',
       },
     };
 
     console.log('[fedex] Sending payload to', `${FEDEX_BASE}/ship/v1/shipments`);
-    console.log('[fedex] Payload:', JSON.stringify(shipPayload));
 
-    // 4) Create shipment
     const shipRes = await fetch(`${FEDEX_BASE}/ship/v1/shipments`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+        'Authorization': `Bearer ${token}`,
         'X-locale': 'en_US',
-        'X-Customer-Transaction-Id': String(shipment_id).slice(0, 30),
+        'X-Customer-Transaction-Id': shipment_id.slice(0, 30),
       },
       body: JSON.stringify(shipPayload),
     });
@@ -230,44 +145,29 @@ export default async function handler(req, res) {
 
     if (!shipRes.ok || !shipData.output?.transactionShipments?.length) {
       console.error('[fedex] Shipment creation failed:', JSON.stringify(shipData));
-
+      console.error('[fedex] Full payload sent:', JSON.stringify(shipPayload));
       const fedexErrors = shipData.errors || shipData.output?.alerts || [];
-      const errorCodes = Array.isArray(fedexErrors)
-        ? fedexErrors
-            .map((e) => {
-              const code = e?.code || 'UNKNOWN';
-              const message = e?.message || 'Unknown error';
-              const params = e?.parameterList
-                ? ` (parameterList: ${JSON.stringify(e.parameterList)})`
-                : '';
-              return `${code}: ${message}${params}`;
-            })
-            .join(' | ')
-        : JSON.stringify(fedexErrors);
-
+      const errorCodes = fedexErrors.map((e) =>
+        `${e.code}: ${e.message} (parameterList: ${JSON.stringify(e.parameterList)})`
+      ).join(' | ');
       return res.status(500).json({
         error: 'FedEx shipment creation failed',
-        detail: errorCodes || JSON.stringify(shipData),
+        detail: errorCodes || JSON.stringify(fedexErrors),
         raw: shipData,
-        payload_sent: shipPayload,
       });
     }
 
-    const txShipment = shipData.output.transactionShipments[0];
+    const txShipment     = shipData.output.transactionShipments[0];
+    const trackingNumber = txShipment.masterTrackingNumber?.trackingNumber
+      || txShipment.pieceResponses?.[0]?.trackingNumber
+      || null;
 
-    const trackingNumber =
-      txShipment.masterTrackingNumber?.trackingNumber ||
-      txShipment.pieceResponses?.[0]?.trackingNumber ||
-      null;
+    // LABEL mode returns base64 encoded label data
+    const labelBase64 = txShipment.pieceResponses?.[0]?.packageDocuments?.[0]?.encodedLabel || null;
+    const labelUrl    = txShipment.pieceResponses?.[0]?.packageDocuments?.[0]?.url
+      || (labelBase64 ? `data:application/pdf;base64,${labelBase64}` : null);
 
-    const labelBase64 =
-      txShipment.pieceResponses?.[0]?.packageDocuments?.[0]?.encodedLabel || null;
-
-    const labelUrl =
-      txShipment.pieceResponses?.[0]?.packageDocuments?.[0]?.url ||
-      (labelBase64 ? `data:application/pdf;base64,${labelBase64}` : null);
-
-    // 5) Update shipment in DB
+    // 4. Update shipment in DB
     const { error: updateErr } = await supabase
       .from('shipments')
       .update({
@@ -282,21 +182,16 @@ export default async function handler(req, res) {
       console.error('[fedex] DB update error:', updateErr);
     }
 
-    console.log(
-      `[fedex] Label created for shipment ${shipment_id}: tracking=${trackingNumber}`
-    );
+    console.log(`[fedex] Label created for shipment ${shipment_id}: tracking=${trackingNumber}`);
 
     return res.status(200).json({
       success: true,
       tracking_number: trackingNumber,
       label_url: labelUrl,
-      raw: shipData,
     });
+
   } catch (err) {
     console.error('[fedex] create-label error:', err);
-    return res.status(500).json({
-      error: 'Failed to create FedEx label',
-      detail: err.message,
-    });
+    return res.status(500).json({ error: 'Failed to create FedEx label', detail: err.message });
   }
 }
