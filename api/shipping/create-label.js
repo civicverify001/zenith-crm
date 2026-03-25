@@ -16,8 +16,8 @@ export default async function handler(req, res) {
   const { shipment_id } = req.body;
   if (!shipment_id) return res.status(400).json({ error: 'shipment_id required' });
 
-  const fedexApiKey      = process.env.FEDEX_API_KEY;
-  const fedexSecretKey   = process.env.FEDEX_SECRET_KEY;
+  const fedexApiKey        = process.env.FEDEX_API_KEY;
+  const fedexSecretKey     = process.env.FEDEX_SECRET_KEY;
   const fedexAccountNumber = process.env.FEDEX_ACCOUNT_NUMBER;
 
   if (!fedexApiKey || !fedexSecretKey || !fedexAccountNumber) {
@@ -68,13 +68,7 @@ export default async function handler(req, res) {
     const token = tokenData.access_token;
 
     // 3. Build shipment payload
-    // FIX: removed duplicate top-level accountNumber (was conflicting with
-    // shippingChargesPayment.payor.responsibleParty.accountNumber).
-    // FIX: changed pickupType to USE_SCHEDULED_PICKUP — DROPOFF_AT_FEDEX_LOCATION
-    // requires a dropoff location object that was not provided.
-    // FIX: added totalWeight at requestedShipment level (required by FedEx v1).
-    // FIX: labelResponseOptions changed to LABEL to get inline label data as
-    // fallback alongside URL — more compatible with accounts pending validation.
+    // labelResponseOptions at TOP LEVEL only — not inside requestedShipment
     const shipPayload = {
       labelResponseOptions: 'LABEL',
       requestedShipment: {
@@ -103,7 +97,7 @@ export default async function handler(req, res) {
               streetLines: [shipment.ship_to_address],
               city: shipment.ship_to_city,
               stateOrProvinceCode: shipment.ship_to_state,
-              postalCode: String(shipment.ship_to_zip).slice(0, 5), // ensure 5-digit ZIP
+              postalCode: String(shipment.ship_to_zip).slice(0, 5),
               countryCode: 'US',
               residential: true,
             },
@@ -124,7 +118,6 @@ export default async function handler(req, res) {
           imageType: 'PDF',
           labelStockType: 'PAPER_4X6',
         },
-        // FIX: totalWeight required at shipment level
         totalWeight: {
           value: 2,
           units: 'LB',
@@ -152,12 +145,9 @@ export default async function handler(req, res) {
         ],
         serviceType: 'FEDEX_GROUND',
         packagingType: 'YOUR_PACKAGING',
-        // FIX: USE_SCHEDULED_PICKUP is correct for account-billed ground shipments
-        labelResponseOptions: 'LABEL',
-        // FIX: totalPackageCount required
+        pickupType: 'DROPOFF_AT_FEDEX_LOCATION',
         totalPackageCount: 1,
       },
-      // FIX: removed duplicate accountNumber from top level
     };
 
     console.log('[fedex] Sending payload to', `${FEDEX_BASE}/ship/v1/shipments`);
@@ -175,8 +165,6 @@ export default async function handler(req, res) {
 
     const shipData = await shipRes.json();
 
-    // FIX: surface the full FedEx error in the API response so the UI
-    // can show a useful message and we can diagnose from Vercel logs
     if (!shipRes.ok || !shipData.output?.transactionShipments?.length) {
       console.error('[fedex] Shipment creation failed:', JSON.stringify(shipData));
       console.error('[fedex] Full payload sent:', JSON.stringify(shipPayload));
@@ -189,11 +177,15 @@ export default async function handler(req, res) {
       });
     }
 
-    const txShipment    = shipData.output.transactionShipments[0];
+    const txShipment     = shipData.output.transactionShipments[0];
     const trackingNumber = txShipment.masterTrackingNumber?.trackingNumber
       || txShipment.pieceResponses?.[0]?.trackingNumber
       || null;
-    const labelUrl = txShipment.pieceResponses?.[0]?.packageDocuments?.[0]?.url || null;
+
+    // LABEL mode returns base64 encoded label data, not a URL
+    const labelBase64 = txShipment.pieceResponses?.[0]?.packageDocuments?.[0]?.encodedLabel || null;
+    const labelUrl    = txShipment.pieceResponses?.[0]?.packageDocuments?.[0]?.url
+      || (labelBase64 ? `data:application/pdf;base64,${labelBase64}` : null);
 
     // 4. Update shipment in DB
     const { error: updateErr } = await supabase
