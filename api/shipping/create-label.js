@@ -71,6 +71,9 @@ export default async function handler(req, res) {
     // labelResponseOptions at TOP LEVEL only — not inside requestedShipment
     const shipPayload = {
       labelResponseOptions: 'LABEL',
+      accountNumber: {
+        value: fedexAccountNumber,
+      },
       requestedShipment: {
         shipper: {
           contact: {
@@ -113,7 +116,7 @@ export default async function handler(req, res) {
         },
         labelSpecification: {
           imageType: 'PDF',
-          labelStockType: 'PAPER_4X6',
+          labelStockType: 'STOCK_4X6',
         },
         totalWeight: {
           value: 2,
