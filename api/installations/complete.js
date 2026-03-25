@@ -718,7 +718,7 @@ module.exports = async function handler(req, res) {
     }
 
     // ── 9. Skip charge if no customer or no fee ───────────────────────
-    if (!customerId || installFee <= 0) {
+    if (!customerId || installFee <= 0 || ownershipType === 'purchased') {
       return res.status(200).json({
         success: true, job_completed: true,
         installed_system_id: installedSystemId,
@@ -855,11 +855,68 @@ module.exports = async function handler(req, res) {
       }
     }
 
+    // ── 11c. Purchase remaining balance charge ────────────────────
+    let purchaseBalanceResult = {};
+    if (ownershipType === 'purchased' && !alreadyComplete && customerId) {
+      try {
+        const { data: purchaseInvoice } = await supabase
+          .from('invoices').select('id, invoice_number, amount_due, total, deposit_percent')
+          .eq('customer_id', customerId)
+          .in('status', ['paid', 'signed', 'partial'])
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+
+        const remainingBalance = purchaseInvoice?.amount_due ? parseFloat(purchaseInvoice.amount_due) : 0;
+        const isFullyPaid = purchaseInvoice?.deposit_percent === 100;
+
+        if (remainingBalance > 0 && !isFullyPaid && customer?.stripe_customer_id && paymentMethod?.external_id) {
+          const { data: existingBalanceTx } = await supabase
+            .from('payment_transactions').select('id')
+            .eq('customer_id', customerId).eq('type', 'purchase_balance').eq('status', 'succeeded').maybeSingle();
+
+          if (!existingBalanceTx) {
+            const balancePI = await stripe.paymentIntents.create({
+              amount: Math.round(remainingBalance * 100), currency: 'usd',
+              customer: customer.stripe_customer_id,
+              payment_method: paymentMethod.external_id,
+              off_session: true, confirm: true,
+              description: `Remaining balance — ${purchaseInvoice.invoice_number}`,
+              metadata: { job_id, customer_id: customerId, type: 'purchase_balance' },
+            });
+
+            await supabase.from('payment_transactions').insert({
+              customer_id: customerId, payment_method_id: paymentMethod.id,
+              amount: remainingBalance,
+              status: balancePI.status === 'succeeded' ? 'succeeded' : 'pending',
+              type: 'purchase_balance', external_id: balancePI.id,
+              description: `Remaining balance — ${purchaseInvoice.invoice_number}`,
+              attempted_at: new Date().toISOString(),
+              completed_at: balancePI.status === 'succeeded' ? new Date().toISOString() : null,
+            });
+
+            if (balancePI.status === 'succeeded') {
+              await supabase.from('invoices').update({ status: 'paid', amount_due: 0 }).eq('id', purchaseInvoice.id);
+            }
+
+            purchaseBalanceResult = { status: balancePI.status === 'succeeded' ? 'charged' : 'pending', amount: remainingBalance };
+            console.log('[COMPLETE][S11c] Purchase remaining balance charged:', remainingBalance, 'status:', balancePI.status);
+          } else {
+            purchaseBalanceResult = { status: 'already_charged' };
+          }
+        } else if (isFullyPaid) {
+          purchaseBalanceResult = { status: 'fully_paid' };
+        }
+      } catch (balanceErr) {
+        console.error('[COMPLETE][S11c] Purchase balance charge failed (non-blocking):', balanceErr.message);
+        purchaseBalanceResult = { status: 'failed', error: balanceErr.message };
+      }
+    }
+
     return res.status(200).json({
       success: true, job_completed: true,
       installed_system_id: installedSystemId,
       ownership_type: ownershipType, ownership_source: ownershipSource,
       charge_status: chargeResult.status, charge_details: chargeResult,
+      purchase_balance: purchaseBalanceResult,
       service_plans: activatedPlans,
     });
 
