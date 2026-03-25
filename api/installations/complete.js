@@ -37,6 +37,41 @@ async function sendSms(to, message, customerId) {
   } catch (e) { console.error('[complete] sendSms error:', e.message) }
 }
 
+// Snapshot service plan components for a customer plan activation
+async function snapshotCustomerPlanComponents(customerServicePlanId, planId, activationDate) {
+  const { data: components } = await supabase
+    .from('service_plan_components')
+    .select('*')
+    .eq('plan_id', planId)
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true });
+
+  if (!components || components.length === 0) return;
+
+  const rows = components.map(c => {
+    let nextDueDate = null;
+    if (c.interval_months && c.fulfillment_type !== 'on_demand') {
+      const d = new Date(activationDate + 'T12:00:00');
+      d.setMonth(d.getMonth() + c.interval_months);
+      nextDueDate = d.toISOString().split('T')[0];
+    }
+    return {
+      customer_service_plan_id: customerServicePlanId,
+      plan_component_id: c.id,
+      label: c.label,
+      component_code: c.component_code,
+      fulfillment_type: c.fulfillment_type,
+      interval_months: c.interval_months,
+      next_due_date: nextDueDate,
+      last_completed_at: null,
+      status: 'active',
+    };
+  });
+
+  await supabase.from('customer_service_plan_components').insert(rows);
+  console.log('[COMPLETE][COMPONENTS] Snapshotted', rows.length, 'components for plan', customerServicePlanId);
+}
+
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -536,6 +571,10 @@ module.exports = async function handler(req, res) {
                 } else if (newPlan) {
                   console.log(`[COMPLETE][S7b-A] ✓ Plan activated: id=${newPlan.id}`);
                   activatedPlans.push({ id: newPlan.id, source: 'quote', template_id: templateId, status: initialStatus, name: matchedTemplate.name });
+                  // Snapshot components for this customer plan
+                  try {
+                    await snapshotCustomerPlanComponents(newPlan.id, templateId, todayDate);
+                  } catch(e) { console.error('[BEST-EFFORT] component snapshot:', e.message); }
                 }
               } catch (insertErr) {
                 if (insertErr.code !== '23505') console.error('[COMPLETE][S7b-A] plan insert error:', insertErr.message);
@@ -602,8 +641,13 @@ module.exports = async function handler(req, res) {
               if (autoInsertErr) {
                 if (autoInsertErr.code !== '23505') console.error(`[COMPLETE][S7b-B] Auto-enroll FAILED for "${tmpl.name}":`, autoInsertErr.message);
               } else if (newPlan) {
-                activatedPlans.push({ id: newPlan.id, source: 'auto_install', template_id: tmpl.id, status: initialStatus, name: tmpl.name });
-              }
+                  console.log(`[COMPLETE][S7b-A] ✓ Plan activated: id=${newPlan.id}`);
+                  activatedPlans.push({ id: newPlan.id, source: 'quote', template_id: templateId, status: initialStatus, name: matchedTemplate.name });
+                  // Snapshot components for this customer plan
+                  try {
+                    await snapshotCustomerPlanComponents(newPlan.id, templateId, todayDate);
+                  } catch(e) { console.error('[BEST-EFFORT] component snapshot:', e.message); }
+                }
             } catch (insertErr) {
               if (insertErr.code !== '23505') console.error('[COMPLETE][S7b-B] auto-enroll error:', insertErr.message);
             }
