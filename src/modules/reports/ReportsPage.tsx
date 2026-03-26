@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../../hooks/useAuth'
 import * as rs from '../../services/reportingService'
 import type { DateRange } from '../../services/reportingService'
-
+import { useBranchContext } from '../../contexts/BranchContext'
 // ─── Helpers ───────────────────────────────────────────────────
 function fmt$(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
@@ -1358,11 +1358,21 @@ const NAV_TABS: { id: Section; label: string; icon: string; color: string; bg: s
 
 // ─── Main Page ──────────────────────────────────────────────────
 export function ReportsPage() {
-  const { role } = useAuth()
+  cconst { role } = useAuth()
+  const { userBranch, selectedBranchId, allBranches } = useBranchContext()
   const isAdmin = role === 'admin'
   const [activeSection, setActiveSection] = useState<Section>('overview')
   const [range, setRange] = useState<DateRange>(rs.getMTDRange())
   const visibleTabs = NAV_TABS.filter(t => !t.adminOnly || isAdmin)
+
+  const activeBranch = isAdmin && selectedBranchId
+    ? allBranches.find(b => b.id === selectedBranchId)
+    : userBranch
+  const branchSubtitle = activeBranch
+    ? `${activeBranch.name}${activeBranch.city ? ` · ${activeBranch.city}, ${activeBranch.state}` : ''}`
+    : isAdmin && !selectedBranchId
+    ? 'Zenith Pure Solutions · All Branches'
+    : 'Zenith Pure Solutions'
 
   return (
     <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -1371,7 +1381,7 @@ export function ReportsPage() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h1 style={{ color: '#f1f5f9', fontWeight: 800, fontSize: 22, margin: 0, letterSpacing: '-0.02em' }}>Reports</h1>
-          <p style={{ color: '#475569', fontSize: 13, marginTop: 4, marginBottom: 0 }}>Zenith Pure Solutions · Indianapolis, IN</p>
+          <p style={{ color: '#475569', fontSize: 13, marginTop: 4, marginBottom: 0 }}>{branchSubtitle}</p>
         </div>
         <DateRangeBar range={range} onChange={setRange} />
       </div>
