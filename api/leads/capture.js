@@ -18,6 +18,30 @@ function validateEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 }
 
+// ── Phase 6: Resolve branch_id from ZIP territory ────────────
+async function resolveBranchId(supabase, zipCode) {
+  try {
+    if (zipCode) {
+      const { data: territory } = await supabase
+        .from('zip_territories')
+        .select('branch_id, assigned_rep_id')
+        .eq('zip_code', zipCode.trim())
+        .maybeSingle()
+      if (territory?.branch_id) return territory
+    }
+    // Fall back to default (first active branch — INDY)
+    const { data: defaultBranch } = await supabase
+      .from('branches')
+      .select('id')
+      .eq('is_active', true)
+      .order('created_at')
+      .limit(1)
+      .maybeSingle()
+    if (defaultBranch?.id) return { branch_id: defaultBranch.id, assigned_rep_id: null }
+  } catch (e) { /* fire-and-forget */ }
+  return { branch_id: null, assigned_rep_id: null }
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
@@ -89,6 +113,9 @@ module.exports = async function handler(req, res) {
       .limit(1)
       .maybeSingle()
 
+    // ── Phase 6: Auto-resolve branch from ZIP territory ──────────
+    const { branch_id, assigned_rep_id } = await resolveBranchId(supabase, zipCode)
+
     const leadData = {
       full_name: fullName,
       phone: cleanPhone,
@@ -103,6 +130,8 @@ module.exports = async function handler(req, res) {
     if (zipCode) leadData.zip_code = zipCode
     if (waterConcern) leadData.water_concern = waterConcern
     if (notes) leadData.notes = notes
+    if (branch_id) leadData.branch_id = branch_id
+    if (assigned_rep_id) leadData.assigned_rep_id = assigned_rep_id
 
     const { data: lead, error: insertError } = await supabase
       .from('leads')
@@ -133,6 +162,7 @@ module.exports = async function handler(req, res) {
       success: true,
       lead_id: lead.id,
       message: 'Lead created successfully',
+      branch_id: branch_id || null,
     }
 
     if (existingCustomer) {

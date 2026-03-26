@@ -6,6 +6,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { useBranchContext } from '../../contexts/BranchContext'
 
 // ============================================================
 // DATA HOOKS
@@ -702,6 +703,7 @@ export function DashboardPage() {
   const { profile, role } = useAuth()
   const navigate = useNavigate()
 
+  const { userBranch, selectedBranchId, allBranches } = useBranchContext()
   const isAdmin        = role === 'admin'
   const isFrontdesk    = role === 'frontdesk'
   const isSalesOrAdmin = role === 'admin' || role === 'salesrep' || role === 'frontdesk'
@@ -753,12 +755,25 @@ export function DashboardPage() {
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
           </p>
         </div>
-        {urgentCount > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 600, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171' }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', display: 'inline-block' }} />
-            {urgentCount} item{urgentCount !== 1 ? 's' : ''} need attention
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          {/* Branch indicator for admin */}
+          {isAdmin && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 10, fontSize: 12, fontWeight: 600, background: 'rgba(13,126,163,0.1)', border: '1px solid rgba(13,126,163,0.25)', color: '#0d7ea3' }}>
+              <span>🏢</span>
+              <span>
+                {selectedBranchId
+                  ? (allBranches.find(b => b.id === selectedBranchId)?.name || 'Branch')
+                  : 'All Branches'}
+              </span>
+            </div>
+          )}
+          {urgentCount > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 600, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171' }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', display: 'inline-block' }} />
+              {urgentCount} item{urgentCount !== 1 ? 's' : ''} need attention
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── KPI Cards ── */}

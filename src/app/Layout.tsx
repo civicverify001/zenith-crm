@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { usePermissions } from '../hooks/usePermissions'
+import { useBranchContext } from '../contexts/BranchContext'
 import { supabase } from '../lib/supabase'
 import type { UserRole } from '../types/domain.types'
 
@@ -73,6 +74,90 @@ function Avatar({ name, size = 8 }: { name: string; size?: number }) {
       }}
     >
       {initials}
+    </div>
+  )
+}
+
+// ─── Branch display in top bar ────────────────────────────────────
+function BranchDisplay() {
+  const { profile } = useAuth()
+  const isAdmin = profile?.role === 'admin'
+  const { userBranch, allBranches, selectedBranchId, setSelectedBranchId } = useBranchContext()
+  const [open, setOpen] = useState(false)
+
+  const displayBranch = isAdmin && selectedBranchId
+    ? allBranches.find(b => b.id === selectedBranchId)
+    : userBranch
+
+  const displayLabel = displayBranch
+    ? `${displayBranch.name}${displayBranch.city ? ` — ${displayBranch.city}, ${displayBranch.state}` : ''}`
+    : 'Zenith Pure Solutions'
+
+  // Non-admin: static pill
+  if (!isAdmin || allBranches.length <= 1) {
+    return (
+      <span style={{ fontSize: 12, color: '#1e3a4f', fontWeight: 500 }}>
+        {displayLabel}
+      </span>
+    )
+  }
+
+  // Admin with multiple branches: dropdown switcher
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '4px 10px', borderRadius: 8, cursor: 'pointer',
+          background: 'rgba(13,126,163,0.1)', border: '1px solid rgba(13,126,163,0.25)',
+          color: '#0d7ea3', fontSize: 12, fontWeight: 600,
+        }}
+      >
+        <span>🏢</span>
+        <span>{displayBranch?.code ?? 'ALL'}</span>
+        <span style={{ fontSize: 10, opacity: 0.7 }}>▼</span>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, zIndex: 200, marginTop: 4,
+          background: '#0f1923', border: '1px solid #1e3a4f', borderRadius: 10,
+          minWidth: 220, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', overflow: 'hidden',
+        }}>
+          {/* All branches option */}
+          <button
+            onClick={() => { setSelectedBranchId(null); setOpen(false) }}
+            style={{
+              display: 'block', width: '100%', textAlign: 'left',
+              padding: '9px 14px', background: selectedBranchId === null ? 'rgba(13,126,163,0.15)' : 'transparent',
+              border: 'none', cursor: 'pointer', color: selectedBranchId === null ? '#0d7ea3' : '#94a3b8',
+              fontSize: 13, fontWeight: selectedBranchId === null ? 700 : 400,
+              borderBottom: '1px solid #1e3a4f',
+            }}
+          >
+            🌐 All Branches
+          </button>
+          {allBranches.map(branch => (
+            <button
+              key={branch.id}
+              onClick={() => { setSelectedBranchId(branch.id); setOpen(false) }}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                padding: '9px 14px',
+                background: selectedBranchId === branch.id ? 'rgba(13,126,163,0.15)' : 'transparent',
+                border: 'none', cursor: 'pointer',
+                color: selectedBranchId === branch.id ? '#0d7ea3' : '#94a3b8',
+                fontSize: 13, fontWeight: selectedBranchId === branch.id ? 700 : 400,
+                borderBottom: '1px solid rgba(30,58,79,0.4)',
+              }}
+            >
+              <span style={{ fontWeight: 700, marginRight: 6 }}>{branch.code}</span>
+              <span style={{ fontSize: 11, opacity: 0.7 }}>{branch.city}, {branch.state}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -383,7 +468,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               <span style={{ display: 'block', width: 18, height: 2, borderRadius: 1, background: '#475569' }} />
               <span style={{ display: 'block', width: 18, height: 2, borderRadius: 1, background: '#475569' }} />
             </button>
-            <span style={{ fontSize: 12, color: '#1e3a4f', fontWeight: 500 }}>Zenith Pure Solutions — Indianapolis, IN</span>
+            {/* Branch display — replaces hardcoded city name */}
+            <BranchDisplay />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80', boxShadow: '0 0 8px rgba(74,222,128,0.5)' }} />

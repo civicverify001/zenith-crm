@@ -10,6 +10,32 @@ const APP_URL    = process.env.VITE_APP_URL  || 'https://zenith-crm-ten.vercel.a
 const fmt     = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
 const fmtDate = (s: string | null) => s ? new Date(s).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—'
 
+// ── Phase 6: Resolve branch from-address ─────────────────────
+async function resolveBranchSender(branchId: string | null): Promise<{ fromEmail: string; fromName: string; footerAddress: string }> {
+  const fallback = {
+    fromEmail: `quotes@${DOMAIN}`,
+    fromName: 'Zenith Pure Solutions',
+    footerAddress: 'Zenith Pure Solutions LLC · 6951 E 30th St, Suite B · Indianapolis, IN 46219',
+  }
+  if (!branchId) return fallback
+  try {
+    const { data: branch } = await supabase
+      .from('branches')
+      .select('name, email, address, city, state, zip, phone')
+      .eq('id', branchId)
+      .single()
+    if (!branch) return fallback
+    return {
+      fromEmail: branch.email || fallback.fromEmail,
+      fromName: branch.name || fallback.fromName,
+      footerAddress: [branch.name, branch.address, `${branch.city}, ${branch.state} ${branch.zip}`]
+        .filter(Boolean).join(' · '),
+    }
+  } catch (e) {
+    return fallback
+  }
+}
+
 async function sendViaResend(to: string, subject: string, html: string, fromEmail: string, fromName: string) {
   const r = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -19,7 +45,7 @@ async function sendViaResend(to: string, subject: string, html: string, fromEmai
   if (!r.ok) throw new Error(`Resend ${r.status}: ${await r.text()}`)
 }
 
-function quoteHtml(quote: any, customer: any, items: any[], senderName: string) {
+function quoteHtml(quote: any, customer: any, items: any[], senderName: string, footerAddress: string) {
   const total = parseFloat(quote.total) || 0
   const tax   = parseFloat(quote.tax_amount) || 0
   const sub   = parseFloat(quote.subtotal) || 0
@@ -60,7 +86,7 @@ function quoteHtml(quote: any, customer: any, items: any[], senderName: string) 
 <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;">
 
   <tr><td style="background:#0f1e2e;padding:32px;text-align:center;">
-    <h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:700;">Zenith Pure Solutions</h1>
+    <h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:700;">${senderName}</h1>
     <p style="color:#7fb3d0;margin:6px 0 0;font-size:13px;">Clean Water. Pure Simple.</p>
   </td></tr>
 
@@ -122,8 +148,7 @@ function quoteHtml(quote: any, customer: any, items: any[], senderName: string) 
   </td></tr>
 
   <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:20px;text-align:center;">
-    <p style="margin:0;font-size:12px;color:#94a3b8;">Zenith Pure Solutions LLC &middot; 6951 E 30th St, Suite B &middot; Indianapolis, IN 46219</p>
-    <p style="margin:4px 0 0;font-size:12px;color:#94a3b8;">info@zenithpuresolutions.com &middot; (317) 690-4172</p>
+    <p style="margin:0;font-size:12px;color:#94a3b8;">${footerAddress}</p>
   </td></tr>
 
 </table>
@@ -136,16 +161,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { quoteId, senderEmail, senderName } = req.body
   if (!quoteId) return res.status(400).json({ error: 'quoteId required' })
 
-  const fromEmail = senderEmail || `quotes@${DOMAIN}`
-  const fromName  = senderName  || 'Zenith Pure Solutions'
-
   try {
     const { data: quote } = await supabase
       .from('quotes').select('*').eq('id', quoteId).single()
     if (!quote) return res.status(404).json({ error: 'Quote not found' })
 
     const { data: customer } = await supabase
-      .from('customers').select('full_name, email, phone, lead_id').eq('id', quote.customer_id).single()
+      .from('customers').select('full_name, email, phone, lead_id, branch_id').eq('id', quote.customer_id).single()
     if (!customer?.email) return res.status(400).json({ error: 'Customer has no email' })
 
     // ── DND check — block all comms if lead is DND ───────────────
@@ -161,6 +183,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         })
       }
     }
+
+    // ── Phase 6: Resolve branch from-address ─────────────────────
+    const branchId = quote.branch_id || customer.branch_id || null
+    const branchSender = await resolveBranchSender(branchId)
+    const fromEmail = senderEmail || branchSender.fromEmail
+    const fromName  = senderName  || branchSender.fromName
+    const footerAddress = branchSender.footerAddress
 
     let { data: lineItems } = await supabase
       .from('document_line_items')
@@ -180,7 +209,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await sendViaResend(
       customer.email,
       `Your Quote from ${fromName} — ${quote.quote_number}`,
-      quoteHtml(quote, customer, lineItems, fromName),
+      quoteHtml(quote, customer, lineItems, fromName, footerAddress),
       fromEmail,
       fromName,
     )
@@ -210,23 +239,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
 
     // ── SMS: Quote sent notification (fire-and-forget) ────────────
-try {
-  if (customer.phone) {
-    const firstName   = (customer.full_name || 'there').split(' ')[0]
-    const publicToken = updates.public_token || quote.public_token || updates.accept_token || quote.accept_token
-    const quoteUrl    = `${APP_URL}/q/${publicToken}`
-    fetch(`${APP_URL}/api/openphone/send-sms`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        to: customer.phone,
-        body: `Hi ${firstName}, your quote from Zenith Pure Solutions is ready! Review it here: ${quoteUrl}`,
-        entity_type: 'customer',
-        entity_id: quote.customer_id,
-      }),
-    }).catch(() => {})
-  }
-} catch (_) { /* fire-and-forget */ }
+    try {
+      if (customer.phone) {
+        const firstName   = (customer.full_name || 'there').split(' ')[0]
+        const publicToken = updates.public_token || quote.public_token || updates.accept_token || quote.accept_token
+        const quoteUrl    = `${APP_URL}/q/${publicToken}`
+        fetch(`${APP_URL}/api/openphone/send-sms`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: customer.phone,
+            body: `Hi ${firstName}, your quote from Zenith Pure Solutions is ready! Review it here: ${quoteUrl}`,
+            entity_type: 'customer',
+            entity_id: quote.customer_id,
+          }),
+        }).catch(() => {})
+      }
+    } catch (_) { /* fire-and-forget */ }
 
     // ── GAP 14: Auto-create follow-up 2 days after quote sent ────
     try {
