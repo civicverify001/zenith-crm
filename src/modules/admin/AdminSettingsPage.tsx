@@ -76,7 +76,7 @@ const FIELD_TYPE_LABELS: Record<string, string> = {
   prefill_source:        'Auto-fill: Lead Source',
 }
 
-type AdminTab = 'qualifying' | 'site_visit' | 'terms' | 'service_plans' | 'email_templates' | 'checklists' | 'sms_templates' | 'automations'
+type AdminTab = 'qualifying' | 'site_visit' | 'terms' | 'service_plans' | 'email_templates' | 'checklists' | 'sms_templates' | 'automations' | 'branches'
 
 const TABS: { key: AdminTab; label: string; icon: string; color: string }[] = [
   { key: 'qualifying',       label: 'Qualifying Checklist', icon: '✅', color: '#4ade80' },
@@ -87,6 +87,7 @@ const TABS: { key: AdminTab; label: string; icon: string; color: string }[] = [
   { key: 'checklists',       label: 'Checklists',           icon: '📋', color: '#8b5cf6' },
   { key: 'sms_templates',    label: 'SMS Templates',        icon: '💬', color: '#22c55e' },
   { key: 'automations',      label: 'Automations',          icon: '⚡', color: '#f97316' },
+  { key: 'branches',         label: 'Branches',             icon: '🏢', color: '#0d7ea3' },
 ]
 
 export default function AdminSettingsPage() {
@@ -164,6 +165,7 @@ export default function AdminSettingsPage() {
         {activeTab === 'checklists'      && <ChecklistTemplatesTab />}
         {activeTab === 'sms_templates'   && <SmsTemplatesTab />}
         {activeTab === 'automations'     && <AutomationsTab />}
+        {activeTab === 'branches'        && <BranchManagementTab />}
       </div>
     </div>
   )
@@ -2076,6 +2078,475 @@ function AutomationsTab() {
           </div>
         )
       })}
+    </div>
+  )
+}
+// ════════════════════════════════════════════════════════════════
+// TAB 9: BRANCH MANAGEMENT (Phase 6)
+// Create/edit branches, assign users to branches, manage ZIP territories
+// ════════════════════════════════════════════════════════════════
+
+interface Branch {
+  id: string
+  name: string
+  code: string
+  address: string | null
+  city: string | null
+  state: string | null
+  zip: string | null
+  phone: string | null
+  email: string | null
+  stripe_account_id: string | null
+  fedex_account_number: string | null
+  is_active: boolean
+  created_at: string
+}
+
+interface BranchUser {
+  id: string
+  full_name: string
+  role: string
+  branch_id: string | null
+}
+
+interface ZipTerritory {
+  id: string
+  zip_code: string
+  branch_id: string
+  assigned_rep_id: string | null
+}
+
+type BranchSubTab = 'branches' | 'users' | 'zip_territories'
+
+function BranchManagementTab() {
+  const [subTab, setSubTab] = useState<BranchSubTab>('branches')
+  const [branches, setBranches] = useState<Branch[]>([])
+  const [users, setUsers] = useState<BranchUser[]>([])
+  const [zipTerritories, setZipTerritories] = useState<ZipTerritory[]>([])
+  const [loading, setLoading] = useState(true)
+
+  // Branch form state
+  const [showBranchForm, setShowBranchForm] = useState(false)
+  const [editingBranch, setEditingBranch] = useState<Branch | null>(null)
+  const [bName, setBName] = useState('')
+  const [bCode, setBCode] = useState('')
+  const [bAddress, setBAddress] = useState('')
+  const [bCity, setBCity] = useState('')
+  const [bState, setBState] = useState('')
+  const [bZip, setBZip] = useState('')
+  const [bPhone, setBPhone] = useState('')
+  const [bEmail, setBEmail] = useState('')
+  const [bStripe, setBStripe] = useState('')
+  const [bFedex, setBFedex] = useState('')
+  const [bSaving, setBSaving] = useState(false)
+  const [bError, setBError] = useState('')
+
+  // ZIP form state
+  const [newZip, setNewZip] = useState('')
+  const [newZipBranch, setNewZipBranch] = useState('')
+  const [newZipRep, setNewZipRep] = useState('')
+  const [zipSaving, setZipSaving] = useState(false)
+
+  useEffect(() => { loadAll() }, [])
+
+  async function loadAll() {
+    setLoading(true)
+    try {
+      const [{ data: b }, { data: u }, { data: z }] = await Promise.all([
+        supabase.from('branches').select('*').order('name'),
+        supabase.from('profiles').select('id, full_name, role, branch_id').order('full_name'),
+        supabase.from('zip_territories').select('*').order('zip_code'),
+      ])
+      if (b) setBranches(b)
+      if (u) setUsers(u)
+      if (z) setZipTerritories(z)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ── Branch CRUD ──────────────────────────────────────────────
+
+  function startAddBranch() {
+    setEditingBranch(null)
+    setBName(''); setBCode(''); setBAddress(''); setBCity(''); setBState('IN')
+    setBZip(''); setBPhone(''); setBEmail(''); setBStripe(''); setBFedex('')
+    setBError(''); setShowBranchForm(true)
+  }
+
+  function startEditBranch(b: Branch) {
+    setEditingBranch(b)
+    setBName(b.name); setBCode(b.code); setBAddress(b.address || ''); setBCity(b.city || '')
+    setBState(b.state || ''); setBZip(b.zip || ''); setBPhone(b.phone || '')
+    setBEmail(b.email || ''); setBStripe(b.stripe_account_id || '')
+    setBFedex(b.fedex_account_number || ''); setBError(''); setShowBranchForm(true)
+  }
+
+  async function saveBranch() {
+    if (!bName.trim() || !bCode.trim()) { setBError('Name and Code are required'); return }
+    setBSaving(true); setBError('')
+    try {
+      const payload = {
+        name: bName.trim(), code: bCode.trim().toUpperCase(),
+        address: bAddress.trim() || null, city: bCity.trim() || null,
+        state: bState.trim() || null, zip: bZip.trim() || null,
+        phone: bPhone.trim() || null, email: bEmail.trim() || null,
+        stripe_account_id: bStripe.trim() || null,
+        fedex_account_number: bFedex.trim() || null,
+      }
+      if (editingBranch) {
+        const { error } = await supabase.from('branches').update(payload).eq('id', editingBranch.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('branches').insert({ ...payload, is_active: true })
+        if (error) throw error
+      }
+      setShowBranchForm(false); setEditingBranch(null); loadAll()
+    } catch (e: any) {
+      setBError(e.message || 'Failed to save')
+    }
+    setBSaving(false)
+  }
+
+  async function toggleBranchActive(b: Branch) {
+    await supabase.from('branches').update({ is_active: !b.is_active }).eq('id', b.id)
+    setBranches(prev => prev.map(x => x.id === b.id ? { ...x, is_active: !x.is_active } : x))
+  }
+
+  // ── User branch assignment ────────────────────────────────────
+
+  async function assignUserBranch(userId: string, branchId: string | null) {
+    await supabase.from('profiles').update({ branch_id: branchId }).eq('id', userId)
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, branch_id: branchId } : u))
+  }
+
+  // ── ZIP territories ──────────────────────────────────────────
+
+  async function addZipTerritory() {
+    if (!newZip.trim() || !newZipBranch) return
+    setZipSaving(true)
+    try {
+      const { error } = await supabase.from('zip_territories').insert({
+        zip_code: newZip.trim(),
+        branch_id: newZipBranch,
+        assigned_rep_id: newZipRep || null,
+      })
+      if (error) throw error
+      setNewZip(''); setNewZipBranch(''); setNewZipRep('')
+      loadAll()
+    } catch (e: any) {
+      alert('Error: ' + e.message)
+    }
+    setZipSaving(false)
+  }
+
+  async function deleteZipTerritory(id: string) {
+    if (!confirm('Remove this ZIP territory?')) return
+    await supabase.from('zip_territories').delete().eq('id', id)
+    setZipTerritories(prev => prev.filter(z => z.id !== id))
+  }
+
+  const inputS: React.CSSProperties = {
+    width: '100%', boxSizing: 'border-box' as const,
+    background: 'rgba(255,255,255,0.05)', border: '1px solid #1e3a4f',
+    borderRadius: 10, padding: '9px 14px', color: '#e2e8f0', fontSize: 13, outline: 'none',
+  }
+  const labelS: React.CSSProperties = { display: 'block', fontSize: 11, color: '#64748b', marginBottom: 6 }
+  const salesReps = users.filter(u => u.role === 'salesrep' || u.role === 'frontdesk' || u.role === 'admin')
+
+  return (
+    <div style={{ height: '100%', overflowY: 'auto' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div>
+          <h2 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 16, margin: 0 }}>Branch Management</h2>
+          <p style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>
+            {branches.filter(b => b.is_active).length} active branches · {users.length} team members · {zipTerritories.length} ZIP territories
+          </p>
+        </div>
+      </div>
+
+      {/* Sub-tabs */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
+        {[
+          { key: 'branches' as BranchSubTab,       label: '🏢 Branches',        color: '#0d7ea3' },
+          { key: 'users' as BranchSubTab,           label: '👤 Assign Users',    color: '#a78bfa' },
+          { key: 'zip_territories' as BranchSubTab, label: '📮 ZIP Territories', color: '#34d399' },
+        ].map(t => (
+          <button
+            key={t.key}
+            onClick={() => setSubTab(t.key)}
+            style={{
+              padding: '8px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              background: subTab === t.key ? `${t.color}18` : 'rgba(255,255,255,0.03)',
+              border: `1px solid ${subTab === t.key ? `${t.color}50` : 'rgba(255,255,255,0.06)'}`,
+              color: subTab === t.key ? t.color : '#64748b',
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: 'center', color: '#64748b', padding: '48px 0' }}>Loading...</div>
+      ) : (
+        <>
+          {/* ── BRANCHES ── */}
+          {subTab === 'branches' && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+                <button onClick={startAddBranch} style={{
+                  padding: '8px 18px', borderRadius: 10, fontSize: 13, fontWeight: 700,
+                  background: 'linear-gradient(135deg, #0d7ea3, #0369a1)', color: '#fff', border: 'none', cursor: 'pointer',
+                }}>+ Add Branch</button>
+              </div>
+
+              {showBranchForm && (
+                <div style={{ ...tableCardStyle, marginBottom: 16, padding: 20 }}>
+                  <h3 style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 14, marginBottom: 16 }}>
+                    {editingBranch ? 'Edit Branch' : 'New Branch'}
+                  </h3>
+                  {bError && (
+                    <div style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 10, padding: '8px 14px', marginBottom: 14, fontSize: 12, color: '#f87171' }}>{bError}</div>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={labelS}>Branch Name *</label>
+                        <input type="text" value={bName} onChange={e => setBName(e.target.value)} placeholder="Zenith Pure — Chicago" style={inputS} />
+                      </div>
+                      <div>
+                        <label style={labelS}>Code * <span style={{ color: '#334155' }}>(2-6 letters, e.g. CHI)</span></label>
+                        <input type="text" value={bCode} onChange={e => setBCode(e.target.value.toUpperCase())} placeholder="CHI" maxLength={6} style={inputS} />
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelS}>Address</label>
+                      <input type="text" value={bAddress} onChange={e => setBAddress(e.target.value)} placeholder="123 Main St" style={inputS} />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={labelS}>City</label>
+                        <input type="text" value={bCity} onChange={e => setBCity(e.target.value)} style={inputS} />
+                      </div>
+                      <div>
+                        <label style={labelS}>State</label>
+                        <input type="text" value={bState} onChange={e => setBState(e.target.value)} maxLength={2} style={inputS} />
+                      </div>
+                      <div>
+                        <label style={labelS}>ZIP</label>
+                        <input type="text" value={bZip} onChange={e => setBZip(e.target.value)} style={inputS} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={labelS}>Phone</label>
+                        <input type="text" value={bPhone} onChange={e => setBPhone(e.target.value)} style={inputS} />
+                      </div>
+                      <div>
+                        <label style={labelS}>Email</label>
+                        <input type="email" value={bEmail} onChange={e => setBEmail(e.target.value)} style={inputS} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={labelS}>Stripe Account ID <span style={{ color: '#334155' }}>(optional — leave blank to use master)</span></label>
+                        <input type="text" value={bStripe} onChange={e => setBStripe(e.target.value)} placeholder="acct_..." style={inputS} />
+                      </div>
+                      <div>
+                        <label style={labelS}>FedEx Account Number <span style={{ color: '#334155' }}>(optional — leave blank to use master)</span></label>
+                        <input type="text" value={bFedex} onChange={e => setBFedex(e.target.value)} style={inputS} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, paddingTop: 4 }}>
+                      <button onClick={() => { setShowBranchForm(false); setEditingBranch(null) }} style={{ padding: '8px 16px', borderRadius: 10, fontSize: 13, color: '#64748b', cursor: 'pointer', background: 'rgba(255,255,255,0.04)', border: '1px solid #1e3a4f' }}>Cancel</button>
+                      <button onClick={saveBranch} disabled={bSaving} style={{ padding: '8px 20px', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #0d7ea3, #0369a1)', border: 'none', cursor: bSaving ? 'not-allowed' : 'pointer', opacity: bSaving ? 0.5 : 1 }}>
+                        {bSaving ? 'Saving...' : editingBranch ? 'Update Branch' : 'Create Branch'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ ...tableCardStyle, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>Branch</th>
+                      <th style={{ ...thStyle, width: 70 }}>Code</th>
+                      <th style={thStyle}>Location</th>
+                      <th style={{ ...thStyle, width: 80, textAlign: 'center' }}>Status</th>
+                      <th style={{ ...thStyle, width: 110, textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {branches.map(b => (
+                      <tr key={b.id} style={{ opacity: b.is_active ? 1 : 0.4 }}>
+                        <td style={tdStyle}>
+                          <div style={{ fontWeight: 600 }}>{b.name}</div>
+                          {b.email && <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{b.email}</div>}
+                        </td>
+                        <td style={tdStyle}>
+                          <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: 'rgba(13,126,163,0.12)', color: '#0d7ea3', border: '1px solid rgba(13,126,163,0.25)' }}>
+                            {b.code}
+                          </span>
+                        </td>
+                        <td style={tdStyle}>
+                          <div style={{ fontSize: 13 }}>{[b.address, b.city, b.state, b.zip].filter(Boolean).join(', ') || '—'}</div>
+                          {b.phone && <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{b.phone}</div>}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                          <ActiveBadge active={b.is_active} onClick={() => toggleBranchActive(b)} />
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right' }}>
+                          <button onClick={() => startEditBranch(b)} style={{ fontSize: 12, color: '#60a5fa', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Edit</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── ASSIGN USERS ── */}
+          {subTab === 'users' && (
+            <div>
+              <p style={{ color: '#64748b', fontSize: 12, marginBottom: 14 }}>
+                Assign each team member to their branch. Admin users can see all branches.
+              </p>
+              <div style={{ ...tableCardStyle, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 500 }}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>Team Member</th>
+                      <th style={{ ...thStyle, width: 120 }}>Role</th>
+                      <th style={{ ...thStyle, width: 240 }}>Branch Assignment</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {users.map(u => (
+                      <tr key={u.id}>
+                        <td style={tdStyle}><div style={{ fontWeight: 600 }}>{u.full_name}</div></td>
+                        <td style={tdStyle}>
+                          <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'rgba(255,255,255,0.05)', color: '#94a3b8', border: '1px solid #1e3a4f' }}>
+                            {u.role}
+                          </span>
+                        </td>
+                        <td style={tdStyle}>
+                          <select
+                            value={u.branch_id || ''}
+                            onChange={e => assignUserBranch(u.id, e.target.value || null)}
+                            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid #1e3a4f', borderRadius: 8, padding: '6px 10px', color: '#e2e8f0', fontSize: 12, outline: 'none', width: '100%' }}
+                          >
+                            <option value="" style={{ background: '#0f1923' }}>— Unassigned —</option>
+                            {branches.filter(b => b.is_active).map(b => (
+                              <option key={b.id} value={b.id} style={{ background: '#0f1923' }}>{b.name} ({b.code})</option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── ZIP TERRITORIES ── */}
+          {subTab === 'zip_territories' && (
+            <div>
+              <p style={{ color: '#64748b', fontSize: 12, marginBottom: 14 }}>
+                Map ZIP codes to branches. New leads from these ZIPs auto-route to the matching branch.
+              </p>
+
+              {/* Add ZIP form */}
+              <div style={{ ...tableCardStyle, marginBottom: 16, padding: 16 }}>
+                <div style={{ fontSize: 12, color: '#64748b', fontWeight: 700, marginBottom: 12 }}>+ Add ZIP Territory</div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <div style={{ flex: '0 0 120px' }}>
+                    <label style={labelS}>ZIP Code</label>
+                    <input type="text" value={newZip} onChange={e => setNewZip(e.target.value)} placeholder="46201" maxLength={5}
+                      style={{ ...inputS, padding: '8px 12px', fontSize: 13 }} />
+                  </div>
+                  <div style={{ flex: '1 1 200px' }}>
+                    <label style={labelS}>Branch</label>
+                    <select value={newZipBranch} onChange={e => setNewZipBranch(e.target.value)}
+                      style={{ ...inputS, padding: '8px 12px', fontSize: 13 }}>
+                      <option value="" style={{ background: '#0f1923' }}>Select branch...</option>
+                      {branches.filter(b => b.is_active).map(b => (
+                        <option key={b.id} value={b.id} style={{ background: '#0f1923' }}>{b.name} ({b.code})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ flex: '1 1 200px' }}>
+                    <label style={labelS}>Default Rep <span style={{ color: '#334155' }}>(optional)</span></label>
+                    <select value={newZipRep} onChange={e => setNewZipRep(e.target.value)}
+                      style={{ ...inputS, padding: '8px 12px', fontSize: 13 }}>
+                      <option value="" style={{ background: '#0f1923' }}>Round-robin</option>
+                      {salesReps.map(u => (
+                        <option key={u.id} value={u.id} style={{ background: '#0f1923' }}>{u.full_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button onClick={addZipTerritory} disabled={zipSaving || !newZip.trim() || !newZipBranch}
+                    style={{ padding: '9px 18px', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #34d399, #10b981)', border: 'none', cursor: 'pointer', flexShrink: 0 }}>
+                    {zipSaving ? 'Adding...' : 'Add ZIP'}
+                  </button>
+                </div>
+              </div>
+
+              {zipTerritories.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '32px 0', color: '#64748b' }}>
+                  <div style={{ fontSize: 32, marginBottom: 8 }}>📮</div>
+                  <p>No ZIP territories yet. Add ZIPs above to auto-route leads to the right branch.</p>
+                </div>
+              ) : (
+                <div style={{ ...tableCardStyle, overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 500 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...thStyle, width: 120 }}>ZIP Code</th>
+                        <th style={thStyle}>Branch</th>
+                        <th style={thStyle}>Default Rep</th>
+                        <th style={{ ...thStyle, width: 80, textAlign: 'right' }}>Remove</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {zipTerritories.map(z => {
+                        const branch = branches.find(b => b.id === z.branch_id)
+                        const rep = users.find(u => u.id === z.assigned_rep_id)
+                        return (
+                          <tr key={z.id}>
+                            <td style={tdStyle}>
+                              <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 14 }}>{z.zip_code}</span>
+                            </td>
+                            <td style={tdStyle}>
+                              {branch ? (
+                                <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: 'rgba(13,126,163,0.12)', color: '#0d7ea3', border: '1px solid rgba(13,126,163,0.25)' }}>
+                                  {branch.code}
+                                </span>
+                              ) : <span style={{ color: '#64748b' }}>—</span>}
+                            </td>
+                            <td style={tdStyle}>{rep?.full_name || <span style={{ color: '#64748b' }}>Round-robin</span>}</td>
+                            <td style={{ ...tdStyle, textAlign: 'right' }}>
+                              <button onClick={() => deleteZipTerritory(z.id)}
+                                style={{ fontSize: 12, color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                                Remove
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
