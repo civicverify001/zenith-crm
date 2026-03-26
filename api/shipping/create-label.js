@@ -2,6 +2,7 @@
 // ZENITH CRM OS — FEDEX CREATE LABEL
 // api/shipping/create-label.js
 // Authenticates with FedEx, creates shipment, returns tracking + label
+// Phase 6: Shipper address pulled from branches table
 // ============================================================
 
 import { createClient } from '@supabase/supabase-js';
@@ -9,6 +10,16 @@ import { createClient } from '@supabase/supabase-js';
 const FEDEX_BASE = 'https://apis-sandbox.fedex.com';
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// ── Phase 6: Fallback shipper (master INDY address) ──────────
+const FALLBACK_SHIPPER = {
+  personName: 'Zenith Pure Solutions',
+  phoneNumber: '3176904172',
+  streetLines: ['6951 E 30th St Suite B'],
+  city: 'Indianapolis',
+  stateOrProvinceCode: 'IN',
+  postalCode: '46219',
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -45,6 +56,31 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Shipment is missing shipping address' });
     }
 
+    // ── Phase 6: Resolve shipper address from branch ─────────────
+    let shipper = FALLBACK_SHIPPER
+    try {
+      if (shipment.branch_id) {
+        const { data: branch } = await supabase
+          .from('branches')
+          .select('name, address, city, state, zip, phone')
+          .eq('id', shipment.branch_id)
+          .single()
+        if (branch?.address && branch?.city && branch?.state && branch?.zip) {
+          const branchPhone = (branch.phone || '').replace(/\D/g, '').slice(0, 10) || FALLBACK_SHIPPER.phoneNumber
+          shipper = {
+            personName: branch.name || FALLBACK_SHIPPER.personName,
+            phoneNumber: branchPhone,
+            streetLines: [branch.address],
+            city: branch.city,
+            stateOrProvinceCode: branch.state,
+            postalCode: String(branch.zip).slice(0, 5),
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[fedex] Branch lookup failed, using fallback shipper:', e.message)
+    }
+
     // 2. Get FedEx OAuth token
     const tokenRes = await fetch(`${FEDEX_BASE}/oauth/token`, {
       method: 'POST',
@@ -67,7 +103,7 @@ export default async function handler(req, res) {
 
     const token = tokenData.access_token;
 
-    // 3. Minimal payload — strip all optional fields for sandbox compatibility
+    // 3. Build payload using resolved shipper address
     const shipPayload = {
       labelResponseOptions: 'LABEL',
       accountNumber: {
@@ -76,14 +112,14 @@ export default async function handler(req, res) {
       requestedShipment: {
         shipper: {
           contact: {
-            personName: 'Zenith Pure Solutions',
-            phoneNumber: '3176904172',
+            personName: shipper.personName,
+            phoneNumber: shipper.phoneNumber,
           },
           address: {
-            streetLines: ['6951 E 30th St Suite B'],
-            city: 'Indianapolis',
-            stateOrProvinceCode: 'IN',
-            postalCode: '46219',
+            streetLines: shipper.streetLines,
+            city: shipper.city,
+            stateOrProvinceCode: shipper.stateOrProvinceCode,
+            postalCode: shipper.postalCode,
             countryCode: 'US',
           },
         },
@@ -129,6 +165,7 @@ export default async function handler(req, res) {
     };
 
     console.log('[fedex] Sending payload to', `${FEDEX_BASE}/ship/v1/shipments`);
+    console.log('[fedex] Shipper:', shipper.personName, '-', shipper.city, shipper.stateOrProvinceCode);
 
     const shipRes = await fetch(`${FEDEX_BASE}/ship/v1/shipments`, {
       method: 'POST',
