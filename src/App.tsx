@@ -1,8 +1,8 @@
 import { BrowserRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AppRouter } from './app/Router'
+import { BranchProvider } from './contexts/BranchContext'
 import './index.css'
-
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -12,12 +12,13 @@ const queryClient = new QueryClient({
     },
   },
 })
-
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <AppRouter />
+        <BranchProvider>
+          <AppRouter />
+        </BranchProvider>
       </BrowserRouter>
     </QueryClientProvider>
   )
