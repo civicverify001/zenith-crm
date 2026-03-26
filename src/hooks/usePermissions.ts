@@ -59,5 +59,6 @@ export function usePermissions(roleOverride?: string | null) {
     if (role === 'admin') return true
     return PERMISSIONS[role]?.[resource]?.includes(action) ?? false
   }
-  return { canAccess, allowedPages, can, role }
+  const isAdmin = role === 'admin'
+  return { canAccess, allowedPages, can, role, isAdmin }
 }
