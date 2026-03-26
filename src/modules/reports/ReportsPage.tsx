@@ -1358,7 +1358,7 @@ const NAV_TABS: { id: Section; label: string; icon: string; color: string; bg: s
 
 // ─── Main Page ──────────────────────────────────────────────────
 export function ReportsPage() {
-  cconst { role } = useAuth()
+  const { role } = useAuth()
   const { userBranch, selectedBranchId, allBranches } = useBranchContext()
   const isAdmin = role === 'admin'
   const [activeSection, setActiveSection] = useState<Section>('overview')
